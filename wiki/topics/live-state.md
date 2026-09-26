@@ -11,6 +11,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 08:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **vLLM back (D-099):** it crashed at 07:52Z and crash-looped: `laya-systemone`'s probe held a 256 MiB CUDA context (AF-AP-231). The owner's fix, `GPU_UTIL` 0.96 in `deploy/qwen.container`, is deployed; healthy since 08:10Z, KV 215,112 tokens. Task #325 removes the probe's context.
+- **RUNNING (sandbox, three agents):** SCRUB2-R1 (task #321), I59-B (task #313, S0-05), I59-C (task #314, re-run after the crash killed its PC lane). Their files are in `.lanes-live`.
+- **RUNNING (PC, local route):** the SYNTH1 labeler alone (task #308), since 08:12:26Z; no local-route lane beside it.
+- **Held for the batch:** I59-A round 4 as `tasks/briefs/i59/I59-A.patch` (five diffs). CI green on 7a050b6 (run #1103).
+- **Closed:** HCTX1-R1 (tasks #316, #317; the PC check passed).
+
 **2026-09-26 07:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **CI RED on origin 626fc4c (run #1102):** one SYNTH1 test's skip guard raises `PermissionError` on the non-root runner. The fix rides SYNTH1 round 2; the push carrying it sets `CI_FIX=36224456809`. Until then the ci-gate refuses pushes.
 - **RUNNING (sandbox):** SYNTH1 round 2 (task #308: the parser, the CI guard), VERIFY-I59-A round 2 (the round-3 delta).

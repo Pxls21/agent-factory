@@ -420,6 +420,8 @@ assumption; max_tokens 64).
   prompts is likely faster.** The gold-first 1,993 pairs (9% of the job) come first, so the validator can run after
   roughly the first 20 to 40 minutes.
 
+> **COORDINATOR CORRECTION (2026-09-26 08:2xZ; AF-AP-231, D-099):** the second item below was wrong. The labeler at `--concurrency 3` beside the I59-C local-route lane made four running requests, and at 07:52Z vLLM died on a CUDA OOM in its prefill workspace, outside the KV pool this item sized. `laya-systemone`'s probe held a 256 MiB CUDA context, which had left vLLM 63 MiB of slack; every restart then failed the startup check until the owner's D-099 set `GPU_UTIL` 0.96. The rule now: the labeler runs alone, never beside a local-route lane (skill `pc-bridge-lanes`, lane sizing).
+
 **What must not run beside it:**
 - A restart or stop of `qwen.service`, or a GPU window (D-078, D-081, D-088 stop the vLLM service): in-flight requests
   fail, the labeler retries for about 2 minutes (2+4+8+16+32+60 s) and then stops with exit 3; a re-run of step 4
