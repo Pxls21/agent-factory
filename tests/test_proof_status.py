@@ -463,10 +463,10 @@ def test_anchor_ref_and_committed_tag_object_must_be_one_object(tmp_path):
 
 # The proofs whose acceptance the committed ledger declares PENDING the owner's signed tag (a `PROOF-ANCHOR: <id> =
 # PENDING-OWNER-TAG` line): exactly these may warn. S0-04 was re-minted by S0-04-LEAK (task #287, D-091 item 3) and
-# waits for the owner's re-sign; when the owner's tag lands and its PENDING line goes, S0-04 leaves this set. An
-# undeclared warning, a second pending proof, or a pending proof whose tag landed each fail the test below
+# waited for the owner's re-sign; the owner signed it on 2026-09-26 (the tag object is committed), so the set is empty
+# again. An undeclared warning, a pending proof, or a pending proof whose tag landed each fail the test below
 # (VERIFY-S0-04-LEAK F4: asserting only "no WARNING S0-11" let any other proof's downgrade pass).
-EXPECTED_PENDING = {"S0-04"}
+EXPECTED_PENDING = set()
 PENDING_WARNING = re.compile(r"proof-status: WARNING (S0-\d+): ACCEPTED with the anchor PENDING ")
 
 
