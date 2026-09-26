@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 06:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, three agents):** SYNTH1 round 2 (task #308), HCTX1-R1 (tasks #316, #317), I59-A round 3 (task #312: S0-12's existence-tested files, the attested schema text, the long-path crash, three test gaps; the patch re-applied to the tree and declared).
+- **RUNNING (PC, local route):** I59-C (task #314).
+- **VERIFY-I59-A home:** MERGE-READY-WITH-FOLLOWUPS against the frozen contract; its one contract defect (F-1) blocks by the coordinator's amendment (an existence-tested file is an input).
+- **For the batch landing:** FU-4 (CI `-rs`) and the env-tool-quirks ATTESTED INPUTS line are the coordinator's edits.
+
 **2026-09-26 06:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, three agents):** SYNTH1 round 2 (task #308: parse model answers by structure; the real smoke stopped at 74 of 108 malformed), VERIFY-I59-A (task #312's check), HCTX1-R1 (tasks #316, #317).
 - **RUNNING (PC, local route):** I59-C (task #314). The SYNTH1 candidates sit on the PC (`/home/rocco/synth1/cand`, sha256 equal to the sandbox copy); the labeling resumes after round 2 lands.
