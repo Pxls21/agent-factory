@@ -1,6 +1,6 @@
 # I59-E report: S0-03's YAML reader never lets a parse error print a value (task #327)
 
-Lane: code-implementer, sandbox, Opus 5.5. PIN: origin 3ee246d (HEAD f68b23c adds only the brief). Written incrementally;
+Lane: code-implementer, sandbox, Opus 5.5. PIN: origin 3ee246d (HEAD 423bbff adds only the brief). Written incrementally;
 this final form 2026-09-26 09:2xZ. Evidence tiers: VERIFIED = run here, output pasted; INFERRED = read, not run.
 
 ## 0. Verdict
