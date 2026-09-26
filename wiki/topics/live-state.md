@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 07:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **CI RED on origin 626fc4c (run #1102):** one SYNTH1 test's skip guard raises `PermissionError` on the non-root runner. The fix rides SYNTH1 round 2; the push carrying it sets `CI_FIX=36224456809`. Until then the ci-gate refuses pushes.
+- **RUNNING (sandbox):** SYNTH1 round 2 (task #308: the parser, the CI guard), VERIFY-I59-A round 2 (the round-3 delta).
+- **RUNNING (PC, local route):** I59-C (task #314).
+- **I59-A round 3 saved** as `tasks/briefs/i59/I59-A.patch` (five diffs; the tree back at HEAD).
+
 **2026-09-26 06:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, two agents):** SYNTH1 round 2 (task #308), I59-A round 3 (task #312).
 - **RUNNING (PC, local route):** I59-C (task #314).
