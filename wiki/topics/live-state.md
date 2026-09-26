@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 09:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **The issue #59 batch is built:** I59-A, I59-C and I59-E are held as patches; I59-B is home and its coordinator gate re-run is in progress (then `tasks/briefs/i59/I59-B.patch`). Its census driver ran on the PC: 6 right, 2 fail-closed, 0 wrong. Next: the landing (#315, in the sandbox as root: apply the four patches, FU-4, re-mint all twelve, anchors PENDING), one verify, the owner's re-sign.
+- **RUNNING (sandbox):** SCRUB2-R1 (task #321). Its files are in `.lanes-live`.
+- **RUNNING (PC, local route):** the SYNTH1 labeler alone (task #308), about 1.5 h left; vLLM healthy at `GPU_UTIL` 0.96 (D-099).
+- **CI:** runs #1104 and #1105 red on the coordinator's own skipped gates (the quadlet's readers, then a skill's reader); both fixed locally, and the push with `CI_FIX=36231369309` waits for the tests that name every changed file (running).
+
 **2026-09-26 09:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, two agents):** SCRUB2-R1 (task #321), I59-B (task #313, S0-05). Their files are in `.lanes-live`.
 - **RUNNING (PC, local route):** the SYNTH1 labeler alone (task #308); vLLM healthy at `GPU_UTIL` 0.96 (D-099).
