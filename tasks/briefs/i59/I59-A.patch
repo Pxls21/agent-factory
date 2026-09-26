@@ -1,0 +1,888 @@
+diff --git a/proofs/registry.yaml b/proofs/registry.yaml
+index 7659e4b..3a58348 100644
+--- a/proofs/registry.yaml
++++ b/proofs/registry.yaml
+@@ -10,17 +10,17 @@
+ "waves": [0, 1, 2, 3],
+ "proofs": [
+   {"proof_id": "S0-01", "title": "buzz-acp launches pinned hermes-acp", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1},
+-  {"proof_id": "S0-02", "title": "Buzz authorization and freshness", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 4},
+-  {"proof_id": "S0-03", "title": "Hermes to OmniRoute", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["pc-bridge"], "required_negative_controls": 1},
++  {"proof_id": "S0-02", "title": "Buzz authorization and freshness", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 4, "extra_attested_inputs": ["proofs/S0-01/check_acp_conformance.py", "proofs/S0-01/check_initialize.py", "proofs/S0-01/fixtures/identities.json", "proofs/S0-01/negative_contract.py", "proofs/S0-01/pins.py", "proofs/S0-01/tools/nostr_verify.py"]},
++  {"proof_id": "S0-03", "title": "Hermes to OmniRoute", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["pc-bridge"], "required_negative_controls": 1, "extra_attested_inputs": ["proofs/S0-01/check_acp_conformance.py", "proofs/S0-01/check_initialize.py", "proofs/S0-01/negative_contract.py", "proofs/S0-01/pins.py", "proofs/S0-01/tools/nostr_verify.py"]},
+   {"proof_id": "S0-04", "title": "Compression contract", "classification": "execution_proof", "wave": 2, "spike_dependencies": [], "required_negative_controls": 1},
+-  {"proof_id": "S0-05", "title": "No direct model egress", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["selective-egress"], "required_negative_controls": 1},
+-  {"proof_id": "S0-06", "title": "Four-scope adapter design", "classification": "execution_proof", "wave": 1, "spike_dependencies": ["rust-ai-memory"], "required_negative_controls": 1},
++  {"proof_id": "S0-05", "title": "No direct model egress", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["selective-egress"], "required_negative_controls": 1, "extra_attested_inputs": ["proofs/S0-01/pins.py"]},
++  {"proof_id": "S0-06", "title": "Four-scope adapter design", "classification": "execution_proof", "wave": 1, "spike_dependencies": ["rust-ai-memory"], "required_negative_controls": 1, "extra_attested_inputs": ["fixtures/s0-06/neg-unauthorized-tuple.json", "upstream.lock.yaml"]},
+   {"proof_id": "S0-07", "title": "Fubuki corrections", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1},
+   {"proof_id": "S0-08", "title": "gVisor compatibility", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["runsc", "pc-bridge"], "required_negative_controls": 1},
+-  {"proof_id": "S0-09", "title": "Foundry host decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1},
+-  {"proof_id": "S0-10", "title": "GBrain seam decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1},
++  {"proof_id": "S0-09", "title": "Foundry host decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "extra_attested_inputs": ["docs/adr/0005-foundry-host.md"]},
++  {"proof_id": "S0-10", "title": "GBrain seam decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "extra_attested_inputs": ["docs/adr/0006-gbrain-seam.md"]},
+   {"proof_id": "S0-11", "title": "Evaluation hardening", "classification": "execution_proof", "wave": 3, "spike_dependencies": [], "required_negative_controls": 1},
+-  {"proof_id": "S0-12", "title": "License and release policy", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1}
++  {"proof_id": "S0-12", "title": "License and release policy", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "extra_attested_inputs": ["SBOM.yaml", "upstream.lock.yaml"]}
+ ],
+ 
+ # COORDINATOR DECISION — VOCABULARY (2026-09-03): normalize blocked_capability to blocked_host when reading spike effects and mapping rules only; proof artifacts must use the canonical four-class enum.
+diff --git a/scripts/validate-ledger b/scripts/validate-ledger
+index 2210fbf..c9efe89 100755
+--- a/scripts/validate-ledger
++++ b/scripts/validate-ledger
+@@ -5,7 +5,7 @@ import hashlib
+ import json
+ import re
+ import sys
+-from pathlib import Path
++from pathlib import Path, PurePosixPath
+ 
+ import jsonschema
+ 
+@@ -50,22 +50,103 @@ def canonical_digest(value):
+ 
+ 
+ ATTESTATION_CLOSURE = ("scripts/proof-runner", "scripts/validate-ledger", "proofs/registry.yaml")
++EXTRA_INPUTS_KEY = "extra_attested_inputs"
++
++
++def _read_registry(root):
++    """The registry document: JSON once its `#` comment lines are dropped. One parser serves the registry check and
++    proof_attestation, so both read the same declarations."""
++    text = "\n".join(
++        line for line in (Path(root) / "proofs" / "registry.yaml").read_text().splitlines()
++        if not line.lstrip().startswith("#")
++    )
++    return json.loads(text)
++
++
++def _extra_inputs(proof):
++    """Split a registry entry's `extra_attested_inputs` into the repo files it adds to the proof's attestation and one
++    finding per refused item. A declared path names ONE file by ONE spelling, relative to the root: no absolute path,
++    no `..` segment, no glob character, no `.`/empty/doubled segment, no duplicate, and nothing the attestation already
++    covers (the proof's own directory, the closure). An entry without the key declares nothing."""
++    if EXTRA_INPUTS_KEY not in proof:
++        return [], []
++    proof_id = proof.get("proof_id")
++    value = proof[EXTRA_INPUTS_KEY]
++    prefix = f"registry-schema: {proof_id} {EXTRA_INPUTS_KEY}"
++    if not isinstance(value, list) or not value:
++        return [], [f"{prefix} must be a non-empty list of paths"]
++    paths, problems = [], []
++    for index, item in enumerate(value):
++        if not isinstance(item, str):
++            problems.append(f"{prefix} item {index} is not a string")
++            continue
++        parts = item.split("/")
++        if item.startswith("/"):
++            problem = "is absolute"
++        elif ".." in parts:
++            problem = "has a .. segment"
++        elif any(character in item for character in "*?["):  # glob.has_magic's set
++            problem = "has a glob character"
++        elif str(PurePosixPath(item)) != item:
++            problem = "is not in canonical form"
++        elif item in paths:
++            problem = "is a duplicate"
++        elif parts[:2] == ["proofs", proof_id]:
++            problem = f"is inside proofs/{proof_id}/ (already attested)"
++        elif item in ATTESTATION_CLOSURE or (len(parts) == 3 and parts[:2] == ["proofs", "schemas"]
++                                             and item.endswith(".json")):
++            problem = "is in the attestation closure (already attested)"
++        else:
++            paths.append(item)
++            continue
++        problems.append(f"{prefix} {item} {problem}")
++    return paths, problems
++
++
++def _is_regular_file(root, rel):
++    """A regular file reached with no symlink anywhere below the root (a symlink at any step resolves elsewhere), so
++    the bytes hashed are the tree's own."""
++    root = Path(root)
++    path = root / rel
++    return path.is_file() and path.resolve() == root.resolve() / rel
++
++
++def _declared_inputs(root, proof_id):
++    """The paths the registry adds to this proof's attestation. An absent or unreadable registry, or a proof with no
++    entry, declares none; the registry check names why, as it names every refused item."""
++    try:
++        entries = _read_registry(root)["proofs"]
++    except (OSError, ValueError, KeyError, TypeError):
++        return []
++    for entry in entries if isinstance(entries, list) else []:
++        if isinstance(entry, dict) and entry.get("proof_id") == proof_id:
++            return _extra_inputs(entry)[0]
++    return []
+ 
+ 
+ def proof_attestation(root, proof_id):
+     """Map every input that DETERMINES this proof's verdict to its sha256: the
+     proof-local inputs (checker source, spec, fixtures, design) AND the shared
+     TRUST CLOSURE that runs and validates it — the canonical runner, this
+-    validator, the registry, and the JSON schemas. Recorded in the artifact by
++    validator, the registry, and the JSON schemas — AND the repo files outside
++    the proof's directory that its checker reads while it grades, declared in the
++    proof's registry entry as `extra_attested_inputs` (issue #59 F-1: S0-05
++    loads proofs/S0-01/pins.py; tests/test_attested_inputs.py observes every
++    checker's reads and fails on an undeclared one). Recorded in the artifact by
+     the runner and re-derived here from the tree; any divergence means the
+     artifact is no longer bound to the code that produced OR checks it (a
+     neutered checker OR a mutated runner/validator with a stale green artifact
+     fails this, where the schema+digest checks alone passed). A file the recorded
+     attestation names but the tree lacks still fails — the recorded key has no
+-    match. Paths are relative to `root`; result.json/blocked.json/__pycache__
+-    excluded; a closure file absent from a minimal (test) root is simply skipped,
+-    so both sides compute the same set over that root."""
++    match. Paths are relative to `root`; __pycache__ and the proof's OWN two
++    artifacts (proofs/<id>/result.json and proofs/<id>/blocked.json, directly in
++    its directory) are excluded, while a fixture of either name deeper down is an
++    input and is hashed (S0-08 grades fixtures/malformed-marker/blocked.json); a
++    closure or declared file absent from a minimal (test) root is simply skipped,
++    so both sides compute the same set over that root (a result whose declared
++    input is absent is refused in _artifact_states)."""
+     root = Path(root)
++    own_artifacts = {root / "proofs" / proof_id / name for name in ("result.json", "blocked.json")}
+     paths = [root / rel for rel in ATTESTATION_CLOSURE]
+     paths += sorted((root / "proofs" / "schemas").glob("*.json"))
+     paths += sorted((root / "proofs" / proof_id).rglob("*"))
+@@ -73,19 +154,18 @@ def proof_attestation(root, proof_id):
+     for path in paths:
+         if not path.is_file() or "__pycache__" in path.parts:
+             continue
+-        if path.name in ("result.json", "blocked.json"):
++        if path in own_artifacts:
+             continue
+         attestation[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
++    for rel in _declared_inputs(root, proof_id):
++        if _is_regular_file(root, rel):
++            attestation[rel] = hashlib.sha256((root / rel).read_bytes()).hexdigest()
+     return attestation
+ 
+ 
+ def _registry(root, findings):
+-    path = root / "proofs" / "registry.yaml"
+     try:
+-        text = "\n".join(
+-            line for line in path.read_text().splitlines() if not line.lstrip().startswith("#")
+-        )
+-        registry = json.loads(text)
++        registry = _read_registry(root)
+     except Exception as error:
+         findings.add(f"registry-schema: {error}")
+         return None
+@@ -176,8 +256,9 @@ def _registry(root, findings):
+             # `"classification" not in missing` guard hid the siblings behind that one finding)
+             findings.add(f"registry-schema: {proof_id} missing {','.join(missing)}")
+         # A key nobody reads must not exist (AF-AP-66, 2026-09-08: `assertion_count` sat in every row, validated for
+-        # type and consumed by nothing) — the row's key set is CLOSED: the required keys plus `blocked`.
+-        unknown = sorted(set(proof) - required - {"blocked"})
++        # type and consumed by nothing) — the row's key set is CLOSED: the required keys plus `blocked` and
++        # `extra_attested_inputs` (bound by proof_attestation, checked below).
++        unknown = sorted(set(proof) - required - {"blocked", EXTRA_INPUTS_KEY})
+         if unknown:
+             findings.add(f"registry-schema: {proof_id} unknown key(s) {','.join(unknown)} — every registry key must bind a gate")
+         if not isinstance(proof_id, str) or not PROOF_ID_RE.fullmatch(proof_id):
+@@ -204,6 +285,16 @@ def _registry(root, findings):
+             blocked_required = {"owner", "unblock_condition", "marker_path"}
+             if not isinstance(blocked, dict) or set(blocked) != blocked_required:
+                 findings.add(f"registry-schema: {proof_id} blocked metadata invalid")
++        # A declared path that exists as anything but a regular file (a symlink, a directory) is refused here; an
++        # ABSENT one where it binds a verdict (_artifact_states), since a registry copied into a minimal test root
++        # names files that root does not carry.
++        extra_paths, extra_problems = _extra_inputs(proof)
++        for problem in extra_problems:
++            findings.add(problem)
++        for rel in extra_paths:
++            target = root / rel
++            if (target.exists() or target.is_symlink()) and not _is_regular_file(root, rel):
++                findings.add(f"registry-schema: {proof_id} {EXTRA_INPUTS_KEY} {rel} is not a regular file")
+     expected_ids = {f"S0-{index:02d}" for index in range(1, 13)}
+     if seen != expected_ids:
+         findings.add("registry-schema: proof ids must be S0-01 through S0-12")
+@@ -277,6 +368,13 @@ def _artifact_states(root, registry, schemas, findings):
+                     )
+                     findings.add(f"attestation-mismatch: {proof_id} {changed[0] if changed else ''}".rstrip())
+                     valid = False
++            # A declared outside input binds this verdict only while it is a regular file in the tree: a result minted
++            # while one was absent (the attestation skips an absent file, as it skips an absent closure file) records
++            # no key for it, so the comparison above cannot see it.
++            for rel in _extra_inputs(proof)[0]:
++                if not _is_regular_file(root, rel):
++                    findings.add(f"registry-schema: {proof_id} {EXTRA_INPUTS_KEY} {rel} is not a regular file")
++                    valid = False
+             # Bind the recorded runs to the ATTESTED spec: the legs the runner
+             # recorded must BE the spec's legs — same count and order, same
+             # leg-type, same command, same expected exit code, and each negative
+diff --git a/tests/test_validate_ledger.py b/tests/test_validate_ledger.py
+index 1826ddf..aa70a61 100644
+--- a/tests/test_validate_ledger.py
++++ b/tests/test_validate_ledger.py
+@@ -497,6 +497,11 @@ def test_result_with_fewer_negative_legs_than_the_registry_floor_is_invalid(tmp_
+     root = _copy_contract(tmp_path)
+     registry = _load_registry(root / "proofs" / "registry.yaml")
+     assert next(e for e in registry["proofs"] if e["proof_id"] == "S0-02")["required_negative_controls"] == 4
++    # S0-02 declares the S0-01 files its checker loads (extra_attested_inputs, I59-A): its result is PRESENT only
++    # while they are in the tree, so this root carries them.
++    for rel in next(e for e in registry["proofs"] if e["proof_id"] == "S0-02")["extra_attested_inputs"]:
++        (root / rel).parent.mkdir(parents=True, exist_ok=True)
++        shutil.copy(ROOT / rel, root / rel)
+     def with_negatives(count):
+         # ASYMMETRIC on purpose (one positive, `count` negatives): a check that counted the wrong leg type read
+         # the same "1" off the symmetric two-leg fixture and survived (mutant COUNT-POSITIVES, 2026-09-08)
+@@ -559,7 +564,8 @@ def test_registry_rows_carry_no_key_the_validator_does_not_read():
+     read by nothing — documentation wearing a gate's clothes. The row's key set is CLOSED to what the
+     validator consumes; the real registry must satisfy it and the validator must pass on it."""
+     registry = _load_registry(ROOT / "proofs" / "registry.yaml")
+-    allowed = {"proof_id", "title", "classification", "wave", "spike_dependencies", "required_negative_controls", "blocked"}
++    allowed = {"proof_id", "title", "classification", "wave", "spike_dependencies", "required_negative_controls", "blocked",
++               "extra_attested_inputs"}  # I59-A: bound by proof_attestation (tests/test_attested_inputs.py)
+     for entry in registry["proofs"]:
+         assert set(entry) <= allowed, (entry["proof_id"], sorted(set(entry) - allowed))
+     assert "assertion_count" not in (ROOT / "proofs" / "registry.yaml").read_text()
+diff --git a/tests/test_attested_inputs.py b/tests/test_attested_inputs.py
+new file mode 100644
+index 0000000..87967ae
+--- /dev/null
++++ b/tests/test_attested_inputs.py
+@@ -0,0 +1,638 @@
++"""I59-A (task #312, issue #59 F-1): every repo file a proof's checker reads while it grades is attested.
++
++A proof's entry in `proofs/registry.yaml` may carry `extra_attested_inputs`: repo files OUTSIDE its directory that its
++checker reads (an S0-01 module another proof loads, `upstream.lock.yaml`, an ADR). `proof_attestation()` hashes them beside
++the proof's own files, so a change to one makes that proof INVALID. Three parts:
++
++1. the registry key: each refusal by its exact finding (negative controls first), then the accepted declaration;
++2. the attestation: a declared file hashed under its root-relative path, a proof's key set otherwise unchanged, a
++   changed, deleted or never-present declared file INVALID, and the canonical runner recording the declaration;
++3. the DRIFT GUARD: every proof's spec legs run as scripts/proof-runner runs them, with an audit hook loaded, and every
++   repo file a leg's processes open must be in that proof's attestation. A path built at run time is caught
++   because the reads are observed, not parsed. Its negative controls plant one undeclared read of each shape in a
++   scratch copy of S0-09.
++
++What the guard cannot see (named here, not hidden): a child process that does not load the hook (one started with an
++`env=` that drops PYTHONPATH, or with -I/-S/-E) and a non-Python child; a verdict that rests on a directory listing or a
++stat instead of a read. A checker that starts a child process must be named in UNOBSERVED_CHILDREN with its reason, or
++the guard fails. A proof whose leg defers (exit 2, the runner's capability-unavailable signal) or grades a path outside
++the repo that this venue lacks is SKIPPED by name: its reads are not observed there.
++"""
++import hashlib
++import importlib.machinery
++import importlib.util
++import json
++import os
++import py_compile
++import shutil
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++ROOT = Path(__file__).resolve().parents[1]
++VALIDATOR = ROOT / "scripts" / "validate-ledger"
++RUNNER = ROOT / "scripts" / "proof-runner"
++PROOF_IDS = [f"S0-{index:02d}" for index in range(1, 13)]
++KEY = "extra_attested_inputs"
++# scripts/proof-runner `_clean_env`: a leg sees these from the parent, plus its spec's own env.
++PASSTHROUGH_ENV = ("PATH", "HOME", "LANG")
++# A checker that starts a child process the hook cannot reach, with the reason. Only S0-11: its rubric children run
++# under the checker's own isolation (`unshare --net` + `setpriv` to uid 65534, and the allow-listed environment of
++# `_allow_env()`, which drops PYTHONPATH), the very property S0-11 proves, so the hook cannot be passed in without
++# changing what it measures. Those children run S0-11's own fixtures (`proofs/S0-11/fixtures/*.py`, attested with the
++# proof); its `nsenter` probes and the unwrapped control run inherit the hook and are observed.
++UNOBSERVED_CHILDREN = {
++    "S0-11": "the isolated rubric children (allow-listed env, uid 65534) run proofs/S0-11/fixtures/*.py unobserved",
++}
++
++# The audit hook every leg's Python processes load (a sitecustomize on PYTHONPATH). It records each path a process
++# opens, in any mode (a module's source, a spec_from_file_location load and the main script included: the legs run
++# with an empty bytecode prefix, so every import opens its source), and each process it starts. It never raises: an
++# exception in an audit hook would fail the audited call.
++HOOK = r'''
++import json, os, sys
++
++_LOG = os.environ.get("ATTESTED_INPUTS_READ_LOG")
++_OUT = None
++if _LOG:
++    try:
++        _OUT = open(_LOG, "a", buffering=1)
++    except OSError:
++        _OUT = None
++
++
++def _emit(kind, value):
++    try:
++        _OUT.write(json.dumps([kind, value]) + "\n")
++    except Exception:
++        pass
++
++
++def _hook(event, args):
++    try:
++        if event == "open" and isinstance(args[0], (str, bytes, os.PathLike)):
++            _emit("read", os.path.abspath(os.fsdecode(args[0])))
++        elif event in ("subprocess.Popen", "os.system", "os.exec", "os.posix_spawn", "os.spawn"):
++            _emit("spawn", event + " " + repr(args[:2])[:240])
++    except Exception:
++        pass
++
++
++if _OUT is not None:
++    sys.addaudithook(_hook)
++'''
++
++
++def _load_validator():
++    loader = importlib.machinery.SourceFileLoader("stage0_validate_ledger", str(VALIDATOR))
++    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
++    loader.exec_module(module)
++    return module
++
++
++def _load_registry(root):
++    text = (root / "proofs" / "registry.yaml").read_text()
++    return json.loads("\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#")))
++
++
++def _write_registry(root, registry):
++    (root / "proofs" / "registry.yaml").write_text(json.dumps(registry, indent=1) + "\n")
++
++
++def _declare(root, proof_id, value):
++    registry = _load_registry(root)
++    entry = next(proof for proof in registry["proofs"] if proof["proof_id"] == proof_id)
++    entry[KEY] = value
++    _write_registry(root, registry)
++
++
++def _copy_contract(tmp_path):
++    """A minimal root: the real registry (its declarations name files this root does not carry) and the schemas."""
++    root = tmp_path / "repo"
++    (root / "proofs").mkdir(parents=True)
++    shutil.copy(ROOT / "proofs" / "registry.yaml", root / "proofs" / "registry.yaml")
++    shutil.copytree(ROOT / "proofs" / "schemas", root / "proofs" / "schemas")
++    return root
++
++
++def _integrity(root):
++    return subprocess.run([sys.executable, str(VALIDATOR), "integrity", "--root", str(root)],
++                          capture_output=True, text=True, timeout=30)
++
++
++def _findings_about_the_key(stdout):
++    return [line for line in stdout.splitlines() if KEY in line]
++
++
++def _run_leg(leg):
++    return {
++        "leg": leg,
++        "cmd": ["python3", "-c", "print('ok')"],
++        "started_at": "2026-09-26T00:00:00Z",
++        "finished_at": "2026-09-26T00:00:01Z",
++        "exit_code": 0 if leg == "positive" else 1,
++        "stdout_sha256": hashlib.sha256(b"").hexdigest(),
++        "stderr_sha256": hashlib.sha256(b"").hexdigest(),
++    }
++
++
++def _mint(root, proof_id):
++    """A result for `proof_id` in `root` whose attestation the REAL validator computes over that root."""
++    proof_dir = root / "proofs" / proof_id
++    proof_dir.mkdir(parents=True, exist_ok=True)
++    (proof_dir / "spec.json").write_text(json.dumps({"proof_id": proof_id}) + "\n")
++    runs = [_run_leg("positive"), _run_leg("negative")]
++    result = {
++        "proof_id": proof_id,
++        "classification": next(p for p in _load_registry(root)["proofs"] if p["proof_id"] == proof_id)["classification"],
++        "recorded_at": "2026-09-26T00:00:02Z",
++        "env_fingerprint": "sandbox:test",
++        "runs": runs,
++        "negative_control": {"fixture": "f", "expected_failure_reason": "r", "observed_failure_reason": "r"},
++        "attestation": _load_validator().proof_attestation(root, proof_id),
++        "digest": hashlib.sha256(json.dumps(runs, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
++    }
++    (proof_dir / "result.json").write_text(json.dumps(result, indent=2) + "\n")
++    return result
++
++
++# --- 1. the registry key: negative controls first ------------------------------------------------------------------
++
++@pytest.mark.parametrize(
++    ("value", "finding"),
++    [
++        ("upstream.lock.yaml", "must be a non-empty list of paths"),
++        ([], "must be a non-empty list of paths"),
++        ([7], "item 0 is not a string"),
++        (["/etc/hostname"], "/etc/hostname is absolute"),
++        (["docs/../upstream.lock.yaml"], "docs/../upstream.lock.yaml has a .. segment"),
++        (["docs/adr/*.md"], "docs/adr/*.md has a glob character"),
++        (["docs/adr/000?-x.md"], "docs/adr/000?-x.md has a glob character"),
++        (["docs/[ab].md"], "docs/[ab].md has a glob character"),
++        (["./upstream.lock.yaml"], "./upstream.lock.yaml is not in canonical form"),
++        (["docs//a.md"], "docs//a.md is not in canonical form"),
++        (["upstream.lock.yaml", "upstream.lock.yaml"], "upstream.lock.yaml is a duplicate"),
++        (["proofs/S0-05/spec.json"], "proofs/S0-05/spec.json is inside proofs/S0-05/ (already attested)"),
++        (["scripts/proof-runner"], "scripts/proof-runner is in the attestation closure (already attested)"),
++        (["proofs/schemas/result.schema.json"],
++         "proofs/schemas/result.schema.json is in the attestation closure (already attested)"),
++    ],
++    ids=["string", "empty", "non-string", "absolute", "dotdot", "star", "question", "bracket", "dot-segment",
++         "doubled-slash", "duplicate", "own-directory", "closure", "schema"],
++)
++def test_the_registry_refuses_a_malformed_declaration_by_name(tmp_path, value, finding):
++    root = _copy_contract(tmp_path)
++    _declare(root, "S0-05", value)
++
++    completed = _integrity(root)
++
++    assert completed.returncode == 1, completed.stdout + completed.stderr
++    assert f"registry-schema: S0-05 {KEY} {finding}" in completed.stdout.splitlines(), completed.stdout
++    assert completed.stderr == ""
++
++
++def _symlink_to_file(root):
++    (root / "docs").mkdir()
++    (root / "docs" / "real.md").write_text("real\n")
++    (root / "docs" / "input.md").symlink_to("real.md")
++
++
++def _directory(root):
++    (root / "docs" / "input.md").mkdir(parents=True)
++
++
++def _through_a_symlinked_directory(root):
++    (root / "elsewhere").mkdir()
++    (root / "elsewhere" / "input.md").write_text("real\n")
++    (root / "docs").symlink_to("elsewhere")
++
++
++def _dangling_symlink(root):
++    (root / "docs").mkdir()
++    (root / "docs" / "input.md").symlink_to("missing.md")
++
++
++@pytest.mark.parametrize("shape", [_symlink_to_file, _directory, _through_a_symlinked_directory, _dangling_symlink],
++                         ids=["symlink", "directory", "symlinked-parent", "dangling-symlink"])
++def test_the_registry_refuses_a_declared_path_that_is_not_a_regular_file(tmp_path, shape):
++    root = _copy_contract(tmp_path)
++    shape(root)
++    _declare(root, "S0-05", ["docs/input.md"])
++
++    completed = _integrity(root)
++
++    assert completed.returncode == 1, completed.stdout + completed.stderr
++    assert f"registry-schema: S0-05 {KEY} docs/input.md is not a regular file" in completed.stdout.splitlines()
++
++
++def test_the_registry_accepts_a_declared_regular_file(tmp_path):
++    """The positive control of the two refusal tests above: the same key and a regular file is no finding."""
++    root = _copy_contract(tmp_path)
++    (root / "docs").mkdir()
++    (root / "docs" / "input.md").write_text("input\n")
++    _declare(root, "S0-05", ["docs/input.md", "upstream.lock.yaml"])
++
++    completed = _integrity(root)
++
++    assert completed.returncode == 0, completed.stdout + completed.stderr
++    assert _findings_about_the_key(completed.stdout) == []
++
++
++def test_the_committed_declarations_pass_the_registry_check():
++    """Every committed declaration is well formed and names a regular file. The rc is not asserted: it stays 1 until the
++    re-mint that lands with this key (every committed result.json attests the validator and the registry)."""
++    completed = _integrity(ROOT)
++
++    assert _findings_about_the_key(completed.stdout) == [], completed.stdout
++    declared = {p["proof_id"] for p in _load_registry(ROOT)["proofs"] if KEY in p}
++    assert declared == {"S0-02", "S0-03", "S0-05", "S0-06", "S0-09", "S0-10", "S0-12"}
++
++
++# --- 2. the attestation ----------------------------------------------------------------------------------------------
++
++def _independent_attestation(root, proof_id):
++    """The attestation derived another way (os.walk, the registry read here): the closure files present, the schemas,
++    every file under the proof's directory except __pycache__ and its own two artifacts (a fixture of either name deeper
++    down is kept), and each declared path."""
++    expected = {}
++    for rel in ("scripts/proof-runner", "scripts/validate-ledger", "proofs/registry.yaml"):
++        if (root / rel).is_file():
++            expected[rel] = hashlib.sha256((root / rel).read_bytes()).hexdigest()
++    for name in os.listdir(root / "proofs" / "schemas"):
++        if name.endswith(".json"):
++            expected[f"proofs/schemas/{name}"] = hashlib.sha256((root / "proofs" / "schemas" / name).read_bytes()).hexdigest()
++    for directory, subdirectories, names in os.walk(root / "proofs" / proof_id):
++        subdirectories[:] = [name for name in subdirectories if name != "__pycache__"]
++        for name in names:
++            path = Path(directory) / name
++            if path.parent == root / "proofs" / proof_id and name in ("result.json", "blocked.json"):
++                continue
++            if path.is_file():
++                expected[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
++    entry = next(p for p in _load_registry(root)["proofs"] if p["proof_id"] == proof_id)
++    for rel in entry.get(KEY, []):
++        expected[rel] = hashlib.sha256((root / rel).read_bytes()).hexdigest()
++    return expected
++
++
++@pytest.mark.parametrize("proof_id", PROOF_IDS)
++def test_the_attestation_is_the_closure_the_directory_and_the_declared_files(proof_id):
++    """Over the real tree: a proof with no declaration gets exactly the pre-I59-A key set (the closure, the schemas, its
++    directory), and a declaring proof exactly that set plus its declared paths, each under its root-relative path."""
++    assert _load_validator().proof_attestation(ROOT, proof_id) == _independent_attestation(ROOT, proof_id)
++
++
++def test_a_changed_declared_input_makes_only_its_proof_invalid(tmp_path):
++    root = _copy_contract(tmp_path)
++    (root / "docs").mkdir()
++    (root / "docs" / "input.md").write_text("input\n")
++    _declare(root, "S0-05", ["docs/input.md"])
++    recorded = _mint(root, "S0-05")["attestation"]
++    _mint(root, "S0-04")  # declares nothing: the control that must stay PRESENT
++    assert recorded.get("docs/input.md") == hashlib.sha256(b"input\n").hexdigest()
++    before = _integrity(root)
++    assert before.returncode == 0, before.stdout
++    assert {"S0-04 PRESENT", "S0-05 PRESENT"} <= set(before.stdout.splitlines())
++
++    (root / "docs" / "input.md").write_text("inpuT\n")  # one byte
++    after = _integrity(root).stdout.splitlines()
++
++    assert "S0-05 INVALID" in after and "S0-04 PRESENT" in after, after
++    assert "attestation-mismatch: S0-05 docs/input.md" in after, after
++
++
++def test_a_deleted_declared_input_makes_its_proof_invalid(tmp_path):
++    root = _copy_contract(tmp_path)
++    (root / "docs").mkdir()
++    (root / "docs" / "input.md").write_text("input\n")
++    _declare(root, "S0-05", ["docs/input.md"])
++    _mint(root, "S0-05")
++    assert "S0-05 PRESENT" in _integrity(root).stdout.splitlines()
++
++    (root / "docs" / "input.md").unlink()
++    after = _integrity(root).stdout.splitlines()
++
++    assert "S0-05 INVALID" in after, after
++    assert "attestation-mismatch: S0-05 docs/input.md" in after, after
++    assert f"registry-schema: S0-05 {KEY} docs/input.md is not a regular file" in after, after
++
++
++def test_a_result_minted_while_its_declared_input_was_absent_is_invalid(tmp_path):
++    """The attestation skips an absent file (as it skips an absent closure file), so a result minted without its
++    declared input records no key for it and the recorded-vs-current comparison agrees; the verdict binding refuses it."""
++    root = _copy_contract(tmp_path)
++    _declare(root, "S0-05", ["docs/input.md"])
++    assert "docs/input.md" not in _mint(root, "S0-05")["attestation"]
++
++    after = _integrity(root).stdout.splitlines()
++
++    assert "S0-05 INVALID" in after, after
++    assert f"registry-schema: S0-05 {KEY} docs/input.md is not a regular file" in after, after
++    assert not any(line.startswith("attestation-mismatch: S0-05") for line in after), after
++
++
++def test_only_the_proofs_own_artifacts_are_left_out_of_its_attestation(tmp_path):
++    """A file named result.json or blocked.json deeper in a proof's directory is an input and is hashed; only the
++    proof's own two artifacts, directly in its directory, are left out. The live case: S0-08's marker-gate leg grades
++    proofs/S0-08/fixtures/malformed-marker/blocked.json, which the old skip-anywhere rule left unattested (I59-A A1)."""
++    root = _copy_contract(tmp_path)
++    proof_dir = root / "proofs" / "S0-05"
++    (proof_dir / "fixtures" / "marker").mkdir(parents=True)
++    for rel in ("result.json", "blocked.json", "fixtures/result.json", "fixtures/marker/blocked.json"):
++        (proof_dir / rel).write_text(json.dumps({"file": rel}) + "\n")
++
++    attestation = _load_validator().proof_attestation(root, "S0-05")
++
++    assert attestation.get("proofs/S0-05/fixtures/result.json") == \
++        hashlib.sha256((proof_dir / "fixtures" / "result.json").read_bytes()).hexdigest()
++    assert attestation.get("proofs/S0-05/fixtures/marker/blocked.json") == \
++        hashlib.sha256((proof_dir / "fixtures" / "marker" / "blocked.json").read_bytes()).hexdigest()
++    assert "proofs/S0-05/result.json" not in attestation and "proofs/S0-05/blocked.json" not in attestation
++    live = _load_validator().proof_attestation(ROOT, "S0-08")
++    assert "proofs/S0-08/fixtures/malformed-marker/blocked.json" in live, sorted(live)
++
++
++def test_a_changed_fixture_named_like_an_artifact_makes_its_proof_invalid(tmp_path):
++    """The binding end to end: a result minted with a fixture named blocked.json, then one byte of that fixture
++    changed, is INVALID for exactly that file (the old skip-anywhere rule left it PRESENT). S0-04 declares nothing, so
++    the minimal root needs no declared input."""
++    root = _copy_contract(tmp_path)
++    fixture = root / "proofs" / "S0-04" / "fixtures" / "marker" / "blocked.json"
++    fixture.parent.mkdir(parents=True)
++    fixture.write_text('{"marker": "malformed"}\n')
++    _mint(root, "S0-04")
++    assert "S0-04 PRESENT" in _integrity(root).stdout.splitlines()
++
++    fixture.write_text('{"marker": "malformeD"}\n')  # one byte
++    after = _integrity(root).stdout.splitlines()
++
++    assert "S0-04 INVALID" in after, after
++    assert "attestation-mismatch: S0-04 proofs/S0-04/fixtures/marker/blocked.json" in after, after
++
++
++def test_a_declared_symlink_is_never_hashed(tmp_path):
++    """The attestation reads no file through a symlink: a declared link to a file outside the root is not hashed (the
++    registry check refuses it by name, test above), so the validator never reads outside the tree it attests."""
++    root = _copy_contract(tmp_path)
++    (tmp_path / "outside.txt").write_text("outside the root\n")
++    (root / "docs").mkdir()
++    (root / "docs" / "input.md").symlink_to(tmp_path / "outside.txt")
++    _declare(root, "S0-05", ["docs/input.md"])
++
++    assert "docs/input.md" not in _load_validator().proof_attestation(root, "S0-05")
++
++
++def test_the_canonical_runner_records_the_declared_input(tmp_path):
++    """The runner's call site (scripts/proof-runner `validator.proof_attestation`): a real mint records the declared
++    file, the validator accepts it, and a one-byte change to that file turns the minted proof INVALID."""
++    root = _copy_contract(tmp_path)
++    (root / "docs").mkdir()
++    (root / "docs" / "input.md").write_text("input\n")
++    _declare(root, "S0-05", ["docs/input.md"])
++    spec = {"proof_id": "S0-05", "legs": [
++        {"leg": "negative", "cmd": [sys.executable, "-c", "import sys; print('denied'); raise SystemExit(1)"],
++         "cwd": ".", "timeout_s": 10, "expect": {"exit_code": 1, "failure_reason": "denied"}},
++        {"leg": "positive", "cmd": [sys.executable, "-c", "print('ok')"], "cwd": ".", "timeout_s": 10,
++         "expect": {"exit_code": 0}},
++    ]}
++    (root / "proofs" / "S0-05").mkdir()
++    (root / "proofs" / "S0-05" / "spec.json").write_text(json.dumps(spec) + "\n")
++
++    minted = subprocess.run([sys.executable, str(RUNNER), "run", "--proof", "S0-05", "--venue", "sandbox",
++                             "--root", str(root)], capture_output=True, text=True, timeout=60)
++
++    assert minted.returncode == 0, minted.stdout + minted.stderr
++    attestation = json.loads((root / "proofs" / "S0-05" / "result.json").read_text())["attestation"]
++    assert attestation.get("docs/input.md") == hashlib.sha256(b"input\n").hexdigest()
++    assert "S0-05 PRESENT" in _integrity(root).stdout.splitlines()
++    (root / "docs" / "input.md").write_text("inpuT\n")
++    assert "attestation-mismatch: S0-05 docs/input.md" in _integrity(root).stdout.splitlines()
++
++
++# --- 3. the drift guard ----------------------------------------------------------------------------------------------
++
++def _observe(root, proof_id, scratch):
++    """Run every leg of the proof's spec as scripts/proof-runner runs it (the literal command, the leg's cwd, the
++    runner's clean environment and the leg's env) with the audit hook loaded and a fresh, empty bytecode prefix per leg,
++    so every import opens its source, never a .pyc left in the tree. Returns (exits, reads, spawns): each leg's (index, exit,
++    expected, output tail); the root-relative files any hooked process opened; each process start."""
++    hook_dir = scratch / "hook"
++    hook_dir.mkdir(parents=True, exist_ok=True)
++    (hook_dir / "sitecustomize.py").write_text(HOOK)
++    real_root = os.path.realpath(root)
++    spec = json.loads((root / "proofs" / proof_id / "spec.json").read_text())
++    exits, reads, spawns = [], set(), []
++    for index, leg in enumerate(spec["legs"]):
++        log = scratch / f"leg{index}.jsonl"
++        environment = {name: os.environ[name] for name in PASSTHROUGH_ENV if name in os.environ}
++        environment.update(leg.get("env") or {})
++        environment["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hook_dir), environment.get("PYTHONPATH")]))
++        environment["ATTESTED_INPUTS_READ_LOG"] = str(log)
++        environment["PYTHONPYCACHEPREFIX"] = str(scratch / f"bytecode{index}")
++        completed = subprocess.run(leg["cmd"], cwd=root / leg["cwd"], env=environment, capture_output=True,
++                                   timeout=leg["timeout_s"])
++        tail = (completed.stdout + completed.stderr).decode(errors="replace")[-300:]
++        exits.append((index, completed.returncode, leg["expect"]["exit_code"], tail))
++        for line in log.read_text().splitlines() if log.exists() else []:
++            kind, value = json.loads(line)
++            if kind == "spawn":
++                spawns.append(value)
++                continue
++            real = os.path.realpath(value)
++            if real.startswith(real_root + os.sep) and os.path.isfile(real):
++                reads.add(Path(os.path.relpath(real, real_root)).as_posix())
++    return exits, reads, spawns
++
++
++def _verdict(root, proof_id, observation):
++    """The guard: every leg graded (its spec's exit code), the hook saw each leg's own script, every repo file read
++    outside the proof's directory is in its attestation (the closure or a declaration), every file read inside it is too,
++    and no child process escaped unnamed. The proof's own two artifacts are
++    exempt: a re-mint may read the result it replaces (S0-11's forbidden-op sweep reads every non-.md file of its
++    directory), and an artifact cannot attest itself. An AssertionError names what is wrong."""
++    exits, reads, spawns = observation
++    wrong = [(index, got, want, tail) for index, got, want, tail in exits if got != want]
++    assert not wrong, f"{proof_id}: leg(s) did not grade (index, exit, expected, output tail): {wrong}"
++    spec = json.loads((root / "proofs" / proof_id / "spec.json").read_text())
++    scripts = {Path(os.path.relpath(os.path.realpath(root / leg["cwd"] / leg["cmd"][1]), os.path.realpath(root))).as_posix()
++               for leg in spec["legs"] if len(leg["cmd"]) > 1 and leg["cmd"][1].endswith(".py")}
++    assert scripts <= reads, f"{proof_id}: the hook did not observe the legs' own scripts {sorted(scripts - reads)}"
++    own = f"proofs/{proof_id}/"
++    uncovered = reads - set(_load_validator().proof_attestation(root, proof_id)) - {own + "result.json", own + "blocked.json"}
++    outside = sorted(path for path in uncovered if not path.startswith(own))
++    assert not outside, (f"{proof_id}: its checker reads repo files its attestation does not cover; declare them in "
++                         f"proofs/registry.yaml {KEY}: {outside}")
++    inside = sorted(path for path in uncovered if path.startswith(own))
++    assert not inside, f"{proof_id}: its checker reads files inside its directory that its attestation does not cover: {inside}"
++    if proof_id not in UNOBSERVED_CHILDREN:
++        assert not spawns, (f"{proof_id}: its checker starts child processes the hook may not reach; observe them or "
++                            f"name the proof in UNOBSERVED_CHILDREN: {spawns[:3]}")
++
++
++def _absent_outside_paths(spec):
++    """The (leg, argument) pairs naming an absolute path this venue lacks (S0-07's Fubuki checkout on CI)."""
++    return [(index, argument) for index, leg in enumerate(spec["legs"]) for argument in leg["cmd"]
++            if argument.startswith("/") and not os.path.exists(argument)]
++
++
++def _deferred_legs(observation):
++    """The legs that exited 2, scripts/proof-runner's capability-unavailable signal, where the spec expects otherwise."""
++    return [(index, tail) for index, got, want, tail in observation[0] if got == 2 and want != 2]
++
++
++@pytest.mark.parametrize("proof_id", PROOF_IDS)
++def test_every_repo_file_a_checker_reads_is_attested(tmp_path, proof_id):
++    absent = _absent_outside_paths(json.loads((ROOT / "proofs" / proof_id / "spec.json").read_text()))
++    if absent:
++        pytest.skip(f"{proof_id}: leg(s) grade paths outside the repo that this venue lacks, so its reads are not "
++                    f"observed here: {absent}")
++    observation = _observe(ROOT, proof_id, tmp_path)
++    deferred = _deferred_legs(observation)
++    if deferred:
++        pytest.skip(f"{proof_id}: leg(s) deferred with exit 2 (capability unavailable on this venue), so its reads are "
++                    f"not observed here: {deferred}")
++    _verdict(ROOT, proof_id, observation)
++
++
++PLANTED = {
++    # a spec_from_file_location on a path joined at run time
++    "spec_from_file_location": (
++        "proofs/S0-01/planted_a.py",
++        "import importlib.util as _iu, os as _os\n"
++        "_spec = _iu.spec_from_file_location('planted_a', _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),"
++        " '..', 'S0-01', 'planted_a.py'))\n"
++        "_spec.loader.exec_module(_iu.module_from_spec(_spec))\n",
++    ),
++    # a read_text on a root-relative Path expression
++    "read_text": (
++        "docs/planted_b.md",
++        "from pathlib import Path as _Path\n"
++        "_Path(__file__).resolve().parents[2].joinpath('docs', 'planted_b.md').read_text()\n",
++    ),
++    # an import through a sys.path entry
++    "sys_path_import": (
++        "lib/planted_c.py",
++        "import sys as _sys\n"
++        "from pathlib import Path as _Path\n"
++        "_sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / 'lib'))\n"
++        "import planted_c  # noqa: E402,F401\n",
++    ),
++}
++
++
++def _scratch_s0_09(tmp_path, planted_code=None, declare=()):
++    """A scratch copy of S0-09 (its directory, the files it declares, the registry) whose checker runs `planted_code`
++    at import time, before it grades; every PLANTED target exists in it. `declare` adds paths to S0-09's declaration."""
++    root = tmp_path / "scratch"
++    shutil.copytree(ROOT / "proofs" / "S0-09", root / "proofs" / "S0-09", ignore=shutil.ignore_patterns("__pycache__"))
++    (root / "proofs" / "S0-09" / "result.json").unlink(missing_ok=True)
++    shutil.copy(ROOT / "proofs" / "registry.yaml", root / "proofs" / "registry.yaml")
++    for rel in next(p for p in _load_registry(ROOT)["proofs"] if p["proof_id"] == "S0-09").get(KEY, []):
++        (root / rel).parent.mkdir(parents=True, exist_ok=True)
++        shutil.copy(ROOT / rel, root / rel)
++    for rel, _code in PLANTED.values():
++        (root / rel).parent.mkdir(parents=True, exist_ok=True)
++        (root / rel).write_text("VALUE = 1\n")
++        if rel.endswith(".py"):  # a valid .pyc beside it, as the live tree has: only the empty prefix makes the source read
++            py_compile.compile(str(root / rel), doraise=True)
++    if planted_code is not None:
++        checker = root / "proofs" / "S0-09" / "check_conformance.py"
++        text = checker.read_text()
++        anchor = 'if __name__ == "__main__":'
++        assert text.count(anchor) == 1
++        checker.write_text(text.replace(anchor, planted_code + "\n\n" + anchor))
++    if declare:
++        registry = _load_registry(root)
++        entry = next(p for p in registry["proofs"] if p["proof_id"] == "S0-09")
++        entry[KEY] = sorted(set(entry.get(KEY, [])) | set(declare))
++        _write_registry(root, registry)
++    return root
++
++
++def test_the_guard_passes_the_unplanted_scratch_copy(tmp_path):
++    """The baseline of the planted controls below: the copy itself is clean."""
++    root = _scratch_s0_09(tmp_path)
++    _verdict(root, "S0-09", _observe(root, "S0-09", tmp_path / "observe"))
++
++
++@pytest.mark.parametrize("shape", sorted(PLANTED))
++def test_the_guard_reds_on_an_undeclared_read(tmp_path, shape):
++    """NEGATIVE CONTROL: one undeclared read of each shape, its path built at run time."""
++    target, code = PLANTED[shape]
++    root = _scratch_s0_09(tmp_path, code)
++
++    with pytest.raises(AssertionError) as caught:
++        _verdict(root, "S0-09", _observe(root, "S0-09", tmp_path / "observe"))
++
++    assert f"{KEY}: {[target]}" in str(caught.value), str(caught.value)
++
++
++@pytest.mark.parametrize("shape", sorted(PLANTED))
++def test_the_guard_passes_the_same_read_once_declared(tmp_path, shape):
++    """The negative control's pair: the same planted read, declared, is covered by the attestation, so the only reason
++    the control above reds is the missing declaration."""
++    target, code = PLANTED[shape]
++    root = _scratch_s0_09(tmp_path, code, declare=[target])
++    _verdict(root, "S0-09", _observe(root, "S0-09", tmp_path / "observe"))
++
++
++def test_the_guard_reds_on_an_unattested_read_inside_the_proof_directory(tmp_path):
++    """The inside rule: a file inside the proof's directory that its attestation leaves out is not covered. Since the
++    fixture-named gap closed, what the attestation leaves out inside a directory is __pycache__ (and the proof's own two
++    artifacts, which the guard exempts), so the planted read is a data file under a __pycache__ directory."""
++    code = ("from pathlib import Path as _Path\n"
++            "_Path(__file__).resolve().parent.joinpath('fixtures', '__pycache__', 'planted.json').read_text()\n")
++    root = _scratch_s0_09(tmp_path, code)
++    (root / "proofs" / "S0-09" / "fixtures" / "__pycache__").mkdir(parents=True)
++    (root / "proofs" / "S0-09" / "fixtures" / "__pycache__" / "planted.json").write_text("{}\n")
++
++    with pytest.raises(AssertionError) as caught:
++        _verdict(root, "S0-09", _observe(root, "S0-09", tmp_path / "observe"))
++
++    assert "reads files inside its directory that its attestation does not cover: " \
++           "['proofs/S0-09/fixtures/__pycache__/planted.json']" in str(caught.value), str(caught.value)
++
++
++def test_the_guard_reds_on_a_leg_that_did_not_grade(tmp_path):
++    """A checker that dies before it reads anything must not read as clean."""
++    root = _scratch_s0_09(tmp_path, "raise SystemExit(3)\n")
++
++    with pytest.raises(AssertionError) as caught:
++        _verdict(root, "S0-09", _observe(root, "S0-09", tmp_path / "observe"))
++
++    assert "S0-09: leg(s) did not grade" in str(caught.value)
++    assert "(0, 3, 0, " in str(caught.value) and "(1, 3, 1, " in str(caught.value), str(caught.value)
++
++
++def test_the_guard_reds_on_an_unnamed_child_process(tmp_path):
++    """A checker that starts a child process is named in UNOBSERVED_CHILDREN or the guard reds."""
++    root = _scratch_s0_09(tmp_path, "import subprocess as _sp, sys as _sys\n"
++                                    "_sp.run([_sys.executable, '-c', 'pass'], check=True)\n")
++
++    with pytest.raises(AssertionError) as caught:
++        _verdict(root, "S0-09", _observe(root, "S0-09", tmp_path / "observe"))
++
++    assert "S0-09: its checker starts child processes" in str(caught.value)
++
++
++def test_the_guard_reds_when_the_hook_saw_nothing():
++    """A hook that never loaded (an environment that dropped it) observes no read at all, so every coverage check would
++    pass over an empty set: the guard's own-script check refuses that observation."""
++    with pytest.raises(AssertionError) as caught:
++        _verdict(ROOT, "S0-09", ([(0, 0, 0, ""), (1, 1, 1, "")], set(), []))
++
++    assert "S0-09: the hook did not observe the legs' own scripts ['proofs/S0-09/check_conformance.py']" \
++        in str(caught.value), str(caught.value)
++
++
++def test_the_skips_name_only_what_cannot_run_on_this_venue(tmp_path):
++    """A skip is not a pass: only an absent absolute argument or a deferring leg skips, never a failing one."""
++    present = tmp_path / "present"
++    present.mkdir()
++    spec = {"legs": [{"cmd": ["python3", "proofs/S0-07/check.py", str(present)]},
++                     {"cmd": ["python3", "relative/missing.py", str(tmp_path / "absent")]}]}
++    assert _absent_outside_paths(spec) == [(1, str(tmp_path / "absent"))]
++    assert _deferred_legs(([(0, 2, 0, "deferred"), (1, 1, 0, "failed"), (2, 2, 2, "expected two")], set(), [])) \
++        == [(0, "deferred")]
