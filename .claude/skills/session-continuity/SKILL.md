@@ -72,6 +72,7 @@ origin state, task state, or owner statements contradict what you remember:
 
 - **Pushed commits** — authoritative; reset the branch to origin rather than
   re-verifying duplicate local work.
+- **The transcript does NOT hold every assistant text (VERIFY-S1-RATE F1, measured 2026-09-26):** since about 2026-09-23 a reply over about 200 characters written before a tool call is often recorded as two signed `thinking` blocks and no `text` block, mostly in the Opus 5.5 lane threads (about 2,000 such messages a day; the main thread 1 of 134 after its compaction). A reader of assistant TEXT (chat digests, session exports, `s1_scores.py`) misses those replies, and a thinking block's content is never read to recover them. Tool calls, tool inputs and tool results are recorded whole: anything that must survive in the record goes into a short text of its own or a tool input.
 - **The transcript JSONL records every Write tool call with full content** —
   lost scratchpad briefs, wrapper scripts, and drafts are recoverable by
   extracting `tool_use` entries (`name == "Write"`) and replaying their
