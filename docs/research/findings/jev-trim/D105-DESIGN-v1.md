@@ -57,8 +57,10 @@ from the active context, "almost on a turn-by-turn basis". "The logs are still t
 
 | Quantity | This session (audit §3) | A Hermes lane |
 |---|---|---|
-| Fixed start of the context | ~130k (system + tools ~91k; CLAUDE.md, re-injected skills, listings and summary ~39k) | small (role + `.hermes.md` ≤ 48,000 chars + brief); NOT measured here: PC only |
-| Growth per request | median 1,565 tokens; p90 4,161; max 26,740 | NOT measured here: PC only |
+| Fixed start of the context | ~130k (system + tools ~91k; CLAUDE.md, re-injected skills, listings and summary ~39k) | small (role + `.hermes.md` ≤ 48,000 chars + brief); not measured |
+| Mean prompt per API call | median 461,918 per request (D-105; whole session to 09-25) | 50,680 to 100,119 tokens per session, over the six newest lane profiles' 16 sessions with calls ((input + cache read) / calls from each profile's `state.db`; read-only bridge probe, 2026-09-28 23:0xZ) |
+| Live compression settings | auto-compaction near 784k | every probed lane profile: `compression.enabled: true`, `threshold: 0.5` (the code floors it to 0.75), `target_ratio: 0.2`, `protect_first_n: 3`, `protect_last_n: 20`; no `context.engine` line (the built-in compressor); `context_length: 131072` in the newest profile only |
+| Growth per request | median 1,565 tokens; p90 4,161; max 26,740 | not measured (the session store keeps per-session totals, not per-request sizes) |
 | Largest parts of an over-budget context | prior thinking (25.8% of the whole, median); Bash results; tool results 51-200 requests old | NOT measured here |
 | Where compaction happens now | ~784k (six automatic compactions in the audit's window, 116-206 s each) | ~98k: the built-in threshold is floored at 0.75 under a 512K window (audit B6) |
 | Prompt cache | 99.4% of re-sent tokens are cache reads | vLLM prefix cache; a change to an earlier message re-prefills the rest |
