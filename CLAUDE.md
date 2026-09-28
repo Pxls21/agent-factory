@@ -233,12 +233,9 @@ build continues; the first pending increment is named in the ledger.
 ### GROUND TRUTH — read in this order before ANY build work:
 1. **`todo/BUILD-TASKLIST.md`** — THE build spine and the SINGLE SOURCE OF TRUTH for live build
    status (task count, what's done, what's pending) — this file is a distillation and will drift;
-   the ledger wins on any count/status disagreement. TASK-DB MIRROR RULE: every task create and
-   every status close is mirrored into its §LIVE ledger in the SAME increment; on every resume the
-   task DB is restored FROM the ledger (+ the transcript's TaskCreate/TaskUpdate record), never
-   from memory; task KEYS are SUBJECT SLUGS, never bare #N (slot numbers collide across
-   containers). (New session: "read `todo/BUILD-TASKLIST.md`, load into the task list, start at
-   the first pending task.")
+   the ledger wins on any count/status disagreement. The harness task list is a VIEW of it (D-102,
+   live 2026-09-28; Task tracking below). (New session: "read `todo/BUILD-TASKLIST.md`, start at the
+   first pending task"; the SessionStart hook prints the view.)
 2. **`docs/02_COMPONENT_AUDIT.md`** — the VERIFIED component inventory: read it FIRST among the
    plan docs, it corrects the v2 plan's optimistic claims. Then `docs/01_ARCHITECTURE.md` …
    `docs/11_DREAM_PHASE.md` (the CURRENT plan; reading order in `README.md`);
@@ -359,17 +356,22 @@ command.
 **Pipeline order is load-bearing: interview → SEED → task-breakdown → build.** To-dos come FROM
 the seed.
 
-**Task tracking** — keep the in-session TODO and project task list IN SYNC. After writing a task
-breakdown (`tasks/*.md`), register every increment as a project task (TaskCreate) BEFORE building.
-The breakdown is the design record; the task list is the execution tracker. Both must agree.
-**TASK-SURFACE SYNC (owner ruling 2026-08-31, inherited: "keep them where they are now, but
-update them more often").** The task surfaces stay AS-IS — no consolidation: `todo/BUILD-TASKLIST.md`
-(SSoT), `tasks/*.md` breakdowns/briefs, the in-session task DB, and wiki live-state's active-lanes
-block. The DUTY is freshness: when a task's status materially changes, the SAME increment updates
-the ledger AND the task DB, and the wiki live-state at the next stop-gate; a `tasks/*.md`
-breakdown whose work lands gets a one-line STATUS stamp at its top (date + outcome + commit)
-rather than deletion. The in-session task DB is EXPENDABLE (container resets wipe it); on any
-resume where it looks empty, rebuild it from the ledger + transcripts, never from memory. **The DB holds ACTIVE tasks only (2026-09-25, measured: the harness's task-list reminder re-sent 12.0% of this session's context tokens, `docs/research/findings/jev-pipes/CONTEXT-BUDGET-2026-09-25.md`): in flight or next up; the rest of the backlog stays open in the ledger and returns to the DB when it becomes active. Before that, open tasks only (2026-09-24, AF-AP-182's sibling): a task closed in the ledger is deleted from the DB (`TaskUpdate status=deleted`) in the same increment, because every task reminder repeats the whole list; 200 closed rows rode along in each reminder until then. A rebuild restores open tasks only.**
+**Task tracking — the task list is a VIEW of the ledger (D-102, live 2026-09-28).** `scripts/task_sync.py`,
+run by the Stop and SessionStart hooks, rewrites the harness's task list from `todo/BUILD-TASKLIST.md`: its
+`## 2.` headlines and its `## 1b. Task overrides` table. Task ids are the ledger's ids. A hand TaskCreate,
+TaskUpdate or delete lasts only until the next Stop, so every task change is a ledger edit. Register with a
+headline `TASK #N REGISTERED` (add `(backlog)` to keep it out of the view); move it with `TASK #N DISPATCHED`,
+`HOME` or `LANDED`; close it with `TASK #N CLOSED`. Put the event word next to its id: a clause such as
+`X CLOSED AND Y (TASK #N) DISPATCHED` binds wrongly. Where a headline cannot say it, add a row to
+`## 1b. Task overrides` (it stays between `## 1.` and `## 2.`; never add a `## ` heading after `## 2.`).
+The view holds active tasks only, in flight or next up (the task reminder re-sent 12.0% of the context,
+`docs/research/findings/jev-pipes/CONTEXT-BUDGET-2026-09-25.md`): park an idle task as `backlog`. After
+writing a task breakdown (`tasks/*.md`), register its increments in the ledger BEFORE building.
+**TASK-SURFACE SYNC (owner ruling 2026-08-31, inherited: "keep them where they are now, but update them
+more often"):** `tasks/*.md` breakdowns and briefs and wiki live-state's active-lanes block stay; update
+live-state at the next stop-gate, and stamp a landed breakdown with a one-line STATUS at its top (date +
+outcome + commit). The off switch is `.jev/task-sync-off`, the log `.jev/task-sync/sync.log`; the manual
+rules this replaced are in skill `session-continuity`.
 
 ## Feature Workflow (summary)
 

@@ -326,3 +326,31 @@ once they are).
 
 *(Since CTX1, D-089, the post-commit hook re-indexes a graph only when the commit changed a file that graph
 reads; a commit of only Markdown, `wiki/`, `todo/`, `transcripts/` or `tasks/` re-indexes none.)*
+
+## The task list before the view (superseded by D-102 on 2026-09-28)
+
+Since D-102 went live, the Stop and SessionStart hooks write the task list from the ledger (`scripts/task_sync.py`;
+CLAUDE.md's Task tracking paragraph). The text below left CLAUDE.md VERBATIM that day, as the record of the manual
+method it replaced; the task-DB rebuild steps above (step 0, and "The task DB is a rollback victim too") belong to the
+same method.
+
+1. **`todo/BUILD-TASKLIST.md`** — THE build spine and the SINGLE SOURCE OF TRUTH for live build
+   status (task count, what's done, what's pending) — this file is a distillation and will drift;
+   the ledger wins on any count/status disagreement. TASK-DB MIRROR RULE: every task create and
+   every status close is mirrored into its §LIVE ledger in the SAME increment; on every resume the
+   task DB is restored FROM the ledger (+ the transcript's TaskCreate/TaskUpdate record), never
+   from memory; task KEYS are SUBJECT SLUGS, never bare #N (slot numbers collide across
+   containers). (New session: "read `todo/BUILD-TASKLIST.md`, load into the task list, start at
+   the first pending task.")
+
+**Task tracking** — keep the in-session TODO and project task list IN SYNC. After writing a task
+breakdown (`tasks/*.md`), register every increment as a project task (TaskCreate) BEFORE building.
+The breakdown is the design record; the task list is the execution tracker. Both must agree.
+**TASK-SURFACE SYNC (owner ruling 2026-08-31, inherited: "keep them where they are now, but
+update them more often").** The task surfaces stay AS-IS — no consolidation: `todo/BUILD-TASKLIST.md`
+(SSoT), `tasks/*.md` breakdowns/briefs, the in-session task DB, and wiki live-state's active-lanes
+block. The DUTY is freshness: when a task's status materially changes, the SAME increment updates
+the ledger AND the task DB, and the wiki live-state at the next stop-gate; a `tasks/*.md`
+breakdown whose work lands gets a one-line STATUS stamp at its top (date + outcome + commit)
+rather than deletion. The in-session task DB is EXPENDABLE (container resets wipe it); on any
+resume where it looks empty, rebuild it from the ledger + transcripts, never from memory. **The DB holds ACTIVE tasks only (2026-09-25, measured: the harness's task-list reminder re-sent 12.0% of this session's context tokens, `docs/research/findings/jev-pipes/CONTEXT-BUDGET-2026-09-25.md`): in flight or next up; the rest of the backlog stays open in the ledger and returns to the DB when it becomes active. Before that, open tasks only (2026-09-24, AF-AP-182's sibling): a task closed in the ledger is deleted from the DB (`TaskUpdate status=deleted`) in the same increment, because every task reminder repeats the whole list; 200 closed rows rode along in each reminder until then. A rebuild restores open tasks only.**

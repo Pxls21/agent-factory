@@ -1,7 +1,8 @@
 """scripts/hook_context.py and scripts/install_session_hooks.py (task #214, AF-AP-172).
 
 hook_context turns a hook's plain stdout into additionalContext (the only PreToolUse/PostToolUse output the model reads,
-measured live 2026-09-24); install_session_hooks registers the six project hooks for a session rooted above the repo.
+measured live 2026-09-24); install_session_hooks registers the seven project hooks for a session rooted above the repo
+(task_sync.py, LS-B7, on Stop and SessionStart with a 30-second timeout; its own behavior is tests/test_task_sync.py's).
 The end-to-end tests run the INSTALLED command strings through a shell, so a quoting or path defect fails here.
 Since S1-RATE (task #295) the wrapper stamps what it hands the model: a first line `[S1 <id> <source>]` and a last line
 that asks for the score. `unstamp` checks both against literals (tests/test_s1_rate.py holds the stamp's own tests), and
@@ -10,6 +11,7 @@ AF_S1_RATE_STATE keeps the wrapper's telemetry out of the real .jev/.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WRAP = ROOT / "scripts" / "hook_context.py"
 INSTALL = ROOT / "scripts" / "install_session_hooks.py"
 MARKER = f"{ROOT}/.claude/hooks/"
+SYNC = f"{ROOT}/scripts/task_sync.py"
 STAMP = re.compile(r"\[S1 (s1-[0-9a-f]{8}) ([A-Za-z0-9_.-]+)\]")
 REQUEST = ('Begin your next text with "S1-RATE {id} rel=R use=U" (+ a note <=120 chars: why, if a 0), one line per '
            'unscored injection. rel 0 unrelated,1 same area not this step,2 relevant to this step,3 governs it; '
@@ -109,16 +112,18 @@ def test_real_edit_snapshot_screen_reaches_the_model_form():
 
 # ---- install_session_hooks.py ----
 
-def test_fresh_install_registers_the_six_hooks(tmp_path):
+def test_fresh_install_registers_the_seven_hooks(tmp_path):
     target = tmp_path / ".claude" / "settings.json"
     r = install(target)
-    assert r.returncode == 0 and "installed 6" in r.stdout
+    assert r.returncode == 0 and "installed 7" in r.stdout
     hooks = json.loads(target.read_text())["hooks"]
     assert sorted(hooks) == ["PostToolUse", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"]
     cmds = {ev: [h["command"] for e in v for h in e["hooks"]] for ev, v in hooks.items()}
-    assert {ev: len(c) for ev, c in cmds.items()} == {"PostToolUse": 1, "PreToolUse": 2, "SessionStart": 1, "Stop": 1,
+    assert {ev: len(c) for ev, c in cmds.items()} == {"PostToolUse": 1, "PreToolUse": 2, "SessionStart": 2, "Stop": 2,
                                                       "UserPromptSubmit": 2}
-    assert all(MARKER in c for cs in cmds.values() for c in cs)
+    assert all(MARKER in c or SYNC in c for cs in cmds.values() for c in cs)
+    assert cmds["SessionStart"][1].endswith(f"python3 {SYNC} --hook session-start")       # LS-B7: after the others
+    assert cmds["Stop"][1].endswith(f"python3 {SYNC} --hook stop")
     assert "hook_context.py PostToolUse --" in cmds["PostToolUse"][0]
     assert "hook_context.py PreToolUse --" in cmds["PreToolUse"][0]
     assert hooks["PostToolUse"][0]["matcher"] == "Edit|Write|Read"
@@ -219,7 +224,7 @@ def _sh(cmd, stdin="{}", cwd="/", env=None):
 
 def test_every_installed_command_fails_open_when_the_repo_is_absent(tmp_path):
     cmds = _all_commands(tmp_path / "no-such-repo")
-    assert len(cmds) == 7
+    assert len(cmds) == 9
     for ev, cmd in cmds:
         r = _sh(cmd)
         assert (r.returncode, r.stdout) == (0, ""), (ev, r.returncode, r.stdout, r.stderr)
@@ -282,7 +287,7 @@ def test_a_repo_path_that_needs_quoting_stays_idempotent_and_removable(tmp_path)
     foreign = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo other"}]}]}}
     once = ish.merged(foreign, root, remove=False)
     assert ish.merged(once, root, remove=False) == once
-    assert sum(len(v) for v in once["hooks"].values()) == 8
+    assert sum(len(v) for v in once["hooks"].values()) == 10
     assert ish.merged(once, root, remove=True) == foreign
 
 
@@ -322,3 +327,89 @@ def test_the_install_keeps_the_file_mode(tmp_path):
     target.chmod(0o600)
     assert install(target).returncode == 0
     assert (target.stat().st_mode & 0o777) == 0o600
+
+
+# ---- LS-B7: task_sync.py on Stop and SessionStart, each with a 30-second timeout (the brief's evidence demand 5) ----
+
+SYNC_LEDGER = ("# BUILD TASK LIST\n\n## 2. LIVE ledger (append-only sync blocks; newest first)\n\n"
+               f"**TASK #10 REGISTERED {chr(0x2014)} 2026-09-28 10:0xZ.** #10 (the sync hook): write the view.\n")
+
+
+def _sync_repo(tmp_path):
+    """A temp repo with a copy of task_sync.py and a one-task ledger: the hooks never see the main tree's .jev/."""
+    repo = _fake_repo(tmp_path)
+    shutil.copyfile(ROOT / "scripts" / "task_sync.py", repo / "scripts" / "task_sync.py")
+    (repo / "todo").mkdir()
+    (repo / "todo" / "BUILD-TASKLIST.md").write_text(SYNC_LEDGER, encoding="utf-8")
+    return repo
+
+
+def _sync_groups(hooks):
+    return {ev: [g for g in hooks[ev] if "scripts/task_sync.py" in g["hooks"][0]["command"]]
+            for ev in ("SessionStart", "Stop")}
+
+
+def test_the_task_sync_hooks_are_installed_with_a_30_second_timeout(tmp_path):
+    target = tmp_path / "settings.json"
+    assert install(target).returncode == 0
+    hooks = json.loads(target.read_text())["hooks"]
+    groups = _sync_groups(hooks)
+    for ev, arg in (("SessionStart", "session-start"), ("Stop", "stop")):
+        assert len(groups[ev]) == 1 and "matcher" not in groups[ev][0]
+        h = groups[ev][0]["hooks"]
+        assert len(h) == 1 and type(h[0].get("timeout")) is int and h[0].get("timeout") == 30
+        assert h[0]["command"] == (f"[ -f {ROOT}/scripts/task_sync.py ] || exit 0; cd {ROOT} || exit 0; "
+                                   f"python3 {SYNC} --hook {arg}")
+    others = [h for v in hooks.values() for g in v for h in g["hooks"] if "task_sync.py" not in h["command"]]
+    assert len(others) == 7 and all("timeout" not in h for h in others)
+
+
+def test_the_installed_task_sync_commands_run_against_a_temp_repo(tmp_path):
+    repo = _sync_repo(tmp_path)
+    groups = _sync_groups(ish.our_hooks(repo))
+    stop, start = (groups[ev][0]["hooks"][0]["command"] for ev in ("Stop", "SessionStart"))
+    env = dict(os.environ, CLAUDE_CONFIG_DIR=str(tmp_path / "config"))
+    d = tmp_path / "config" / "tasks" / "s1"
+    r = _sh(stop, stdin=json.dumps({"session_id": "s1"}), env=env)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "") and [p.name for p in d.glob("*.json")] == ["10.json"]
+    r = _sh(start, stdin=json.dumps({"session_id": "s1", "source": "startup"}), env=env)
+    assert r.returncode == 0 and r.stdout.startswith("Task list = the ledger's view")
+    assert "#10 pending t10-sync-hook-write-the-view" in r.stdout
+    (repo / ".jev" / "task-sync-off").write_text("off\n")          # the off switch: both exit 0 at once, write no file
+    (d / "10.json").unlink()
+    for cmd in (stop, start):
+        r = _sh(cmd, stdin=json.dumps({"session_id": "s1"}), env=env)
+        assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+    assert not (d / "10.json").exists()
+    (repo / ".jev" / "task-sync-off").unlink()                      # a sync error on Stop: exit 1, one line, never 2
+    (repo / "todo" / "BUILD-TASKLIST.md").write_text("# no live section\n")
+    r = _sh(stop, stdin=json.dumps({"session_id": "s1"}), env=env)
+    assert (r.returncode, r.stdout, len(r.stderr.splitlines())) == (1, "", 1)
+
+
+def test_an_older_task_sync_spelling_is_replaced_on_install(tmp_path):
+    target = tmp_path / "settings.json"
+    old = {"type": "command", "command": f"python3 {SYNC} --hook stop --an-older-spelling"}
+    target.write_text(json.dumps({"hooks": {"Stop": [{"hooks": [old]}]}}))
+    assert install(target).returncode == 0
+    cmds = [h["command"] for g in json.loads(target.read_text())["hooks"]["Stop"] for h in g["hooks"]]
+    assert sum("task_sync.py" in c for c in cmds) == 1 and old["command"] not in cmds
+    assert install(target, "--check").returncode == 0
+
+
+def test_the_repo_settings_register_both_task_sync_hooks(tmp_path):
+    hooks = json.loads((ROOT / ".claude" / "settings.json").read_text())["hooks"]
+    assert "session-start.sh" in hooks["SessionStart"][0]["hooks"][0]["command"]        # the first groups stay first
+    assert "turn-retro-gate.sh" in hooks["Stop"][0]["hooks"][0]["command"]
+    groups = _sync_groups(hooks)
+    repo = _sync_repo(tmp_path)
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(repo), CLAUDE_CONFIG_DIR=str(tmp_path / "config"))
+    for ev, arg in (("SessionStart", "session-start"), ("Stop", "stop")):
+        assert len(groups[ev]) == 1
+        h = groups[ev][0]["hooks"][0]
+        assert type(h.get("timeout")) is int and h.get("timeout") == 30
+        assert h["command"] == ("[ -f $CLAUDE_PROJECT_DIR/scripts/task_sync.py ] || exit 0; "
+                                f"python3 $CLAUDE_PROJECT_DIR/scripts/task_sync.py --hook {arg}")
+        r = _sh(h["command"], stdin=json.dumps({"session_id": "s2"}), env=env)
+        assert r.returncode == 0 and r.stderr == "", (ev, r.stderr)
+    assert (tmp_path / "config" / "tasks" / "s2" / "10.json").exists()
