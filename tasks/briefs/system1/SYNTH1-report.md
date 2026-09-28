@@ -1148,3 +1148,44 @@ for e in errors:
 The labeling run (report section 8 step 4, resumed alone after the vLLM crash of 07:52Z, AF-AP-231) labeled 21,930 of 21,934 pairs, 4 malformed, all 22,008 records served by `qwen3.8-27b-local`, in 11,295.6 s at 1.905 pairs/s. Step 6, the validator: S1-ALL (n=393): map A exact 0.626 [0.5771, 0.6724], linear kappa 0.3807, Spearman 0.4765 [0.3938, 0.5516]; map B exact 0.6972 [0.65, 0.7405], kappa 0.5386, Spearman 0.6143 [0.5466, 0.6739]. S1-RATE scored rows (n=52): rel exact 0.3846 [0.2647, 0.5204], kappa 0.2006, Spearman 0.36 [0.0883, 0.5818], within one 0.9231; use exact 0.2692 [0.1677, 0.4025], kappa 0.0494, Spearman 0.0299 [-0.2528, 0.3079].
 
 Against the report's bar: 1 (format, at most 2% malformed) PASSES, 4 of 21,934; 2 (S1-ALL) FAILS as written on map A (the Spearman lower bound 0.3938 is under the plain order's 0.47, exact 0.626 under 0.64, kappa 0.3807 under 0.40), though map B clears all three; 3 (S1-RATE, exact at least 0.75 with its Wilson bound above the majority) FAILS, rel exact 0.3846 on 52 sections. So under D-096 (2) and the bar's item 4 the labels feed neither GEPA nor a fine-tune; the step-7 dataset is not built.
+
+## Coordinator: option 1, the stronger labeler (D-101 (7), 2026-09-28 14:0xZ)
+
+The owner chose option 1: OpenJev (D-078) labels the gold-first pairs; everything is relabeled only if it passes.
+
+**The run.** From the worktree `/home/user/i59-landing` (the committed scrubber; the main tree held SCRUB2-R1's lane
+files), `scripts/s1_synth.py label --backend openjev --env-file /root/.codiv/api.env`, a 120-pair smoke then the other
+2,089 of the 2,209 gold-first pairs (the candidate manifest's `gold.first`). Every record served by `openjev-0.1` at
+`api.codiv.ai`. The usage lines, pasted:
+
+```
+usage: backend=openjev rubric=r1 stored=120 ok=120 malformed=0 reparsed=0 reparse_unchecked=0 skipped_done=0 pending_left=21814 file_ok=120 file_reparsed=0 file_malformed=0 seconds=119.7 pairs_per_s=1.002 answers=0 input_tokens=92623 requests=120 retries=0
+usage: backend=openjev rubric=r1 stored=2089 ok=2089 malformed=0 reparsed=0 reparse_unchecked=0 skipped_done=120 pending_left=19725 file_ok=2209 file_reparsed=0 file_malformed=0 seconds=2096.5 pairs_per_s=0.996 answers=0 input_tokens=2217377 requests=2089 retries=0
+```
+
+`labels-openjev.jsonl` sha256 11e703a62d7323f7…, `validate-openjev.json` ec2356a48f00ff49… (sandbox scratch).
+
+**The validator** (`validate --candidates cand --transcript <main> --jev /home/user/agent-factory/.jev --labels
+labels-openjev.jsonl --backend openjev`). A first run without `--jev` joined no S1-RATE row ("no item": 121): the
+default state folder follows the script's own tree, and the worktree has none (AF-AP-235). With the main tree's folder:
+
+| Source | n | exact [Wilson 95%] | linear kappa | Spearman [95%] | within one |
+|---|---:|---|---:|---|---:|
+| S1-RATE rel | 52 | 0.2692 [0.1677, 0.4025] | 0.1583 | 0.2765 [-0.0044, 0.5169] | 0.8846 |
+| S1-RATE use | 52 | 0.2692 [0.1677, 0.4025] | -0.0168 | -0.1526 [-0.4153, 0.1337] | 0.8462 |
+| S1-ALL, map A | 393 | 0.542 [0.4926, 0.5906] | 0.2905 | 0.4307 [0.3439, 0.5101] | 0.9771 |
+| S1-ALL, map B | 393 | 0.5191 [0.4697, 0.5681] | 0.2929 | 0.4417 [0.3559, 0.5202] | 0.9898 |
+
+The same pairs' baselines: S1-ALL majority exact 0.542, the plain order's Spearman 0.467. 69 of today's 121 scored
+S1-RATE sections have no item in the 2026-09-26 candidate set (scored after it was built).
+
+**Verdict: option 1 FAILS.** The bar's item 3 needs rel exact at least 0.75 on S1-RATE; OpenJev reaches 0.2692, under
+the local Qwen labeler's 0.3846. On S1-ALL it equals the majority baseline and its Spearman sits under the plain order.
+Under option 1 nothing is relabeled, and under D-096 no label feeds GEPA or a fine-tune.
+
+**What the two failures show.** Two labelers of different families, each reading only the recorded prompt or tool input
+and the section, both miss the coordinator's live scores (0.38 and 0.27 exact). That points at the input, not at the
+model: the coordinator scores each section against the exact step it is on, with the whole session in view, which the
+labeler never sees (option 4's note of 2026-09-26). The live labeling output style (task #339, D-101 (3)) records the
+label where that context exists. SYNTH1 (task #308) closes here; its candidate set, labels and validator stay the
+evaluation harness for any future labeler.
