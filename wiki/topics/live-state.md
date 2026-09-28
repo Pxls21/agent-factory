@@ -11,6 +11,15 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-28 23:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin 6222e4a (the LS-B9 landing, the D-105 design and the TRIM-AUDIT on origin), plus local commits; the main tree is the primary.**
+- **RUNNING (sandbox):** T0-REPLAY (task #346, D-105).
+- **HOME, VERIFY NEXT:** SCRUB2-R1 round 3 (task #321: N1 and N2 closed; 0 value characters lost against the PIN on the real corpus); I59-F round 5 (task #335: held as `tasks/briefs/i59/I59-F.patch`, rounds 1 to 5, sha256 7382fdbacb103793). Both verifiers resume after the push.
+- **LANDED:** LS-B9, the stack runner and wave 1 (task #339; follow-ups in issue #80). Retro 23:0xZ: AF-AP-237 (a gate venue read as the code's red), three lessons baked.
+- **D-105:** `docs/research/findings/jev-trim/D105-DESIGN-v1.md`: Hermes feasible now (`select_context()`; the lanes measured at 50,680 to 100,119 tokens per call); this session feasible in part (fixed start about 130k); the Jev judge in shadow first. Four owner questions (§8).
+- **NEXT:** VERIFY-SCRUB2 round 3 and VERIFY-I59-F round 5; then T1 (the hermes-lcm audit) and LS-B9 round 4 with the wiring at the next free slots; after VERIFY-I59-F, the landing and the re-mint of S0-01 to S0-05 with the owner's one signature.
+- **WAITING ON THE OWNER:** the D-105 questions (§8 of the design); the chat form of LS-DESIGN v2 §3 (the command form stands).
+
 **2026-09-28 22:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin a430de7 (CI run #1123 running), plus local commits; the main tree is the primary.**
 - **RUNNING (sandbox, three lanes):** SCRUB2-R1 round 3 (task #321); TRIM-AUDIT (task #346, D-105); VERIFY-LS-B9 round 3 (task #339).
