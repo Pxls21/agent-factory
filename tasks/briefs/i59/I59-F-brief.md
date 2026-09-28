@@ -182,3 +182,23 @@ folded before the verify round; this is the last pre-verify round.
 > Gates as in round 2: every test that names a changed file, twice each, summary lines pasted with their set ids. The expected reds stay the same three: S0-03, S0-04 and S0-05 attestation mismatches.
 >
 > Report: append "## Round 3 (D-R2-2 and D-R2-3)" to tasks/briefs/i59/I59-F-report.md, in the same form, with the final sha256 prefixes of every file you changed. Return that section as your hand-back message.
+
+## ROUND 3, ITEM 1: THE ROUTE RULING, 2026-09-28 16:4xZ (16:43:56Z), verbatim
+
+Round 3 stopped item 1 (D-R2-2) on a boundary conflict: CC has no mode set of its own, and reading C's set at run time reds S0-04's drift guard unless S0-04's registry row attests C (route A). The coordinator chose route B.
+
+> I59-F round 3, item 1 (D-R2-2): take route B. Your stop was right.
+>
+> The ruling: CC keeps its own copy of the two mode names. A T4 test pins that copy equal to C's PERMITTED_API_MODES, reading C as data in the test only, never from CC. This is a deliberate deviation from my "no new list" line. Route A would make S0-04's attestation cover S0-03's checker, so every later change to C would invalidate S0-04 too. A pinned copy keeps the two proofs independent and still catches drift.
+>
+> Build item 1 as the round-3 message says:
+> - a known mode prints its name, with the exact line pinned;
+> - an unknown fake value, built at run time, prints only its shape, with no case-folded 4-character run of it in stdout or stderr;
+> - failure messages keep printing the shape;
+> - a named mutant for each, plus one for the pin (a CC copy that differs from C's set reds the pin test).
+>
+> Leave CE alone. Its gid grading (your D-R3-4) goes to the verify round as a question. Your other round-3 work stands as reported.
+>
+> Gates as before: every test that names CC or T4, twice each, with set ids. Also run the S0-04 and S0-05 rows of TA's drift guard, to show S0-04 reads no new repo file.
+>
+> Append your results to the round-3 section under a subheading "Item 1, route B", with the final sha256 prefixes. Return that subsection as your hand-back message.
