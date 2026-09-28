@@ -463,10 +463,10 @@ the `## Round 3` section of `tasks/briefs/labeling/LS-B9-report.md` (read in ful
 `bash scripts/premise_block.sh` over the brief's block, from the main tree, with `PYTHONDONTWRITEBYTECODE=1`. The seven
 lane files are untracked, with the brief's hashes (`a3a24981247588c7` … `96c44e0a388ca856`) and line counts. The
 `stacks.toml` field lines match, and `pytest-summary: 177 passed`. Two lines moved, both expected: HEAD is now
-`1cdbde5`, and `LS-B9-report.md` no longer shows ` M`, because the coordinator committed the round-3 report (origin's
+the commit "Task #342 widened ..." (a local id then; its id changed on the push), and `LS-B9-report.md` no longer shows ` M`, because the coordinator committed the round-3 report (origin's
 `a430de7`, `82a0686`); `df` shows more space. No lane-file difference, so no CONTRACT-INVALID stop.
 
-Scratch: `/tmp/vlsb9r3/repo` = `git archive HEAD` (`1cdbde5`) as its own git repository (`f5c4e48`), with the seven
+Scratch: `/tmp/vlsb9r3/repo` = `git archive HEAD` (the commit "Task #342 widened ...") as its own git repository (`f5c4e48`), with the seven
 lane files on top, untracked, at the premise hashes. Control: `1 files set=2ac01abb1067` ·
 `pytest-summary: 177 passed in 60.70s (0:01:00)`.
 
