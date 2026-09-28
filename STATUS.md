@@ -1,5 +1,11 @@
 # Project status
 
+**Proof anchors: PENDING the owner's re-sign (the issue #59 batch, task #315, 2026-09-28).** The batch re-minted all twelve
+proofs on new tooling bytes, deleted the twelve committed tag files (`docs/governance/tags/accepted-S0-NN.tag`) and set every
+anchor to `PROOF-ANCHOR: S0-NN = PENDING-OWNER-TAG`; `scripts/check-proof-status.py` reports each proof as ACCEPTED with its
+anchor PENDING, not owner-verifiable yet. The signatures, commits and tag files named below are the state before the batch.
+They become current again only when the owner re-signs the twelve.
+
 **Phase:** Stage 0 proof pack COMPLETE: all twelve proofs are minted and ACCEPTED by the owner's GPG-signed tags (the last eight signed
 together 2026-09-24 10:26Z); S0-04 was re-minted 2026-09-25 after its leak-screen fix (D-091) and the owner re-signed it
 2026-09-26 (D-094). Open verify follow-ups are GitHub issues; the issue #59 tooling batch will need one re-sign of every
@@ -10,7 +16,7 @@ remaining proofs. Spine-dependent feature work waits until the proof pack valida
 positive. All twelve proofs are minted (three conformance-checked decisions, nine execution proofs — S0-01 to S0-08, S0-11; the
 last two, S0-02 and S0-05, minted 2026-09-23 from live PC captures); all twelve are ACCEPTED by the owner's GPG-signed tags (S0-04 re-signed 2026-09-26 on cdbc1b8 after its re-mint, D-094): S0-03, S0-04, S0-06, S0-07, S0-08, S0-09, S0-10 and S0-12 signed together 2026-09-24 10:26Z on fa20942
 (the eight tag objects committed as `docs/governance/tags/accepted-<id>.tag`, each verified GOODSIG against the owner's key; S0-04's was replaced by its 2026-09-26 re-sign), S0-11 (2026-09-04; re-signed 2026-09-22 on the
-regenerated result, so every anchor is current), S0-05 (2026-09-24 01:37Z, after VERIFY-S0-05 MERGE-READY-WITH-FOLLOWUPS), S0-02 (2026-09-23 23:41Z, after the live eight-leg capture and VERIFY-S0-02
+regenerated result, so every anchor was current until the issue #59 batch), S0-05 (2026-09-24 01:37Z, after VERIFY-S0-05 MERGE-READY-WITH-FOLLOWUPS), S0-02 (2026-09-23 23:41Z, after the live eight-leg capture and VERIFY-S0-02
 MERGE-READY) and S0-01 (2026-09-22, after the v2.4 live capture of 2026-09-21, the golden made order-free
 for asynchronous session-metadata notifications (D-035) and two adversarial verify rounds — VERIFY-VB-F12 NOT-READY on one
 test-oracle blocker, repaired by G2, then VERIFY-G2 MERGE-READY-WITH-FOLLOWUPS, issue #10). S0-05 (no direct egress over the live units, hermes-acp and buzz-acp contained on
@@ -61,7 +67,7 @@ a distillation and the ledger wins on any disagreement).
   (the three conformance-checked decisions, each an ADR with a check); S0-11 evaluation hardening ACCEPTED 2026-09-04 as an explicit
   owner process decision (recorded honestly as not machine-enforced, AF-AP-32).
 
-## Stage 0 proof table (rows refreshed 2026-09-22 for the minted proofs; the ledger `todo/BUILD-TASKLIST.md` wins)
+## Stage 0 proof table (rows refreshed 2026-09-22 for the minted proofs; since the issue #59 batch every row's tag is PENDING the owner's re-sign; the ledger `todo/BUILD-TASKLIST.md` wins)
 
 | proof | kind | status |
 |---|---|---|
