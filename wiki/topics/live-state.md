@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-28 12:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, two lanes):** SCRUB2-R1 round 2 (task #321; the builder resumed on `tasks/briefs/system1/SCRUB2-R1-R2-brief.md`; its five files are in `.lanes-live`) and VERIFY-I59-LANDING (resumed after the weekly-limit stop, on the local landing commit, branch `i59-landing`).
+- **HOME:** VERIFY-SCRUB2-R1 NOT-READY (B1-B3; V4 ruled blocking). VERIFY-I59-BCE: I59-B, I59-C and I59-E all MERGE-READY-WITH-FOLLOWUPS; task #335 (I59-F) takes the proof-code follow-ups before the owner's re-sign; task #331 re-scoped (the signal-test reds came from the gate's launch form, not load).
+- **The owner's new asks (D-100, task #334):** the five repos and the output-block idea, assessed in `docs/research/findings/REPO-ASSESSMENT-2026-09-28.md` (X-009 Strata trial in a GPU window, X-010 output-block pilot, X-011 Read-narrowing hook); each waits for the owner's word.
+- **SYNTH1 (task #308):** still the owner's choice (the labeler failed the check against the real scores).
+
 **2026-09-26 11:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, three verifiers):** VERIFY-I59-BCE and VERIFY-I59-LANDING (on the local landing commit, branch `i59-landing`, rebased onto origin 8992772), VERIFY-SCRUB2-R1 (on `tasks/briefs/system1/SCRUB2-R1.patch`). A disk watch alerts under 400 MB.
 - **SYNTH1 (task #308): the labeler FAILS the check against the real scores** (S1-RATE rel exact 0.3846 on 52 sections, bar 0.75; it scatters on the real 2s). Under D-096 its 21,930 labels feed nothing; the next choice is the owner's.
