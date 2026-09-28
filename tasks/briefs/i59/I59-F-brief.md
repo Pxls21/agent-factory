@@ -134,3 +134,30 @@ Quoted, not re-run at authoring; your item 1 re-measures them. From VERIFY-I59-B
 hashes above): `tests/test_s0_05_egress.py` alone `297 passed in 244.50s` (1 files set=9f0502080347); mutants X6, C-X4,
 C-X6 and E-X7 SURVIVED (its mutation tables); the four signal tests fail with INT and HUP ignored at launch
 (`4 failed, 11 passed, 282 deselected`, its item 3) and pass with default dispositions.
+
+## ROUND 2 (the fold of A-1..A-4): the message sent to the resumed lane, 2026-09-28 14:5xZ, verbatim
+
+The lane's round-1 report (`tasks/briefs/i59/I59-F-report.md`, in the worktree until it lands) found A-1 to A-5. The
+coordinator folded A-1 to A-4 into this lane before the verify round, so the owner signs once (D-101 (5)); A-5 is task
+#343.
+
+> I59-F round 2 (task #335): fold your adjacent defects A-1, A-2, A-4 and A-3 into this lane before the verify round; the owner signs once, so every small proof fix lands before the re-mint.
+>
+> What changed while you ran: nothing inside your boundary. Your report is harvested. The main tree moved (two local doc commits); the worktree is yours as before. The coordinator accepts D3 (the shim resets five signals) and keeps D5 (mapping keys may print; values never). D4 stays as is.
+>
+> Boundary (the worktree's .lanes-live, updated): your seven files, plus proofs/S0-04/check_compression.py (CC), tests/test_gpu_window.py (GW) and your report file. Nothing else. Same rules as round 1: no git writes, no PC bridge, no subagents, no outward action; no stub, fake or shortcut; fake secret-shaped values are built at run time.
+>
+> Items, each with a red test before the fix (on the current bytes) and a green after, plus at least one named mutant that the new test kills:
+>
+> 1. A-1 (S0-05 containment). S0_05_UNIT_USER is refused with exit 64, before anything is written and before any unit launches, unless it is `<uid>:<gid>` in canonical decimal (no sign, no leading zero, no empty part) with each id in [1, 4294967294]. 4294967295 is (uid_t)-1, which leaves root in place, so it is refused. If the current code deliberately allows gid 0, stop and report that before changing it. The post-launch root check compares numerically, never as a string. Rows through the real runner: 4294967296:4294967296, 4294967295:4294967295, 0:0, 00:00, 01:1, -1:1, :1, 1:, 1x:1, and one over ten digits; each asserts exit 64, the exact message, and that no unit ran. Positive control: 65534:65534 proceeds.
+> 2. A-2 (S0-04). Every CC message that prints a profile or config value prints its shape instead: `absent`, or `<type>, <n> characters, sha256 <8 hex>` (the same format as C's `_shape`). Mapping keys may print. New T4 rows mirror T3:971: the fake value is built at run time, there is no case-folded 4-character run of it in stdout or stderr, the exact stdout line is pinned, and stderr is empty. List every CC message that reads the profile or config, with its disposition, as you did for C.
+> 3. A-4 (S0-05). First prove it: a red test through the real runner shows the pair identity path losing a trailing newline at R:272. If it proves, apply B-1's treatment (sentinel read, newline refusal, exit 73, `printf %q`) with mutants. If it does not prove, report the evidence and change nothing.
+> 4. A-3 (test harness). GW's INT_DEFAULT restores SIGPIPE and SIGXFSZ for the script under test, as T's SIGNALS_DEFAULT does. A test shows the child's SigIgn for those signals is 0 (red before, green after).
+>
+> Out of scope: A-5 (the -rs in scripts/test_summary.sh); the coordinator registers it as its own task. Do not touch it.
+>
+> Gates: gate every test that names each file you change. Compute the list yourself with grep -l over tests/*.py and harness-ports/tests/*. Run each gate twice, and paste each summary line verbatim from scripts/test_summary.sh with its set id. The validate-ledger and proof-status reds stay expected, and S0-04 joins S0-03 and S0-05 in them once CC changes: name each red and its cause.
+>
+> Disk: the container has about 1.6 GB free, and lane_gate.sh refuses below 1,500 MB. Make no large copies. Delete any tree copy a red run leaves behind (about 218 MB each) once you have read its log. If the floor stops a gate, stop and report it; do not work around it.
+>
+> Report: append a section "## Round 2 (the fold of A-1..A-4)" to tasks/briefs/i59/I59-F-report.md, in the same form as round 1: per item, gates twice, the mutation table, static checks, host state, final sha256 prefixes of every file you changed, discrepancies, NOT-done. Return that section as your hand-back message. If the report-file write is refused, the hand-back message is the report of record.

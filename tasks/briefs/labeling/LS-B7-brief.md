@@ -1,6 +1,9 @@
 # LS-B7: the task list becomes a synced view of the ledger (task #339, D-102)
 
 Authored 2026-09-28 14:2xZ by the coordinator. Lane: sandbox `code-implementer` (Opus 5.5).
+Amended 2026-09-28 14:5xZ from the LS premortem (`tasks/briefs/labeling/LS-PREMORTEM-report.md`: P5, P13, P36): an off
+switch, a Stop hook that never blocks and fails loud once per new error, and a registration timeout (items 5 and 7,
+evidence demand 5).
 
 ## WHY
 
@@ -32,15 +35,30 @@ from the ledger, and a hook can run it every turn: one store, no hand sync.
 4. **Fail closed, fail loud.** An unreadable ledger, a parse failure, or an empty view writes NOTHING and exits 3 with
    the reason. `--apply` refuses a DIR outside `/root/.claude/tasks/` unless `--allow-dir` (the tests use it). Every run
    appends one line to `<repo>/.jev/task-sync/sync.log` (UTC, counts, the plan's digest, or the error).
-5. **Hooks.** Stop: `task_sync.py --apply --quiet` for the session's task dir (the Stop payload's `session_id`), always
-   exit 0 (a sync error goes to the log). SessionStart: run the same sync, then print the view (at most 12 lines) and, if
-   the newest log line is an error, that line. Register both in `.claude/settings.json` AND in
-   `scripts/install_session_hooks.py` (the session loads `/home/user/.claude/settings.json`, which that script writes),
-   with their tests.
+5. **Hooks.** Stop: `task_sync.py --apply --quiet` for the session's task dir (the Stop payload's `session_id`). It
+   never blocks: never exit 2, never `decision: block`, nothing on stdout. On success it exits 0. On a sync error it logs
+   the error and, only when that error differs from the previous error line in the log, writes one line to stderr and
+   exits 1 (a non-blocking error the harness shows), so a persistent error is shown once, not every turn. Stop hooks run
+   in parallel with the git check and the retro gate (hooks.md: "All matching hooks run in parallel"), so the sync reads
+   and writes nothing they read (it writes only the task dir and `.jev/task-sync/`, which git ignores). SessionStart:
+   run the same sync, then print the view (at most 12 lines) and, if the newest log line is an error, that line.
+   Register both in `.claude/settings.json` AND in `scripts/install_session_hooks.py` (the session loads
+   `/home/user/.claude/settings.json`, which that script writes), with their tests, each with an explicit `timeout`
+   of 30 seconds.
 6. **The first run migrates.** The live DIR today holds harness-numbered files (premise below). The first `--apply`
    replaces them with ledger-numbered files. Show it on a COPY of the live DIR: the plan, then the resulting view. The
    view must be the ledger ids {289, 295, 297, 315, 318, 321, 325, 334, 335, 339, 340}, or you name each difference and
-   the ledger line behind it.
+   the ledger line behind it (the ledger gains lines while you work; name the line, do not chase it).
+7. **The off switch.** While `<repo>/.jev/task-sync-off` exists, both hooks exit 0 at once, write nothing, and append
+   one `off` line to the log per session (not per turn); `task_sync.py --apply` refuses with exit 3 and says why; a dry
+   run still prints the plan. **The coordinator creates `/home/user/agent-factory/.jev/task-sync-off` before this
+   dispatch and removes it only after your verify round, for the first `--apply`.** Reason: `scripts/setup.sh` runs the
+   installer from the working tree at every SessionStart, compaction included, so your registration can go live on the
+   coordinator's session before your gate runs (orchestration skill, AF-AP-222). So: write the off-switch check as the
+   FIRST thing each hook does, before anything else in it exists, and write the registration LAST. Your tests point the
+   hooks at a temp repo, never at the main tree's `.jev/`. Exit codes: the two hooks exit 0 in every case except the
+   Stop hook's once-per-new-error exit 1 (item 5), which the hooks docs define as a non-blocking error; exit 2 and
+   `decision: block` never occur.
 
 Not in this lane: CLAUDE.md, AGENTS.md and `.hermes.md` (the coordinator rewrites the task-tracking rules after your
 verify), and the live DIR itself (the coordinator runs the first `--apply`).
@@ -55,7 +73,11 @@ verify), and the live DIR itself (the coordinator runs the first `--apply`).
    override table wins; `unknown` mentions never change a status; the harness keys exactly. Each with a named mutant
    that reds it as a FAILED test (AF-AP-223).
 4. The migration on a copy of the live DIR (item 6), pasted.
-5. The hook tests: the installer writes both hooks; the Stop hook exits 0 on a sync error.
+5. The hook tests: the installer writes both hooks, each with its 30-second timeout; the Stop hook never exits 2 and
+   prints nothing on stdout; a sync error gives exit 1 and one stderr line the first time, exit 0 and no stderr the
+   second time with the same error, and exit 1 again for a different error; the off switch (item 7) in both hooks and in
+   `--apply`; the Stop hook's wall time on the real ledger, measured on a copy of the live DIR (pasted; it must be well
+   under the timeout).
 6. `bash scripts/test_summary.sh` twice on your test files plus `tests/test_session_hooks.py`, with the set id;
    pyflakes rc 0; `LC_ALL=C grep -c $'\xe2\x80[\xa8\xa9]' <file>` prints 0 for every file you write.
 7. NOT-done and DISCREPANCIES.
