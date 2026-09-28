@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-28 17:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin a1a639b (CI run #1114 on c9889ee passed; this push's run pending); the main tree is the primary.**
+- **RUNNING (sandbox, three lanes):** SCRUB2-R1 round 2 (task #321, main tree); LS-B9, the stack runner and eight stacks (task #339, main tree); VERIFY-I59-F (task #335) on the patch of record `tasks/briefs/i59/I59-F.patch` (rounds 1-3 and route B: 51 of 51 mutants killed by the builder), in a partial copy under `/tmp/vf-wt`.
+- **HOME:** I59-F's report of record `tasks/briefs/i59/I59-F-report.md`; the worktree `/home/user/i59-landing` still holds the lane's files until the landing.
+
 **2026-09-28 16:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin c9889ee (its CI run #1114 pending), plus local commits; the main tree is the primary.**
 - **RUNNING (sandbox, three lanes):** SCRUB2-R1 round 2 (task #321, main tree; measuring its rows on the transcripts); I59-F round 3, item 1 by route B (task #335, worktree: S0-04 keeps its own copy of the two api_mode names, pinned to S0-03's set by a test); LS-B9, the stack runner and eight stacks (task #339, main tree).
