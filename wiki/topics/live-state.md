@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-28 13:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin 6aceec4:** the issue #59 batch (CI run #1110 passed on it), the I59-F brief, D-101 and the LS-AUDIT brief. The coordinator commits and pushes from the worktree `/home/user/i59-landing`; the main tree's branch still points at its local, pre-rewrite copy of the task #334 commit (the classifier refused `git reset --keep`; the owner decides).
+- **RUNNING (sandbox, three lanes):** SCRUB2-R1 round 2 (task #321, in the main tree, its files in that tree's `.lanes-live`); I59-F (task #335, in the worktree, its seven files in the worktree's `.lanes-live`); LS-AUDIT (task #339 step 1, read-only).
+- **RUNNING (sandbox process):** SYNTH1 option 1, OpenJev labeling the 2,209 gold-first pairs from the worktree; then the validator.
+- **D-101 (the owner, 13:2xZ):** Strata dropped; the labeling output style approved and widened (#339, deep-work path); the Read-narrowing hook approved (#340); sign once after I59-F; SYNTH1 option 1.
+
 **2026-09-28 13:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, one lane):** SCRUB2-R1 round 2 (task #321), in the main tree; its five files are in `.lanes-live`.
 - **HOME, all three verifiers:** VERIFY-I59-LANDING and VERIFY-I59-BCE are MERGE-READY-WITH-FOLLOWUPS; VERIFY-SCRUB2-R1 NOT-READY (round 2 runs).
