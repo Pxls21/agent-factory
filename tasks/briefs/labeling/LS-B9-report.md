@@ -1060,7 +1060,7 @@ pyflakes exits 0 on the six .py files, and the U+2028/U+2029 count is 0 in all s
 - **No `/tmp/stack-*` dir is left.** Disk at the end: 12,165 MB free.
 - **No git write, no PC bridge, no subagent, no outward action.** I read no secret source. hiccup_scan.py, run by `harvest`, imports only transcript_export's rule scrubber (`scrub`); its value gate, which reads the secret files, runs only in export().
 
-<!-- Coordinator note (2026-09-28): the round-3 section below is the lane's hand-back, extracted verbatim from its transcript by `python3 scripts/stack.py harvest agent=ac753871198ee8cfd` (run s-20260928T213749Z-778fe2; hand-back sha256 620593bc072e; 1065 assistant records, all claude-opus-5-5, 0 refusal stops). The harness refused the lane's own write of this file. -->
+<!-- Coordinator note (2026-09-28): the round-3 section below is the lane's hand-back, extracted verbatim from its transcript by `python3 scripts/stack.py harvest agent=ac753871198ee8cfd` (run s-20260928T213749Z-778fe2; hand-back sha256 620593bc072e; 1065 assistant records, all claude-opus-5-5, 0 refusal stops). The harness refused the lane's own write of this file. Three commit ids in this section were local ids that push_clean rewrote; they now show the origin ids 1ebb009, 98c7f97 and 4296728, matched by subject (stale_ids). -->
 
 ## Round 3 (the gate runs every test with its own runner)
 
@@ -1107,7 +1107,7 @@ LS-B9 round 3: task #339, D-103, D-104. Written 2026-09-28 at 21:3xZ (`date -u` 
 3. **gate_union.py's notes moved.** Round 2 printed them on stderr in list mode too. Now they print only in `--why` (the `sources` step). The per-runner list steps print file paths only.
 4. **The cap kill's exit code changed from -15 to -9 (F-7).** I updated round 2's cap test to match.
 5. **Every `gate mode=run` creates `{tmp}`**, even when the pytest step then has nothing to do, because a selected step names it. It is removed after the run.
-6. **HEAD moved during the round:** 0d06ae7 (the premise), then 06f9c82, b294c53 and d773575. All are coordinator commits, and none touches my files.
+6. **HEAD moved during the round:** 0d06ae7 (the premise), then 1ebb009, 98c7f97 and 4296728. All are coordinator commits, and none touches my files.
 7. **GitNexus rates `kill_groups` HIGH risk:** 5 impacted symbols (execute, run, run_step, cmd_run, main), all in stack.py. The timeout, signal and cap tests cover every caller. `invocations` is HIGH too: one caller, build_plan.
 8. **The round-2 hand-back's file:line citations are stale.** `harvest` on this lane's transcript lints them MISS 53. Round 3 grew the files; the lint is advisory, and the harvest exits 0.
 
@@ -1252,7 +1252,7 @@ child 13029 dead
 - **As the verifier said, the code was right in each.** These tests pass on round 2's bytes; the mutants prove them.
 
 ### The verifier's reproductions, re-run
-They ran in a scratch copy: `git archive HEAD` (b294c53) with my seven files on top, as its own git repository (281 MB). The breaks were made there only and restored after (`git status` 0 lines).
+They ran in a scratch copy: `git archive HEAD` (98c7f97) with my seven files on top, as its own git repository (281 MB). The breaks were made there only and restored after (`git status` 0 lines).
 1. **The `pc_bridge_exec.py` break** (non-JSON reply `"rc": 3` → `"rc": 0`, line 53):
   - control: `test_pc_bridge_exec: 8 checks passed`, rc 0;
   - broken, run-all.sh's form: `AssertionError: (0, '')`, rc 1;
@@ -1324,7 +1324,7 @@ run 2: pytest-exit: 0
 
 **`bash harness-ports/tests/run-all.sh`**, once, in the main tree: wall 110.29 s, rc 0, `ALL SUITES PASSED`.
 - **Every suite:** 7/7, 6/6, 9/9, `19 passed, 0 failed`, 9 checks, 8 checks, 15 checks, 24 checks, 30, 67, 51, 22, 101, 4, 19, 5, 11, 34, and build-roles OK.
-- **The tree's `git status` changed during the run.** The coordinator committed d773575 at 21:28:09Z and edited wiki/topics/live-state.md at 21:28:34Z. The run itself wrote nothing into the tree.
+- **The tree's `git status` changed during the run.** The coordinator committed 4296728 at 21:28:09Z and edited wiki/topics/live-state.md at 21:28:34Z. The run itself wrote nothing into the tree.
 
 ### CI rehearsal (non-root, as the brief asks)
 - **The environment:**
