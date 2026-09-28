@@ -1,4 +1,4 @@
-> **COORDINATOR NOTE (2026-09-28 18:1xZ):** the harness refused the lane's report-file write, and the lane put the whole report in its final text message (63,540 characters, sha256 prefix e692c1c6f80c), with a short summary as its hand-back. This copy is that text message, extracted from the subagent transcript, never retyped; control tags neutralized: 0. The lane served `claude-opus-5-5` on 1,131 assistant records with 0 refusal stops (read by `python3 scripts/stack.py harvest`). Not yet verified.
+> **COORDINATOR NOTE (2026-09-28 18:1xZ):** the harness refused the lane's report-file write, and the lane put the whole report in its final text message (63,540 characters, sha256 prefix e692c1c6f80c), with a short summary as its hand-back. This copy is that text message, extracted from the subagent transcript, never retyped; control tags neutralized: 0. Four local commit ids that pushes rewrote are replaced by their ids on origin (same tree). The lane served `claude-opus-5-5` on 1,131 assistant records with 0 refusal stops (read by `python3 scripts/stack.py harvest`). Not yet verified.
 
 SCRUB2-R1 round 2 is done (task #321). This message holds the whole report, because the harness refused the report-file write, as the brief allowed for.
 
@@ -834,8 +834,8 @@ common.scrub is the tree's exporter (the new one): True, in each run
 **D8. HEAD moved five times during the round, docs only.**
 - The sequence:
   - 1b7fec8 at resume;
-  - 34d3af0: the coordinator's `reset --keep`, with the owner's authorization;
-  - then d7609d8, 4bdb6b1, c4b87d1 and 50c5daa.
+  - 370fead: the coordinator's `reset --keep`, with the owner's authorization;
+  - then 40dd47d, 378bf1e, c4b87d1 and 78c28a9.
 - No commit touched a scrubber file, a floor test, `scripts/` or the Laya findings.
 - The floor set stayed 12 files set=27f27a25516b.
 - This lane's files matched their last write after each move.
