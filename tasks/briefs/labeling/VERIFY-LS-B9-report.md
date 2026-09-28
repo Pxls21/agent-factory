@@ -451,3 +451,213 @@ unreproduced. Written by 20:4xZ.
 my scratch runs created (`/tmp/ripwire-0/20`, `35`, `4f`; the main tree's `66` is left). No `/tmp/stack-*` dir
 remains. Disk: 12,147 MB free. In the main tree the only new file is this report. The seven lane files keep the
 premise hashes and status. `.jev/stacks`, `.sentrux-runtime/` and `scripts/__pycache__` carry no mtime from my runs.
+
+## Round 3
+
+Written 2026-09-28 from 22:1xZ by the same verifier, resumed. Brief: `tasks/briefs/labeling/VERIFY-LS-B9-R3-brief.md`
+(read in full). The contract under test: `tasks/briefs/labeling/LS-B9-R3-brief.md` items 1-7. The builder's account is
+the `## Round 3` section of `tasks/briefs/labeling/LS-B9-report.md` (read in full); its claims are hypotheses here.
+
+### Premise and control
+
+`bash scripts/premise_block.sh` over the brief's block, from the main tree, with `PYTHONDONTWRITEBYTECODE=1`. The seven
+lane files are untracked, with the brief's hashes (`a3a24981247588c7` … `96c44e0a388ca856`) and line counts. The
+`stacks.toml` field lines match, and `pytest-summary: 177 passed`. Two lines moved, both expected: HEAD is now
+`1cdbde5`, and `LS-B9-report.md` no longer shows ` M`, because the coordinator committed the round-3 report (origin's
+`a430de7`, `82a0686`); `df` shows more space. No lane-file difference, so no CONTRACT-INVALID stop.
+
+Scratch: `/tmp/vlsb9r3/repo` = `git archive HEAD` (`1cdbde5`) as its own git repository (`f5c4e48`), with the seven
+lane files on top, untracked, at the premise hashes. Control: `1 files set=2ac01abb1067` ·
+`pytest-summary: 177 passed in 60.70s (0:01:00)`.
+
+### R3 area 1: F-1 through my own reproductions — FIXED
+
+Each face through the production `gate` stack in the scratch copy (the default `graph=yes` unless stated; each break
+made in scratch only and restored, `git status` clean after):
+
+| face | round 2 | round 3 |
+|---|---|---|
+| `scripts/pc_bridge_exec.py`: non-JSON reply `rc 3` → `rc 0` | exit 0, `49 passed` | `exit 1 — required, not ok: scripts`; headline `pytest 1 · python3 2 · bash 0 · not run 0`; `run · ok` (`49 passed`); `scripts[1/2] · ok` (`test_bridge_token_handling: 9 checks passed`); `scripts[2/2] · FAILED · rc 1` (`AssertionError: (0, '')`) |
+| `harness-ports/bin/lane-done-gate.py:167`: `exit_code == 0` → `in (0, 1)` | exit 0, `8 passed` | `exit 1 — required, not ok: scripts`; `pytest 0 · python3 1 · bash 1`; `scripts[1/1] · FAILED · rc 1` with the script's own `lane done gate: 18 passed, 1 failed`; `shells[1/1] · ok` (`test_lane_profile.sh`) |
+| `omniroute_local_builder.py`, no edit, `graph=no` | pytest rc 3, "no tests ran" | exit 0; `scripts[1/1] · ok`, the script's own `test_omniroute_local_builder: 24 checks passed` |
+| NEW: the omniroute builder broken (`NODE_NAME` default changed), `graph=no` | — | `exit 1 — required, not ok: scripts`; `scripts[1/1] · FAILED · rc 1` |
+
+Hunting the class further:
+- **The classifier against an independent oracle.** I parsed `harness-ports/tests/run-all.sh` itself: its loop's
+  `python3 "$HERE/$t"` list and every `python3|bash "$HERE/<file>"` line. That gives each harness file's real runner. I
+  compared it with `gate_union.runner_of` for all 19 files in `harness-ports/tests/`: 0 disagreements (18 run by
+  `run-all.sh`; `run-all.sh` itself goes to bash, as CI runs it at `stage0-ci.yml:72`).
+- **No script-style `test_*.py` under `tests/`:** an AST scan of every `tests/**/test_*.py` and `*_test.py` finds each
+  with a module-level `test*` function or `Test*` class (0 candidates). So the pytest route has no F-1 hole today.
+- **A runner failure that still reads ok:** each runner's own exit code decides (`ok_rc [0]`), as in `run-all.sh`. A
+  script that is gone at run time reads `unmapped` (required, exit 1). None found.
+- **A file dropped without a "not run" line:** every union file gets a runner or a reason, and gone rows get their
+  own line (the builder's unit test). None found.
+- **A headline that disagrees with what ran:** the four faces' headlines match the calls made. With `runs=2`, pytest
+  ran twice (`run[1/2]`, `run[2/2]`) and each harness script once (`scripts[1/2]`, `scripts[2/2]` are file 1 and 2 of
+  2). The shared `[k/N]` notation reads the same for "run k" and "file k" (INFO).
+- **Does the new stray kill cut an instrument's helper?** `graft ask` on a tiny repo through a stack step: `ok · rc 0 ·
+  0.40 s`, no `strays_killed`, and none of my graft processes remain. GitNexus and code-review-graph have no index in
+  scratch, so they were not tested.
+
+### R3 area 2: the four new runner features and the changed semantics — HOLD; two INFO
+
+Probe `/tmp/vlsb9r3/probe/feat.py`:
+- `foreach = "@step"`: 300 lines → 300 calls, exit 0, 1.4 s. The print is capped at 9,000 characters with its first
+  line intact (F-13's fallback). A line outside the tree skips the step (the builder's test). A blank line is dropped.
+  A line that passes the checks reaches the program as `{tree}/<line>`, one argv element.
+- `empty_ok` hides no failure: a source that fails silently (rc 3, no output) still skips its `empty_ok` consumer
+  (`SKIPPED — its input step src failed (rc 3)`), exit 1. Only "ok and printed nothing" becomes "not selected".
+- `needs`: a prerequisite that failed, timed out, or was unmapped each skips the dependent step with that reason
+  (`failed (rc 1)`, `timed out`, `was unmapped`), exit 1.
+- `headline`: a 600-character first line is cut to `HEADLINE_MAX` (500) plus `…` (header line length 506). The first
+  line is copied raw, though: the header's bytes were `hl · COUNTS ok\rFORGED exit 0`, and in a terminal the CR lets
+  the forged text overwrite the line (F-9's class; INFO: the gate's own headline is `gate_union.py`'s computed line).
+- Discrepancy 2 (an empty pytest list no longer fails the gate) is right: the done-gate face ran with `pytest 0` and
+  was decided by `scripts` and `shells`. An all-empty run list still fails (`NOTHING TO RUN`, the builder's tests).
+  NOT-done 2 (harness tests run once while pytest runs `runs` times) is as described (above).
+
+### R3 area 3: F-2 and F-3 — HOLD; one gap in F-3's "never"
+
+- The bound, `gate paths=scripts/pc_bridge_exec.py mode=run runs=1 graph=no` (a run list of 3): `max_files=2` → exit 1,
+  headline `… · REFUSED: mode=run runs at most max_files=2 files; pass max_files=3 …`, nothing ran; `max_files=3` →
+  exit 0, all three ran; `max_files=4` → exit 0.
+- The heavy file: `gate paths=scripts/vendored_manifest.py` (plan): `run list 5 of union 6 · … · not run 1`, and
+  `tests/test_vendored_manifest.py  ripwire · not run: a whole-file run copies about 3.4 GB …; run its one relevant
+  test: python3 -m pytest tests/test_vendored_manifest.py -k test_committed_manifest_matches_fresh_generation …`. That
+  test exists (`tests/test_vendored_manifest.py:187`).
+- The headline's counts match the actual calls on every face (area 1).
+- **F-3 residual (FOLLOW-UP, R3-F1):** the header can itself pass the cap. `gate paths=scripts/report_lint.py,<180 more
+  paths>` (a `paths` value of 9,562 characters; `graph=no`, plan) printed exactly 9,000 characters in 4 lines: the
+  first line (`exit 0`), the tree line, the cut `params:` line and the fallback marker. The `sources ·` counts line
+  was gone; the record's saved output held `run list 4 of union 4: pytest 3 · python3 0 · bash 1 · not run 0`. So
+  contract item 2's "so the print cap can never cut them" fails past about 180 paths: `params:` precedes the
+  headline, and the fallback cuts from the end. Fix: put the headline lines before `params:`, or cut `params:` first.
+
+### R3 area 4: F-7, F-8, F-11, F-14 — HOLD; two residuals
+
+- **F-7** (`/tmp/vlsb9r3/probe/cap3.py`, a writer at full speed that records any SIGTERM, self-bounded at 150 MB,
+  `save_cap_mb = 1`): `FAILED · rc -9`, `truncated: true`, no SIGTERM received, 16 MB written before the kill (round
+  2's grace: 120 MB). What is left is the 0.1 s poll times the write speed (INFO).
+- **F-8:** a same-group child left writing by a leader that exits: the step reads `ok`, `strays_killed: true`, and the
+  child is dead after the run (its output stopped at 4 MB). **Residual (FOLLOW-UP, R3-F2):** a child that starts its
+  own session (`start_new_session=True`, as `setsid` does) escapes. The step reads `ok` with no strays recorded, and
+  after the stack exits the child writes on to the unlinked stdout (9 → 19 MB, measured); I killed it by pid. Under a
+  1 MB cap such a child also escapes the cap kill (7 → 16 MB). This is the builder's round-1 "a step that calls
+  setsid". Contract item 5 names the process group, which this child has left.
+  The pid-reuse window was reviewed statically. After the reap, `killpg(leader pid)` targets the group. Linux does
+  not reuse a pid while any process still holds it as a group id, so a live stray keeps the id safe. An empty group
+  gives ESRCH and nothing is sent. The only race is a full pid-space wrap plus a new group leader, inside the
+  microseconds between the reap and the `killpg`. The timeout path shares it. INFO.
+- **F-11 on real transcripts** (oracle `hb_oracle3.py`, round 3's rule): the LS-B9 lane (3 calls, at lines 825, 1863
+  and 2373) → hand-back 33,227 characters, sha256 `620593bc072e` (the coordinator's recorded hash), no report. The
+  scrubber lane, live (SCRUB2-R1 round 3 is running in the same agent; its transcript was 13.6 MB and still growing at
+  22:21Z), gives `report: saved chars=63540 … sha256=e692c1c6f80c`, as in round 2. `harvest` matches the oracle on
+  both.
+  **Residual (FOLLOW-UP, R3-F3): the previous round's epilogue lies inside the new round's window.** In the LS-B9
+  transcript (record types and timestamps only), round 2's call is at line 1863 (19:39:31Z). Its 3,995-character
+  epilogue text is at 1866 (19:39:47Z), and round 3's resume message is at 1867-1868 (20:46:55Z). So 1866 falls
+  between the previous call and the last, and round 3 escaped only because its hand-back was longer. Synthetic
+  (`R1 report, call 1, R1 epilogue (4,000 ch), resume, a short text, call 2 (160 ch)`): `report.md` holds
+  `ROUND1-EPILOGUE …` and stdout points the lint at it. The control, where round 2 writes its own long text, picks
+  `ROUND2-REPORT`. So contract item 6's "an earlier round's text is never this round's report" fails for the epilogue.
+  Fix: start the window at the first user record after the previous call (the resume message).
+- **F-14:** my six round-2 mutants against the new tests (area 6): each is now KILLED — V1 by
+  `test_the_record_waits_for_the_log_lock`, V2 by `[INT]`, V3 by `[text-cr]`, V4 by `[timeout-3601]`, V5 by
+  `[label-uppercase]`, V9 by `test_the_print_cap_holds_at_exactly_9000_characters`.
+
+### R3 area 6: mutation — the builder's reproduce; four new survivors, all test gaps
+
+Driver `/tmp/vlsb9r3/mut/driver.py` (round 2's design: one exact anchor each, all 24 matched once; restore and re-hash
+after each). Control: `CONTROL rc=0 76 passed in 20.61s`. Summary: `TOTAL=24 KILLED=20 SURVIVED=4 INVALID=0`. The seven
+lane files carry the premise hashes afterwards.
+
+- **The builder's r3 mutants, 10 reproduced as FAILED tests** (the brief's five marked \*):
+  - T1\* (harness scripts to pytest): `…[counting-check]`;
+  - W1\* (no width bound): `…refuses_a_run_list_wider_than_max_files[run-over]`;
+  - W5 (the manifest run whole): `…gives_each_file_its_runner_or_says_why_not`;
+  - W6 (nothing to run exits 0): `…fails_when_nothing_runs[nothing-names-it]`;
+  - K1\* (grace at the cap): `…save_cap_gets_sigkill_at_once`;
+  - S1\* (strays left running): `…loses_what_it_left_running`;
+  - B1\* (the search not bounded): `…takes_the_report_only_from_the_last_round`;
+  - H1 (headline ignored), E1 (`empty_ok` ignored) and W4 (`needs` ignored): each fails its test.
+- **F-14:** V1, V2, V3, V4, V5 and V9 are KILLED (area 4).
+- **Mine, one per round-3 clause no row names:**
+  - KILLED: X4 (`shells` fed the python3 list): `…[module-exit]`; X5 (`scripts` without `needs`): the refused-run
+    test; X7 (the `max_files` default 40 → 4000): the `gate` explain pin; X8 (`setid` without `empty_ok`): the
+    nothing-to-run test.
+  - **SURVIVED X1** (item 5): the stray kill sends SIGTERM, not SIGKILL. The test's child dies of either signal; a child
+    that ignores SIGTERM would write on.
+  - **SURVIVED X2** (headline): no cut at `HEADLINE_MAX`. No test gives a long first line; the code does cut (area 2).
+  - **SURVIVED X3** (item 1): `run-all.sh` no longer routed to bash. No test gates a path that only `run-all.sh` names
+    (e.g. `harness-ports/bin/build-roles.py`, its line 72); with the mutant such a gate is NOTHING TO RUN, a false red.
+  - **SURVIVED X6** (item 3): `shells` without `needs`. The refused-run test has no `.sh` test, so a REFUSED run could
+    still run every shell test. The code is right today.
+
+### R3 fresh gates
+
+- `tests/test_stack.py` (scratch, `test_summary.sh`): `1 files set=2ac01abb1067` · `pytest-summary: 177 passed in
+  60.70s (0:01:00)`.
+- CI shape (uid 1000, Python 3.12.3 offline venv, no instrument on the PATH, no `*_BIN` variable):
+  `1 files set=2ac01abb1067` · `pytest-summary: 175 passed, 2 skipped in 55.23s` (the ripwire and rg skips).
+- Gate B (scratch; a direct `python3 -m pytest -q -rf` run, to name the failure, not `test_summary.sh`): `5 files
+  set=2804489b9d6b` → `1 failed, 460 passed in 132.10s`. The failure is round 2's archive-copy artifact,
+  `test_search_intercept.py`'s graft test, which needs `graft/INDEX.md`.
+- Not re-run by me: `run-all.sh` whole. In the archive copy, `test_lane_context.sh` would build a graft index of the
+  whole copy. The gate itself ran five of its scripts above, and my oracle checked the routing.
+- Evidence audit of the round-3 hand-back (my harvest's lint: `48 refs — OK 44, NEAR 1, MISS 3`). The NEAR and the
+  first MISS cite the right test functions (`tests/test_stack.py:941`, `:973`) in words the linter does not match; the
+  other two MISS are pasted pytest `SKIPPED` lines, as in round 2. The eight citations I opened say what the report
+  says (`gate_union.py:78`; `stack.py:92`, `:93`, `:815`, `:887`, `:892`, `:992`; `handback_extract.py:88`).
+
+### R3 area 5: the pre-wiring list of six, now
+
+1. F-1 fixed — **holds now.** Keep two catalog notes: `runs=2` re-runs the pytest files only (harness scripts and
+   shell tests run once), and `setid` covers the pytest files only.
+2. Read the counts; plan first; nothing wide or heavy runs whole — **holds**: the counts are in the header, `mode=run`
+   refuses more than `max_files` (40), and the manifest test is named "not run" with its `-k` command. One note stays:
+   past about 180 paths, `params:` pushes the counts out of the print (R3-F1); read `sources.out` then.
+3. `graph=no` where ripwire is missing and for a deleted path — **still a catalog note** (unchanged; the builder's CI
+   run shows `gate rc 1 · graph=unmapped`).
+4. `review mode=save` overwrites the shared sentrux baseline — **still a note** (unchanged; task #345).
+5. `ctx` does not show a missing ripwire as unmapped — **still a note**; the catalog must not claim it (task #345).
+6. `review`'s sentrux section is advisory; `tool exit N` is the only sign of a failed run — **still a note**.
+7. New: for a resumed lane, check `harvest`'s `report:` line. A report that is the previous round's epilogue text
+   (R3-F3) is not this round's report; use the hand-back.
+
+### R3 finding inventory
+
+| # | class | finding | evidence | contract mapping | canonical path | material effect | reproduction | suggested fix |
+|---|---|---|---|---|---|---|---|---|
+| F-1 | CLOSED | every union file under its own runner, or named "not run" | R (4 faces + the `run-all.sh` oracle) | item 1 | production `gate` | — | area 1 | — |
+| R3-F1 | FOLLOW-UP | past ~9,000 characters of `paths`, the header passes the cap and the counts line is cut | R | item 2's "never" | production `gate` | counts invisible for a very wide change; exit code intact | area 3 | headline lines before `params:`, or cut `params:` first |
+| R3-F2 | FOLLOW-UP | a child in its own session escapes the stray kill (and the cap and timeout kills), writing after the stack exits | R | item 5 names the group (holds) | runner | unbounded writes from such a child | `cap3.py` setsid case | a cgroup or `PR_SET_CHILD_SUBREAPER` sweep |
+| R3-F3 | FOLLOW-UP | the previous round's epilogue sits in the new round's report window | R (synthetic + real transcript's shape) | item 6's "never" | `handback_extract.py` via `harvest` | an old epilogue offered as this round's report | area 4 | bound the window at the resume record |
+| R3-F4 | FOLLOW-UP | test gaps: X1, X2, X3, X6 survive | R | items 1, 3, 5; the headline | tests | a regression there passes the suite | area 6 | one test each |
+| R3-F5 | INFO | a headline's first line enters the header raw (CR, ESC) | R | none | runner | terminal overwrite in a contrived stack | `feat.py` headcr | escape control characters |
+| R3-F6 | INFO | the cap kill's overshoot is the 0.1 s poll times the write speed (16 MB measured) | R | item 4 holds | runner | small | `cap3.py` flood | a shorter poll, if wanted |
+| R3-F7 | INFO | `[k/N]` reads alike for repeat and foreach; `setid` omits the harness files; harness tests run once | R | NOT-done 2 | print | reader confusion | area 1 | name the axis ("file k of N") |
+| R3-F8 | INFO | the stray kill was not tried against GitNexus or code-review-graph helpers (no index in scratch); graft leaves none | R (graft only) | — | — | unknown for two instruments | — | check on the main tree |
+
+Every round-2 follow-up not named in round 3's contract stands as filed (F-4, F-5, F-6, F-9, F-10, F-12, F-13,
+F-15 to F-19).
+
+### R3 gate recommendation
+
+**MERGE-READY-WITH-FOLLOWUPS.** F-1, the round-2 blocker, is fixed and verified. Each face of mine now fails or passes
+on the right test's own verdict. The routing agrees with `run-all.sh`'s own text for all 19 harness files. No script
+test hides under `tests/`. Contract items 1-7 hold on their main paths, each with a killed mutant. Two residuals
+contradict an item's "never": R3-F1 (item 2, past ~180 paths) and R3-F3 (item 6, the previous round's epilogue). With
+R3-F2 and the four test gaps they are not CORE-BLOCKING under D-034: none shows a headline capability fake, the
+gate's exit code and the hand-back stay right, and each needs an edge input. Filed as follow-ups with the fixes named.
+Before wiring: the notes in R3 area 5. Items 1 and 2 are settled, apart from the notes kept under them; items 3-6 are
+unchanged from round 2; item 7 is new.
+This recommendation rests on my own reproductions; nothing in it depends on an unreproduced claim. Written by 22:3xZ.
+
+### R3 cleanup (22:3xZ)
+
+`/tmp/vlsb9r3/` (the scratch repo, the probes, the mutation driver, the logs) is removed. So is the ripwire cache dir
+my scratch runs created (`/tmp/ripwire-0/1c`); `66` (the main tree's) and the 17:3x dirs are not mine and are left.
+No `/tmp/stack-*` dir remains, and no probe process is alive (`pgrep -f '[v]lsb9r3'` rc 1). The setsid child from
+R3-F2's probe was killed by pid during the probe. Disk: 12,025 MB free. In the main tree the only change is this report;
+the seven lane files keep the premise hashes and status (re-checked at the end).

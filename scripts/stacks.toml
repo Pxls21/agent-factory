@@ -1,0 +1,499 @@
+# scripts/stacks.toml — the stack registry. Each [stacks.<label>] is a named, fixed sequence of instrument calls with
+# typed parameters, run by scripts/stack.py in one tool call (task #339, D-103). The schema is the CONTRACT of
+# tasks/briefs/labeling/LS-B9-brief.md; the design is docs/research/findings/labeling/LS-DESIGN-v2-2026-09-28.md §4.
+#
+# Step defaults: group 1, timeout 60, cap_lines 40, ok_rc [0], required true, save_cap_mb 20. A section over cap_lines
+# prints its first and its last lines and names the saved full output. A search whose "nothing found" exit is 1 (grep,
+# git grep, rg, owner_rulings.py, git ls-files --error-unmatch) lists 1 in ok_rc. A default may name a built-in
+# ({branch}); it is resolved and then validated at run time. Literal braces are not allowed in an argv element (only
+# placeholders; {paths,} joins a list with commas into one element). Every ripwire and sentrux step carries
+# unmapped_if: their wrappers print "<name>_review: <bin> missing — run scripts/setup.sh" and exit 0 when the binary
+# is absent (task #345), and that output reads `unmapped — <tool> unavailable`, never ok. Only a stack with
+# rated = true takes ratings (the content stacks: find, ctx, impact, echo, review). Other step fields: foreach =
+# "@<step>" (one call per stdout line of an earlier step, as {each}), empty_ok (an empty chained input is nothing to
+# do, never a failure), needs (run only when the named earlier steps ended ok), headline (the step's first stdout line
+# goes into the print's header, which the print cap never cuts).
+# No stack calls a model (KC-J1: no Laya or Jev in a gate) or takes an outward action (outward = true is refused at
+# load). Every step's interface was verified on 2026-09-28; the forms are in tasks/briefs/labeling/LS-B9-report.md.
+
+version = 1
+
+[tools]
+code-review-graph = ["~/venv-crg/bin/code-review-graph", "/root/venv-crg/bin/code-review-graph", "code-review-graph"]
+
+# ---------------------------------------------------------------------------------------------------------------- harvest
+[stacks.harvest]
+summary = "a finished lane: its served models and refusal stops, its SubagentHandback message (tags neutralized), the report linted and hashed"
+replaces = "hiccup_scan.py, a hand extraction of the handback, report_lint.py and sha256sum at every lane harvest (4 to 6 calls)"
+outward = false
+
+[stacks.harvest.params.agent]
+type = "agent"
+required = true
+
+[stacks.harvest.params.report]
+type = "path"
+
+[[stacks.harvest.steps]]
+id = "models"
+argv = ["python3", "scripts/hiccup_scan.py", "--transcript", "{transcript}", "--out", "{run}/hiccup.md"]
+group = 1
+timeout = 300
+cap_lines = 10
+
+[[stacks.harvest.steps]]
+id = "handback"
+argv = ["python3", "scripts/handback_extract.py", "--transcript", "{transcript}", "--out", "{run}/handback.md",
+        "--report-out", "{run}/report.md"]
+group = 1
+timeout = 120
+cap_lines = 10
+
+[[stacks.harvest.steps]]
+id = "agent_row"
+argv = ["grep", "-F", "| {agent} |", "{run}/hiccup.md"]
+group = 2
+timeout = 30
+cap_lines = 10
+ok_rc = [0, 1]
+
+# The lint is advisory: a report whose citations the linter misreads still harvests (exit 0); its lines still print.
+[[stacks.harvest.steps]]
+id = "lint"
+argv = ["python3", "scripts/report_lint.py", "--root", "{tree}", "{report}"]
+group = 2
+timeout = 120
+required = false
+when = { report = "*" }
+
+# The extractor prints the longer of the hand-back and the lane's text report as its one stdout line, and nothing when
+# there is no hand-back: chained, this lint is SKIPPED then, not failed.
+[[stacks.harvest.steps]]
+id = "lint_handback"
+argv = ["python3", "scripts/report_lint.py", "--root", "{tree}", "{@handback*}"]
+group = 2
+timeout = 120
+required = false
+when = { report = "" }
+
+[[stacks.harvest.steps]]
+id = "sha"
+argv = ["sha256sum", "--", "{report}"]
+group = 2
+timeout = 60
+cap_lines = 5
+when = { report = "*" }
+
+# ------------------------------------------------------------------------------------------------------------------- gate
+[stacks.gate]
+summary = "every test that names each path, united with the tests ripwire's call graph links to the change (graph=yes); mode=run runs each file with its own runner: pytest, python3 or bash"
+replaces = "the rule 'a changed file's gate includes every test that names its path', done by hand: grep -l, ripwire test-gate, pc_suite.sh set-id, test_summary.sh twice, run-all.sh's python3 and bash runs"
+outward = false
+
+[stacks.gate.params.paths]
+type = "paths"
+required = true
+
+[stacks.gate.params.mode]
+type = "choice"
+choices = ["plan", "run"]
+default = "plan"
+
+[stacks.gate.params.runs]
+type = "choice"
+choices = ["1", "2"]
+default = "2"
+
+[stacks.gate.params.graph]
+type = "choice"
+choices = ["yes", "no"]
+default = "yes"
+
+# mode=run refuses a run list wider than this (VERIFY-LS-B9 F-2: graph=yes gave 101 files for scripts/stack.py alone).
+[stacks.gate.params.max_files]
+type = "int"
+default = "40"
+
+[[stacks.gate.steps]]
+id = "tests"
+argv = ["python3", "scripts/gate_files.py", "{paths*}"]
+group = 1
+timeout = 120
+cap_lines = 60
+
+[[stacks.gate.steps]]
+id = "why"
+argv = ["python3", "scripts/gate_files.py", "--why", "{paths*}"]
+group = 1
+timeout = 120
+cap_lines = 60
+
+# ripwire's tests to run for the change and its untested blast radius. One comma-joined argument: the wrapper passes one
+# --test-gate= flag per argument and ripwire 0.4.0 keeps only the last flag, while --test-gate=F1,F2 is its documented
+# multi-file form. ripwire exits 4 when either list is non-empty, 1 on a path it cannot match (a deleted file: graph=no).
+[[stacks.gate.steps]]
+id = "graph"
+argv = ["bash", "scripts/ripwire_review.sh", "test-gate", "{paths,}"]
+group = 1
+timeout = 300
+cap_lines = 30
+ok_rc = [0, 4]
+unmapped_if = "missing — run scripts/setup.sh"
+tool = "ripwire"
+when = { graph = "yes" }
+
+# The union of gate_files' tests and ripwire's <t> rows (scripts/gate_union.py), each file with its runner: pytest for
+# test_*.py outside harness-ports/tests/, python3 for harness-ports/tests/test_*.py and bash for its test_*.sh (one
+# process per file, as harness-ports/tests/run-all.sh runs them), or "not run" and why (a fixture module; the 3.4 GB
+# tests/test_vendored_manifest.py, with the command for its one relevant test). Its first line, the counts per runner,
+# goes into the print's header, and it fails when nothing runs, or when mode=run meets more than max_files files.
+[[stacks.gate.steps]]
+id = "sources"
+argv = ["python3", "scripts/gate_union.py", "--why", "--mode", "{mode}", "--max-files", "{max_files}", "--graph",
+        "{graph}", "--ripwire", "{run}/graph.out", "{paths*}"]
+group = 2
+timeout = 120
+cap_lines = 60
+headline = true
+
+[[stacks.gate.steps]]
+id = "union"
+argv = ["python3", "scripts/gate_union.py", "--runner", "pytest", "--graph", "{graph}", "--ripwire", "{run}/graph.out",
+        "{paths*}"]
+group = 2
+timeout = 120
+cap_lines = 60
+
+[[stacks.gate.steps]]
+id = "union_py"
+argv = ["python3", "scripts/gate_union.py", "--runner", "python3", "--graph", "{graph}", "--ripwire",
+        "{run}/graph.out", "{paths*}"]
+group = 2
+timeout = 120
+cap_lines = 30
+
+[[stacks.gate.steps]]
+id = "union_sh"
+argv = ["python3", "scripts/gate_union.py", "--runner", "bash", "--graph", "{graph}", "--ripwire", "{run}/graph.out",
+        "{paths*}"]
+group = 2
+timeout = 120
+cap_lines = 30
+
+[[stacks.gate.steps]]
+id = "setid"
+argv = ["bash", "scripts/pc_suite.sh", "set-id", "--", "{@union*}"]
+group = 3
+timeout = 60
+cap_lines = 5
+empty_ok = true
+
+# A private basetemp OUTSIDE every git work tree: {tmp} (/tmp/stack-<run id>, removed after the run). Under the run dir
+# (inside the main tree) a test that needs a temp dir outside every repository met the agent-factory repository (D12).
+# The three runs wait for `sources` (a refused or empty run list runs nothing) and have nothing to do on an empty list.
+[[stacks.gate.steps]]
+id = "run"
+argv = ["bash", "scripts/test_summary.sh", "--basetemp={tmp}/bt", "{@union*}"]
+group = 4
+timeout = 1800
+repeat = "{runs}"
+when = { mode = "run" }
+needs = ["sources"]
+empty_ok = true
+
+[[stacks.gate.steps]]
+id = "scripts"
+argv = ["python3", "{tree}/{each}"]
+group = 5
+timeout = 600
+foreach = "@union_py"
+when = { mode = "run" }
+needs = ["sources"]
+empty_ok = true
+
+[[stacks.gate.steps]]
+id = "shells"
+argv = ["bash", "{tree}/{each}"]
+group = 6
+timeout = 600
+foreach = "@union_sh"
+when = { mode = "run" }
+needs = ["sources"]
+empty_ok = true
+
+# -------------------------------------------------------------------------------------------------------------------- ctx
+[stacks.ctx]
+summary = "the code-intel pack of files: graft skeletons and ask, GitNexus impact, code-review-graph, ripwire, the AP screen"
+replaces = "scripts/lane_context.sh run by hand (it exists; the stack gives it a label and a record)"
+outward = false
+rated = true
+
+[stacks.ctx.params.files]
+type = "paths"
+required = true
+
+[stacks.ctx.params.q]
+type = "text"
+
+[stacks.ctx.params.sym]
+type = "symbols"
+
+# lane_context.sh prints the pack on stdout; with -o it writes the pack to a file and prints one line. The stack runs it
+# without -o, so the pack is the step's own saved output and its print.
+[[stacks.ctx.steps]]
+id = "pack"
+argv = ["bash", "scripts/lane_context.sh", "{q?:-q}", "{sym*:-s}", "{files*}"]
+group = 1
+timeout = 900
+cap_lines = 120
+
+# ----------------------------------------------------------------------------------------------------------------- impact
+[stacks.impact]
+summary = "the blast radius of one symbol from four instruments in parallel: GitNexus impact, code-review-graph callers and tests, ripwire edit-check"
+replaces = "the build loop's blast-radius calls, one at a time"
+outward = false
+rated = true
+
+[stacks.impact.params.sym]
+type = "symbol"
+required = true
+
+[[stacks.impact.steps]]
+id = "gitnexus"
+argv = ["node", ".gitnexus/run.cjs", "impact", "{sym}", "--direction", "upstream", "--repo", "."]
+group = 1
+timeout = 120
+
+[[stacks.impact.steps]]
+id = "crg_callers"
+argv = ["code-review-graph", "query", "callers_of", "{sym}"]
+group = 1
+timeout = 120
+
+[[stacks.impact.steps]]
+id = "crg_tests"
+argv = ["code-review-graph", "query", "tests_for", "{sym}"]
+group = 1
+timeout = 120
+
+# One line of about 7,000 characters: the tool's explanation comment, then the <edit-check> element at its end.
+[[stacks.impact.steps]]
+id = "ripwire"
+argv = ["bash", "scripts/ripwire_review.sh", "edit-check", "{sym}"]
+group = 1
+timeout = 180
+cap_lines = 20
+unmapped_if = "missing — run scripts/setup.sh"
+tool = "ripwire"
+
+# ------------------------------------------------------------------------------------------------------------------- find
+[stacks.find]
+summary = "what the repo already holds on q: graft ask, the owner's rulings, the chat, the AF-AP registry rows"
+replaces = "3 to 4 lookups before a brief or a question to the owner"
+outward = false
+rated = true
+
+[stacks.find.params.q]
+type = "text"
+required = true
+
+[stacks.find.params.words]
+type = "words"
+split_from = "q"
+
+[[stacks.find.steps]]
+id = "graft"
+argv = ["graft", "ask", "{q}"]
+group = 1
+timeout = 120
+
+[[stacks.find.steps]]
+id = "rulings"
+argv = ["python3", "scripts/owner_rulings.py", "{words*}"]
+group = 1
+timeout = 60
+cap_lines = 30
+ok_rc = [0, 1]
+when = { words = "*" }
+
+# --order lexical and --no-jev-log pin what the defaults do on 2026-09-28: no model call (KC-J1), no write outside
+# .jev/stacks/.
+[[stacks.find.steps]]
+id = "chat"
+argv = ["python3", "scripts/chat_find.py", "{q}", "--hits", "5", "--order", "lexical", "--no-jev-log"]
+group = 1
+timeout = 300
+cap_lines = 30
+
+[[stacks.find.steps]]
+id = "registry"
+argv = ["git", "grep", "-n", "-i", "-e", "^| AF-AP-", "--and", "(", "{words*:-e}", ")", "--", "docs/INCIDENT-LOG.md"]
+group = 1
+timeout = 60
+cap_lines = 30
+ok_rc = [0, 1]
+when = { words = "*" }
+
+# ---------------------------------------------------------------------------------------------------------------- premise
+[stacks.premise]
+summary = "the premise facts of files: tracked or not, sha256, line count, the last commit that touched each"
+replaces = "the premise block of every brief"
+outward = false
+
+[stacks.premise.params.files]
+type = "paths"
+required = true
+
+# rc 1 of these three is a measured fact (a file untracked, or absent), shown in the section; rc 2 or more fails.
+[[stacks.premise.steps]]
+id = "tracked"
+argv = ["git", "ls-files", "--error-unmatch", "--", "{files*}"]
+group = 1
+timeout = 60
+ok_rc = [0, 1]
+
+[[stacks.premise.steps]]
+id = "sha"
+argv = ["sha256sum", "--", "{files*}"]
+group = 1
+timeout = 60
+ok_rc = [0, 1]
+
+[[stacks.premise.steps]]
+id = "lines"
+argv = ["wc", "-l", "--", "{files*}"]
+group = 1
+timeout = 60
+ok_rc = [0, 1]
+
+[[stacks.premise.steps]]
+id = "last"
+argv = ["git", "log", "-1", "--format=%h %ci %s", "--", "{each}"]
+group = 1
+timeout = 60
+cap_lines = 5
+foreach = "files"
+
+# ------------------------------------------------------------------------------------------------------------------- echo
+[stacks.echo]
+summary = "the bug-echo sweep: the pattern in the six code roots, the incident log's lines, the AP screen over the files hit"
+replaces = "the bug-echo sweep after a fix: rg, git grep and ap_screen.py by hand"
+outward = false
+rated = true
+
+[stacks.echo.params.pattern]
+type = "text"
+required = true
+
+[stacks.echo.params.roots]
+type = "paths"
+default = "scripts,harness-ports,src,proofs,.claude/hooks,.github"
+
+# --sort path: rg prints in completion order by default, so two runs over one tree differ; sorted, the saved output is
+# reproducible from the tree (design §4.2).
+[[stacks.echo.steps]]
+id = "code"
+argv = ["rg", "-n", "--no-heading", "--sort", "path", "-e", "{pattern}", "--", "{roots*}"]
+group = 1
+timeout = 120
+cap_lines = 60
+ok_rc = [0, 1]
+
+[[stacks.echo.steps]]
+id = "files"
+argv = ["rg", "-l", "--sort", "path", "-e", "{pattern}", "--", "{roots*}"]
+group = 1
+timeout = 120
+ok_rc = [0, 1]
+
+[[stacks.echo.steps]]
+id = "registry"
+argv = ["git", "grep", "-n", "-i", "-E", "-e", "{pattern}", "--", "docs/INCIDENT-LOG.md"]
+group = 1
+timeout = 60
+cap_lines = 30
+ok_rc = [0, 1]
+
+# Not required: a pattern found nowhere leaves no file to screen (the step is SKIPPED, the sweep's good outcome).
+[[stacks.echo.steps]]
+id = "ap"
+argv = ["python3", "scripts/ap_screen.py", "{@files*}"]
+group = 2
+timeout = 300
+cap_lines = 60
+required = false
+
+# ----------------------------------------------------------------------------------------------------------------- review
+# Before a build lane: `review mode=save`; after it: `review mode=compare files=...`.
+[stacks.review]
+summary = "a change's review: sentrux architecture health (check, save a baseline, compare with it), and for the files ripwire's test gate, the pyflakes delta and the AP screen"
+replaces = "the hand review around a build lane: sentrux_review.sh save and compare, ripwire test-gate, lint_delta.py, ap_screen.py"
+outward = false
+rated = true
+
+[stacks.review.params.files]
+type = "paths"
+
+[stacks.review.params.mode]
+type = "choice"
+choices = ["check", "save", "compare"]
+default = "check"
+
+# Advisory, never a gate (the wrapper's own rule). It scans its composed copy of the project's code dirs (not the files)
+# and keeps the baseline in .sentrux-runtime/ (gitignored), where a later compare finds it.
+[[stacks.review.steps]]
+id = "sentrux"
+argv = ["bash", "scripts/sentrux_review.sh", "{mode}"]
+group = 1
+timeout = 600
+cap_lines = 40
+required = false
+unmapped_if = "missing — run scripts/setup.sh"
+tool = "sentrux"
+
+[[stacks.review.steps]]
+id = "ripwire"
+argv = ["bash", "scripts/ripwire_review.sh", "test-gate", "{files,}"]
+group = 1
+timeout = 300
+cap_lines = 30
+ok_rc = [0, 4]
+unmapped_if = "missing — run scripts/setup.sh"
+tool = "ripwire"
+when = { files = "*" }
+
+# lint_delta.py takes no file list (--staged or --base REV over git's changed tracked files); scripts/lint_files.py
+# applies its rule, imported, to exactly these files, untracked ones included.
+[[stacks.review.steps]]
+id = "lint"
+argv = ["python3", "scripts/lint_files.py", "{files*}"]
+group = 1
+timeout = 120
+when = { files = "*" }
+
+[[stacks.review.steps]]
+id = "ap"
+argv = ["python3", "scripts/ap_screen.py", "{files*}"]
+group = 1
+timeout = 300
+cap_lines = 60
+when = { files = "*" }
+
+# --------------------------------------------------------------------------------------------------------------------- ci
+[stacks.ci]
+summary = "the branch's stage0-ci verdict through scripts/ci_gate.py: 0 passed, 75 not in yet, 1 red"
+replaces = "the hand ci_gate.py calls (257 in eight days)"
+outward = false
+
+# text, not word: a branch name holds '/' (claude/soundbox-kit-migration-iz1jwf), which the word type refuses.
+[stacks.ci.params.branch]
+type = "text"
+default = "{branch}"
+
+[[stacks.ci.steps]]
+id = "verdict"
+argv = ["python3", "scripts/ci_gate.py", "--branch", "{branch}"]
+group = 1
+timeout = 60
+cap_lines = 20
+ok_rc = [0, 75]
