@@ -457,6 +457,7 @@ host's `env_fingerprint` (`sandbox:fedora` from the PC); the harvest applies the
 (`sandbox:vm` = this sandbox), then gates on `validate-ledger integrity` PRESENT + `ledger-gen` +
 `tests/test_proof_status.py` (a short `--basetemp`). The lane's report declares its regenerated artifact NOT for
 landing (S4H did); a harvest that lands a foreign-venue mint is a hollow attestation.
+**A brief item that reads another proof's checker makes that checker an attested input of this proof (2026-09-28, I59-F round 3).** "Take the mode set from S0-03's checker" put S0-03's checker into S0-04's reads, and the drift guard `tests/test_attested_inputs.py` stays red until S0-04's registry row attests it; after that, every change to S0-03's checker re-mints S0-04 too. The lane stopped on the conflict and a round was spent on the ruling. At authoring, name the consequence in the item and pick the route: a declared input (the registry row attests the other checker), or an own copy that a test pins equal to the other set (the test reads the other checker as data; the proof never imports it; I59-F took this route).
 **A lane's file inventory comes from GIT'S VIEW, never from a directory walk (2026-09-08, AF-AP-62):**
 compute the harvest/gate file list with `git ls-files --others --exclude-standard <lane dirs>` plus
 `git diff --name-only`; a count that disagrees with the lane's report is the tell. Lane B1's two

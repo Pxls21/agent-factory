@@ -11,6 +11,14 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-28 19:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin 5a6250c (CI run #1117 passed), plus local commits to push; the main tree is the primary.**
+- **RUNNING (sandbox, three lanes):** I59-F round 4 (task #335 + #344, worktree `/home/user/i59-landing`); LS-B9 round 2 (task #339: ripwire and sentrux in the stacks); VERIFY-SCRUB2-R1-R2 (task #321).
+- **DONE (D-104 (2)):** the 11 GB of mutation copies is on the PC (`/home/rocco/af-archive/scratch-mutants-2026-09-15/`: the verified bundle and a bare clone) and deleted here; 12,182 MB free.
+- **HOME:** VERIFY-LS-B7 (MERGE-READY-WITH-FOLLOWUPS; go-live preconditions P1-P6 in its report).
+- **NEXT:** the skill bake of the five queued lessons; land LS-B7 (the manifest regenerated in a clean worktree), a small LS-B7 round 2 if a slot is free, then go live; the audit for task #346 (D-105) when a slot frees; VERIFY-LS-B9 after its round 2; after I59-F round 4, its verify, then the one re-mint.
+- **WAITING ON THE OWNER:** only the chat form of LS-DESIGN v2 §3 (the command form stands).
+
 **2026-09-28 18:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin 5a6250c (its CI run #1117 pending), plus local commits; the main tree is the primary.**
 - **RUNNING (sandbox, three lanes):** I59-F round 4 (task #335 + #344, worktree `/home/user/i59-landing`); LS-B9 round 2 (task #339: ripwire and sentrux in the stacks); VERIFY-SCRUB2-R1-R2 (task #321). In the background: the deduplicated archive of the 11 GB of mutation copies (`/home/user/scratch-archive.git`; the first third packed to 51 MB), to ship to the PC with `.../scratchpad/ship_bundle.py` (ship_to_pc.py's verified chunk protocol), then deleted here (D-104 (2)).
