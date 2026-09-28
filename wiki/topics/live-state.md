@@ -11,6 +11,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-28 13:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, one lane):** SCRUB2-R1 round 2 (task #321), in the main tree; its five files are in `.lanes-live`.
+- **HOME, all three verifiers:** VERIFY-I59-LANDING and VERIFY-I59-BCE are MERGE-READY-WITH-FOLLOWUPS; VERIFY-SCRUB2-R1 NOT-READY (round 2 runs).
+- **The issue #59 batch is committed on branch `i59-landing`** (worktree `/home/user/i59-landing`, rebased onto 3d6b1df with hooks off, STATUS.md fixed, all proof gates green). It goes out in ONE push with the main tree's unpushed 3d6b1df once CI run #1109 (on 7df5f03) finishes; the main tree then follows origin by tree identity.
+- **Next:** I59-F (task #335, the proof-code follow-ups), the re-mint of S0-03, S0-04 and S0-05, then the owner's one re-sign of all twelve.
+- **Waiting on the owner (D-100):** the Strata GPU-window trial (X-009), the output-block pilot or research first (X-010), the Read-narrowing hook (X-011), the sign-once plan, SYNTH1's option.
+
 **2026-09-28 12:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, two lanes):** SCRUB2-R1 round 2 (task #321; the builder resumed on `tasks/briefs/system1/SCRUB2-R1-R2-brief.md`; its five files are in `.lanes-live`) and VERIFY-I59-LANDING (resumed after the weekly-limit stop, on the local landing commit, branch `i59-landing`).
 - **HOME:** VERIFY-SCRUB2-R1 NOT-READY (B1-B3; V4 ruled blocking). VERIFY-I59-BCE: I59-B, I59-C and I59-E all MERGE-READY-WITH-FOLLOWUPS; task #335 (I59-F) takes the proof-code follow-ups before the owner's re-sign; task #331 re-scoped (the signal-test reds came from the gate's launch form, not load).
