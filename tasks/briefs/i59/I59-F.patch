@@ -61,7 +61,7 @@ index 8d4e09a..840a943 100755
  
  def main() -> int:
 diff --git a/proofs/S0-03/check_omniroute_roundtrip.py b/proofs/S0-03/check_omniroute_roundtrip.py
-index fcd0126..6f6d99f 100644
+index fcd0126..9d24867 100644
 --- a/proofs/S0-03/check_omniroute_roundtrip.py
 +++ b/proofs/S0-03/check_omniroute_roundtrip.py
 @@ -88,6 +88,7 @@ Usage: check_omniroute_roundtrip.py --route-id ID --expected-model-id ID
@@ -119,7 +119,7 @@ index fcd0126..6f6d99f 100644
          # PyYAML raises more than YAMLError: an explicit tag's constructor raises a ValueError or a
          # KeyError that quotes the value (`!!float` and `!!bool` lower-cased), a bad `!!timestamp` an
          # AttributeError, a deep nesting a RecursionError (AF-AP-232). The class name only, never the
-@@ -755,8 +776,22 @@ def _provider_block(profile) -> tuple[str, dict]:
+@@ -755,10 +776,29 @@ def _provider_block(profile) -> tuple[str, dict]:
      return str(name), _obj(block, "profile.yaml provider block")
  
  
@@ -143,8 +143,15 @@ index fcd0126..6f6d99f 100644
 +def _walk_node(node, path: str, _open: set):
      if isinstance(node, dict):
          for key, value in node.items():
++            if not isinstance(key, str):
++                # A YAML key can load as an int, a bool or a null, and the screen below splits a name: such a key fails
++                # by its type and the mapping that holds it, never by AttributeError (I59-F round 5, VERIFY-I59-F
++                # R4-F1). Neither the key nor its value is printed.
++                raise Failure(f"bundle: profile.yaml has a non-string key ({type(key).__name__}) under {path}")
              child_path = f"{path}.{key}"
-@@ -769,10 +804,10 @@ def _walk_credentials(node, path: str):
+             key_is_allowed_env_name = (
+                 key == "key_env" and path.count(".") == 1 and path.startswith("providers."))
+@@ -769,10 +809,10 @@ def _walk_credentials(node, path: str):
                      and value.lower().startswith(("bearer ", "basic ", "sk-", "sk_"))):
                  raise Failure(
                      f"bundle: profile.yaml carries an inline credential under {child_path}")
@@ -157,7 +164,7 @@ index fcd0126..6f6d99f 100644
  
  
  def check_transport(profile):
-@@ -785,8 +820,8 @@ def check_transport(profile):
+@@ -785,8 +825,8 @@ def check_transport(profile):
          api_mode = model_section.get("api_mode")
      if api_mode is None:
          api_mode = block.get("api_mode")
@@ -168,7 +175,7 @@ index fcd0126..6f6d99f 100644
  
      headers = block.get("extra_headers")
      if not isinstance(headers, dict):
-@@ -797,7 +832,7 @@ def check_transport(profile):
+@@ -797,7 +837,7 @@ def check_transport(profile):
              value = val
      if not isinstance(value, str) or value.strip().lower() != COMPRESSION_OFF:
          raise Failure(
@@ -177,7 +184,7 @@ index fcd0126..6f6d99f 100644
          )
  
      # The launched profile must never carry a key VALUE. Only the exact provider-level env NAME
-@@ -805,7 +840,7 @@ def check_transport(profile):
+@@ -805,7 +845,7 @@ def check_transport(profile):
      _walk_credentials(block, f"providers.{provider_name}")
      if block.get("key_env") != "OMNIROUTE_API_KEY":
          raise Failure(
@@ -276,40 +283,61 @@ index 8eadc28..7137a4f 100644
  
  def check_bundle(root: Path, fixtures_dir: Path) -> str:
 diff --git a/proofs/S0-05/check_egress.py b/proofs/S0-05/check_egress.py
-index 1a28479..a5c4997 100755
+index 1a28479..5c8ff6d 100755
 --- a/proofs/S0-05/check_egress.py
 +++ b/proofs/S0-05/check_egress.py
-@@ -45,7 +45,8 @@ Order is part of the contract, and it runs in this order for a reason:
+@@ -45,9 +45,11 @@ Order is part of the contract, and it runs in this order for a reason:
       for it in units.json (the runner's stand-in input) is `units-manifest-invalid: <unit>
       override present` — a stand-in run can never pass as the live leg — and
       `<unit>/unit-identity.json` must exist and match the pinned identity in proofs/S0-01/pins.py
 -     (exe realpath, entrypoint realpath and sha256) with no uid 0, else
+-     `unit-identity-invalid: <unit> <detail>`. The record is unkeyed: it binds the unit that ran
+-     to the pins, not against a forger with root on the PC.
 +     (exe realpath, entrypoint realpath and sha256) with no uid 0 and no gid 0 (the gid since I59-F
-+     round 4, VERIFY-I59-F F-11: a record without the Gid line fails too), else
-      `unit-identity-invalid: <unit> <detail>`. The record is unkeyed: it binds the unit that ran
-      to the pins, not against a forger with root on the PC.
++     round 4, VERIFY-I59-F F-11: a record without the Gid line fails too), each id at most
++     4294967294, and, when the record carries the Groups line, no supplementary group 0 (since
++     round 5, VERIFY-I59-F R4-F4), else `unit-identity-invalid: <unit> <detail>`. The record is
++     unkeyed: it binds the unit that ran to the pins, not against a forger with root on the PC.
  
-@@ -107,8 +108,9 @@ IPV4_PORT = re.compile(rf"{_OCTET}\.{_OCTET}\.{_OCTET}\.{_OCTET}:(0|[1-9][0-9]{{
+ Deferral (exit 2), never a pass: the evidence root does not exist (the live units run on the
+ PC), or a canary is recorded `status: not-run` — a discriminator that could not run is a DEFER
+@@ -107,8 +109,13 @@ IPV4_PORT = re.compile(rf"{_OCTET}\.{_OCTET}\.{_OCTET}\.{_OCTET}:(0|[1-9][0-9]{{
  CURL_CONNECT = re.compile(r"Failed to connect to (\S+) port (\d+)")
  CURL_RESOLVE = re.compile(r"Could not resolve host: (\S+?)\.?$")
  # A7: the record run_s0_05_units.sh writes for each live unit (its pid, what /proc says it runs,
 -# and the Uid line's real/effective/saved/fs uids).
 -IDENTITY_KEYS = ("unit", "pid", "exe_realpath", "entrypoint_realpath", "entrypoint_sha256", "uid", "argv")
-+# and the Uid and Gid lines' real/effective/saved/fs ids; the gid since I59-F round 4, VERIFY-I59-F F-11. A
-+# record may carry more (the Groups line since round 4); only these keys are graded).
++# and the Uid and Gid lines' real/effective/saved/fs ids; the gid since I59-F round 4, VERIFY-I59-F F-11). A
++# record may carry more: the Groups line since round 4, graded when present (round 5, VERIFY-I59-F R4-F4), so a
++# record written before round 4 still reads; any other key is ignored.
 +IDENTITY_KEYS = ("unit", "pid", "exe_realpath", "entrypoint_realpath", "entrypoint_sha256", "uid", "gid", "argv")
++# The largest id a unit can hold: uid_t and gid_t are 32 bits, 4294967295 is (uid_t)-1 ("no id", setresuid's
++# "unchanged"), and /proc reports no larger value (I59-F round 5, VERIFY-I59-F R4-F4).
++ID_MAX = 4294967294
  LIVE_VENUE = "pc"
  
  # The pinned unit identities come from proofs/S0-01/pins.py — the ONE source of every pinned value,
-@@ -406,6 +408,11 @@ def check_unit_identity(unit_dir, unit):
+@@ -404,8 +411,23 @@ def check_unit_identity(unit_dir, unit):
+     uid = record["uid"]
+     if not isinstance(uid, list) or len(uid) != 4 or not all(_is_int(u) and u >= 0 for u in uid):
          refuse(f"uid {uid!r} is not the four uids of the Uid line")
++    if max(uid) > ID_MAX:
++        refuse(f"uid {max(uid)} is above {ID_MAX}")
      if 0 in uid:
          refuse("uid 0")
 +    gid = record["gid"]
 +    if not isinstance(gid, list) or len(gid) != 4 or not all(_is_int(g) and g >= 0 for g in gid):
 +        refuse(f"gid {gid!r} is not the four gids of the Gid line")
++    if max(gid) > ID_MAX:
++        refuse(f"gid {max(gid)} is above {ID_MAX}")
 +    if 0 in gid:
 +        refuse("gid 0")
++    if "groups" in record:
++        groups = record["groups"]
++        if not isinstance(groups, list) or not all(_is_int(g) and g >= 0 for g in groups):
++            refuse(f"groups {groups!r} is not the gids of the Groups line")
++        if 0 in groups:
++            refuse("supplementary group 0")
      return f"unit-identity: {unit} pid {record['pid']} runs {entrypoint} (sha256 {sha256[:12]}) as uid {uid[0]}"
  
  
@@ -348,7 +376,7 @@ index 418c0c7..3a7e234 100644
    "uid": [
      0,
 diff --git a/proofs/S0-05/tools/pc/run_s0_05_units.sh b/proofs/S0-05/tools/pc/run_s0_05_units.sh
-index 0f310d7..5e2c079 100755
+index 0f310d7..83b6188 100755
 --- a/proofs/S0-05/tools/pc/run_s0_05_units.sh
 +++ b/proofs/S0-05/tools/pc/run_s0_05_units.sh
 @@ -96,8 +96,22 @@ EVIDENCE_ROOT=${1:?usage: run_s0_05_units.sh <evidence-root> [unit...]}; shift |
@@ -511,7 +539,7 @@ index 0f310d7..5e2c079 100755
  print("; ".join(problems) or "ok")
  sys.exit(1 if problems else 0)
  PY
-@@ -514,64 +585,163 @@ declare -A RESULT
+@@ -514,64 +585,173 @@ declare -A RESULT
  NS_LIVE=""; LOG_PIDS=""; FIFO_DIRS=""
  # AF-AP-169 (I59-B): the handback, run under sudo only (HANDBACK, above) as `cleanup`'s last step, when
  # no unit, canary or log reader is left to write. The root (this run made it) and every entry under it go
@@ -537,12 +565,17 @@ index 0f310d7..5e2c079 100755
 +# came down from (st_dev and inode), or the walk stops there and the summary says so. So a tree of any depth
 +# is handed back under RLIMIT_NOFILE 1024, and the summary counts every entry left as it is (the recursion it
 +# replaces dropped a subtree below about 1,000 levels, or 511 under 1024 descriptors, as one entry). Round 4
-+# (VERIFY-I59-F F-4, F-12): every climb checks the whole way up, each ".." to the root the directory the walk came
-+# down through (st_dev and inode), so the walk never climbs into a directory that left the root, and it names
-+# what it found: a moved directory, a moved ancestor, or a mount on the way up. Between two climbs it hands back
-+# what it finds where it stands: an entry a live process moves out of the root after the last check can still be
-+# handed back where it then is, until the next climb stops the walk. No unit or canary is meant to be alive at the
-+# handback (VERIFY-I59-F F-5 names a unit that leaves its namespace and outlives the teardown). (B-4)
++# (VERIFY-I59-F F-4, F-12): a climb checks the whole way up, each ".." to the root the directory the walk came
++# down through (st_dev and inode), and names what it found: a moved directory, a moved ancestor, or a mount on the
++# way up. Round 5 (VERIFY-I59-F R4-F3): the whole way at every climb cost d*d/2 opens of ".." for a tree d levels
++# deep (24 s at 3,300 levels, with INT and TERM ignored in `cleanup`). Each climb now earns CHECK_BUDGET levels of
++# checking: it checks the whole way up when its earnings cover the depth, and its parent alone otherwise. The cost
++# is linear in the depth, and a tree up to CHECK_BUDGET levels deep is checked the whole way at every climb, as in
++# round 4. The window this leaves (R4-F6's class): deeper, the whole-way checks come at most ceil(d / CHECK_BUDGET)
++# climbs apart at depth d, and an ancestor moved out of the root in between is seen at the next one, or when the
++# walk climbs out of it; until then the walk hands back what it finds below that ancestor, where it now is. Between
++# two climbs, at any depth, it hands back what it finds where it stands. No unit or canary is meant to be alive at
++# the handback (VERIFY-I59-F F-5 names a unit that leaves its namespace and outlives the teardown). (B-4)
 +# Each id is at most 4294967294 and reaches fchownat as an unsigned int; the runner refuses a larger one
 +# first (exit 64), and the handback refuses it too.
  _handback() {
@@ -551,6 +584,7 @@ index 0f310d7..5e2c079 100755
 +import ctypes, errno, os, stat, sys
  root, uid, gid = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 +MAX_ID = 4294967294                            # uid_t is 32 bits; (uid_t)-1 = 4294967295 means "no change"
++CHECK_BUDGET = 32                              # levels of the whole-way-up check a climb earns (round 5, R4-F3)
 +if not (0 <= uid <= MAX_ID and 0 <= gid <= MAX_ID):
 +    sys.exit(print(f"run_s0_05_units: handback: nothing handed back: {uid}:{gid} is out of range (each id is 0 to "
 +                   f"{MAX_ID})", file=sys.stderr))
@@ -577,7 +611,7 @@ index 0f310d7..5e2c079 100755
 +    if not ctypes.c_uint32.from_buffer(buf, 0).value & STATX_MNT_ID:
 +        raise OSError(errno.EOPNOTSUPP, "statx gives no mount id on this kernel")
 +    return ctypes.c_uint64.from_buffer(buf, 144).value
-+done, left, stack, stopped = 0, [], [], ""
++done, left, stack, stopped, budget = 0, [], [], "", 0
 +def hand(fd, where):
 +    """Hand back the entry fd pins, or name it in `left` with the reason. True for a directory handed back."""
      global done
@@ -608,13 +642,14 @@ index 0f310d7..5e2c079 100755
 -        finally:
 -            os.close(sub)
 +    return stat.S_ISDIR(st.st_mode)
-+def off_the_way(fd, where):
-+    """The climb from <where> reached fd. fd and each ".." above it must be the directory the walk came down
-+    through (the stack's frames, st_dev and inode), up to the root itself. "" while the walk is inside the root,
-+    else why it stops. At most two descriptors of its own are open at a time."""
-+    at, own_at = fd, False
++def off_the_way(fd, where, levels):
++    """The climb from <where> reached fd. fd and each ".." above it, for the top <levels> frames of the stack
++    (all of them: the whole way up to the root itself; 1: fd alone), must be the directory the walk came down
++    through (st_dev and inode). "" while they are, else why the walk stops. At most two descriptors of its own are
++    open at a time."""
++    at, own_at, last = fd, False, len(stack) - levels
 +    try:
-+        for level in range(len(stack) - 1, -1, -1):
++        for level in range(len(stack) - 1, last - 1, -1):
 +            st = os.fstat(at)
 +            if (st.st_dev, st.st_ino) != stack[level][1]:
 +                if st.st_dev != dev or mount_id(at) != mnt:
@@ -622,7 +657,7 @@ index 0f310d7..5e2c079 100755
 +                if level == len(stack) - 1:
 +                    return f"{where} moved while it ran"
 +                return f"an ancestor of {where} moved out of the root while it ran"
-+            if level:
++            if level > last:
 +                up = os.open("..", os.O_RDONLY | os.O_DIRECTORY, dir_fd=at)
 +                if own_at:
 +                    os.close(at)
@@ -673,7 +708,10 @@ index 0f310d7..5e2c079 100755
 +                break
 +            os.close(cur)
 +            cur = up
-+            stopped = off_the_way(cur, where)
++            budget += CHECK_BUDGET              # the whole way up when the earnings cover the depth, else the parent
++            levels = len(stack) if budget >= len(stack) else 1
++            budget -= levels if levels > 1 else 0
++            stopped = off_the_way(cur, where, levels)
 +            if stopped:
 +                break
 +        continue
@@ -705,7 +743,7 @@ index 0f310d7..5e2c079 100755
  PY
  }
  # F3: cleanup destroys only namespaces this runner created and still owns (owner record = $$);
-@@ -639,7 +809,7 @@ for unit in "${UNITS[@]}"; do
+@@ -639,7 +819,7 @@ for unit in "${UNITS[@]}"; do
      RESULT[$unit]="not-run|unit user unresolved (set S0_05_UNIT_USER)"; echo "SKIP $unit: unit user unresolved" >&2
      continue
    fi
@@ -714,7 +752,7 @@ index 0f310d7..5e2c079 100755
      RESULT[$unit]="not-run|unit would run as root"; echo "SKIP $unit: unit would run as root" >&2
      continue
    fi
-@@ -725,7 +895,9 @@ for unit in "${UNITS[@]}"; do
+@@ -725,7 +905,9 @@ for unit in "${UNITS[@]}"; do
    exec {unit_in}<>"$fifo_dir/in"
    cat <"$fifo_dir/out" >"$EVIDENCE_ROOT/$unit.launch.log" {unit_in}>&- &
    log_pid=$!; LOG_PIDS="$LOG_PIDS $log_pid"
@@ -725,7 +763,7 @@ index 0f310d7..5e2c079 100755
    # PATH (pinned), HOME and HERMES_HOME (the scratch tree), the locale, and PYTHONDONTWRITEBYTECODE
    # (the CD1 probes' own recipe: the agent must never write bytecode into S0-01's pinned tree). The
    # pair's identity reaches ITS environment through fd 3 and a tiny exec shim, never through an argv.
-@@ -734,12 +906,12 @@ for unit in "${UNITS[@]}"; do
+@@ -734,12 +916,12 @@ for unit in "${UNITS[@]}"; do
              LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1)
    if [ "$unit" = hermes-acp ]; then
      ( cd "$scratch/home" && exec "$ENV_BIN" -i "${unit_env[@]}" "$IP_BIN" netns exec "$ns" \
@@ -801,8 +839,148 @@ index e2e240d..b56abba 100644
      assert name_at < run_at
      if apostrophe:
          lines[name_at] = "      - name: Install the suite's dependencies"
+diff --git a/tests/test_s0_01_manifest_parse_linear.py b/tests/test_s0_01_manifest_parse_linear.py
+new file mode 100644
+index 0000000..ec99490
+--- /dev/null
++++ b/tests/test_s0_01_manifest_parse_linear.py
+@@ -0,0 +1,134 @@
++"""Task #344: S0-01's two manifest parsers build each section's digest in linear time, over the same bytes.
++
++`_parse_manifest_body` (proofs/S0-01/check_acp_conformance.py) and `_parse_manifest_gz`
++(proofs/S0-01/tools/build_capture_record.py) grew each section by `+=` on a dict value. CPython cannot extend a string
++in place while the dict holds it too, so every line copied its whole section: quadratic. On the old code, here, a
++200,000-line manifest took 113.94 s in the checker and 53.51 s in the record builder (2026-09-28, task #344). Each
++timed parse below runs in a child process with BOUND seconds as its timeout, so a quadratic parser fails by the clock,
++fast. The digests stay the same: every committed golden manifest is parsed by both tools, and each digest is checked
++against an oracle computed here (the sha256 of a section's lines, each followed by a newline).
++"""
++import gzip
++import hashlib
++import importlib.util
++import json
++import re
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++ROOT = Path(__file__).resolve().parents[1]
++S0_01 = ROOT / "proofs" / "S0-01"
++CHECKER = S0_01 / "check_acp_conformance.py"
++BUILDER = S0_01 / "tools" / "build_capture_record.py"
++GOLDEN_DIR = S0_01 / "evidence" / "golden"
++GOLDEN = sorted(GOLDEN_DIR.rglob("manifest-*.txt.gz"))
++LINES_PER_TREE = 50_000          # four trees: 200,000 lines in all
++BOUND = 20.0                     # seconds of wall time for one child; the old code needed 113.94 s and 53.51 s
++
++_pins_spec = importlib.util.spec_from_file_location("s0_01_pins_for_344", S0_01 / "pins.py")
++PINS = importlib.util.module_from_spec(_pins_spec)
++_pins_spec.loader.exec_module(PINS)
++
++# The child loads one tool by its path, with proofs/S0-01 first on sys.path (both tools `import pins`).
++LOAD = ("import importlib.util, sys\n"
++        "sys.path.insert(0, {s0_01!r})\n"
++        "spec = importlib.util.spec_from_file_location('tool', {path!r})\n"
++        "mod = importlib.util.module_from_spec(spec)\n"
++        "spec.loader.exec_module(mod)\n")
++
++
++def _child(tool, body, timeout):
++    """Run <body> in a child process after loading <tool>; <timeout> is the child's wall bound."""
++    code = LOAD.format(s0_01=str(S0_01), path=str(tool)) + body
++    return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=timeout, cwd=str(ROOT))
++
++
++def _big_manifest():
++    """200,000 lines in the pinned header order, each line in the v2.2 shape (pins.MANIFEST_LINE_RE)."""
++    out = []
++    for tree in PINS.MANIFEST_TREES:
++        out.append(f"## {tree}")
++        out += [f"{hashlib.sha256(f'{tree}/{i}'.encode()).hexdigest()} f 0644  ./dir{i % 997}/file-{i}.py"
++                for i in range(LINES_PER_TREE)]
++    return ("\n".join(out) + "\n").encode()
++
++
++def _oracle(body):
++    """Each section's sha256, computed apart from both tools: its lines, each followed by a newline."""
++    sections, current = {}, None
++    for line in body.decode("utf-8").split("\n"):
++        if line.startswith("## "):
++            current = line[3:].strip()
++            sections[current] = []
++        elif current is not None and line:
++            sections[current].append(line)
++    return {tree: hashlib.sha256("".join(f"{line}\n" for line in lines).encode("utf-8")).hexdigest()
++            for tree, lines in sections.items()}
++
++
++def test_the_big_manifest_is_one_the_checker_parses_line_by_line():
++    """The timed input is well formed: 200,000 lines, the pinned header order, every line in the pinned shape. So
++    the checker reads it to the end and stops only at the pinned per-tree file count."""
++    lines = _big_manifest().decode().split("\n")[:-1]
++    assert len(lines) == 4 * (LINES_PER_TREE + 1) and len(PINS.MANIFEST_TREES) == 4
++    assert [line for line in lines if line.startswith("## ")] == [f"## {tree}" for tree in PINS.MANIFEST_TREES]
++    shape = re.compile(PINS.MANIFEST_LINE_RE)
++    assert all(shape.match(line) for line in lines if not line.startswith("## "))
++
++
++def test_the_checker_parses_200000_lines_within_the_bound(tmp_path):
++    """The checker's parser reads every line, then refuses the per-tree file count (the manifest is not the pinned
++    tree). That refusal comes after the whole body is read, and within BOUND seconds."""
++    path = tmp_path / "manifest.txt"
++    path.write_bytes(_big_manifest())
++    try:
++        proc = _child(CHECKER, "try:\n"
++                               f"    mod._parse_manifest_body(open({str(path)!r}, 'rb').read(), 'big')\n"
++                               "except mod.Failure as exc:\n"
++                               "    print(exc)\n", BOUND)
++    except subprocess.TimeoutExpired:
++        pytest.fail(f"the checker's manifest parse needed more than {BOUND} s for {4 * LINES_PER_TREE} lines")
++    assert proc.returncode == 0, proc.stderr[-2000:]
++    first = PINS.MANIFEST_TREES[0]
++    assert proc.stdout == (f"big: manifest {first} file count {LINES_PER_TREE} != pinned "
++                           f"{PINS.PINNED_BASELINE_FILE_COUNTS[first]}\n"), proc.stdout
++
++
++def test_the_record_builder_parses_200000_lines_within_the_bound(tmp_path):
++    """The record builder's parser returns every section's digest within BOUND seconds, each equal to the oracle's."""
++    body = _big_manifest()
++    path = tmp_path / "manifest.txt.gz"
++    path.write_bytes(gzip.compress(body, 1))
++    try:
++        proc = _child(BUILDER, "import json\nfrom pathlib import Path\n"
++                               f"print(json.dumps(mod._parse_manifest_gz(Path({str(path)!r})), sort_keys=True))\n",
++                      BOUND)
++    except subprocess.TimeoutExpired:
++        pytest.fail(f"the record builder's manifest parse needed more than {BOUND} s for {4 * LINES_PER_TREE} lines")
++    assert proc.returncode == 0, proc.stderr[-2000:]
++    assert json.loads(proc.stdout) == _oracle(body)
++
++
++def test_there_are_committed_golden_manifests():
++    """The next test's rows exist: a glob that finds nothing would pass it vacuously."""
++    assert len(GOLDEN) == 11, [str(path) for path in GOLDEN]
++
++
++@pytest.mark.parametrize("path", GOLDEN, ids=[str(path.relative_to(GOLDEN_DIR)) for path in GOLDEN])
++def test_a_committed_golden_manifest_keeps_its_digests_in_both_tools(path):
++    """Both tools, on one committed golden manifest: every digest equals the oracle's, so the bytes each tool hashes
++    did not change."""
++    want = _oracle(gzip.decompress(path.read_bytes()))
++    assert list(want) == list(PINS.MANIFEST_TREES), list(want)
++    built = _child(BUILDER, "import json\nfrom pathlib import Path\n"
++                            f"print(json.dumps(mod._parse_manifest_gz(Path({str(path)!r})), sort_keys=True))\n", 120)
++    assert built.returncode == 0, built.stderr[-2000:]
++    assert json.loads(built.stdout) == want
++    checked = _child(CHECKER, "import gzip, json\n"
++                              f"body = gzip.decompress(open({str(path)!r}, 'rb').read())\n"
++                              "print(json.dumps(mod._parse_manifest_body(body, 'golden'), sort_keys=True))\n", 120)
++    assert checked.returncode == 0, checked.stderr[-2000:]
++    assert json.loads(checked.stdout) == want
 diff --git a/tests/test_s0_03_omniroute.py b/tests/test_s0_03_omniroute.py
-index 0a16e10..43f088f 100644
+index 0a16e10..6a8b0ff 100644
 --- a/tests/test_s0_03_omniroute.py
 +++ b/tests/test_s0_03_omniroute.py
 @@ -12,6 +12,8 @@ individually falsified is a tautology wearing six hats (AF-AP-30).
@@ -867,7 +1045,7 @@ index 0a16e10..43f088f 100644
  
  
  @pytest.mark.parametrize("row", PROFILE_PARSE_ERRORS, ids=_PARSE_ERROR_IDS)
-@@ -907,12 +919,171 @@ def test_profile_parse_failure_chains_no_error_that_quotes_the_key(passing, row)
+@@ -907,12 +919,212 @@ def test_profile_parse_failure_chains_no_error_that_quotes_the_key(passing, row)
      with pytest.raises(check.Failure) as raised:
          check._read_yaml(profile, "hermes/profile.yaml")
      failure = raised.value
@@ -993,6 +1171,47 @@ index 0a16e10..43f088f 100644
 +    profile.write_text(text.replace("    discover_models: true\n", "    discover_models: true\n" + lines))
 +    result = run_checker(passing)
 +    assert result.returncode == 0, result.stdout + result.stderr[-2000:]
++
++
++# I59-F round 5 (VERIFY-I59-F R4-F1): a YAML key can load as an int, a bool or a null. The credential screen splits a
++# name, so such a key under the provider block ended in AttributeError, a traceback (F-9's class). It now fails by its
++# type and the path of the mapping that holds it; neither the key nor its value is printed.
++NON_STRING_KEYS = [
++    # (id, the key as the loaded profile holds it, built at run time where it can be; the mapping that holds it; the
++    # type the refusal names)
++    ("int", lambda: 10 ** 17 + secrets.randbelow(9 * 10 ** 17), ("providers", "s0-03-omniroute"), "int"),
++    ("bool", lambda: True, ("providers", "s0-03-omniroute"), "bool"),
++    ("null", lambda: None, ("providers", "s0-03-omniroute"), "NoneType"),
++    ("int-in-extra_headers", lambda: 10 ** 17 + secrets.randbelow(9 * 10 ** 17),
++     ("providers", "s0-03-omniroute", "extra_headers"), "int"),
++]
++
++
++@pytest.mark.parametrize("make_key,holder,kind", [row[1:] for row in NON_STRING_KEYS],
++                         ids=[row[0] for row in NON_STRING_KEYS])
++def test_a_non_string_key_in_the_provider_block_fails_by_its_type(passing, make_key, holder, kind):
++    """Through the real CLI: exit 1, the one refusal line naming the key's type and the mapping that holds it, and an
++    empty stderr. The value under the key is a fake built at run time, and so is an int key: no case-folded run of 4
++    characters of either reaches stdout or stderr. The row first shows that the key loads with that type."""
++    key, value = make_key(), _fake_profile_value()
++    profile = passing / "hermes" / "profile.yaml"
++    doc = yaml.safe_load(profile.read_text())
++    mapping = doc
++    for name in holder:
++        mapping = mapping[name]
++    mapping[key] = value
++    profile.write_text(yaml.safe_dump(doc, sort_keys=False))
++    loaded = yaml.safe_load(profile.read_text())
++    for name in holder:
++        loaded = loaded[name]
++    assert [type(k).__name__ for k in loaded if not isinstance(k, str)] == [kind] and loaded[key] == value
++    result = run_checker(passing)
++    assert (result.returncode, result.stdout, result.stderr) == (
++        1, f"failure_reason: bundle: profile.yaml has a non-string key ({kind}) under {'.'.join(holder)}\n",
++        ""), result.stderr[-2000:]
++    assert _runs_of(value, result.stdout + result.stderr) == [], "a run of the value was printed"
++    if kind == "int":
++        assert _runs_of(str(key), result.stdout + result.stderr) == [], "a run of the key was printed"
 +
 +
 +@pytest.mark.parametrize("error", ["not-utf-8", "unreadable"])
@@ -1367,7 +1586,7 @@ index 5144b2e..15fee99 100644
  
  def test_runner_is_syntactically_valid():
 diff --git a/tests/test_s0_05_egress.py b/tests/test_s0_05_egress.py
-index 54ecc8b..4a3aae7 100644
+index 54ecc8b..9588753 100644
 --- a/tests/test_s0_05_egress.py
 +++ b/tests/test_s0_05_egress.py
 @@ -24,6 +24,7 @@ import importlib.util
@@ -1469,13 +1688,21 @@ index 54ecc8b..4a3aae7 100644
          assert not (evidence / "hermes-acp" / "canaries.jsonl").exists(), "the canaries ran for an unobserved unit"
          standin = _standin_records(e3dir)[0]["pid"]
          assert not _pid_alive(standin)
-@@ -2387,24 +2409,29 @@ def test_a7_the_uid0_fixture_is_refused():
+@@ -2387,24 +2409,39 @@ def test_a7_the_uid0_fixture_is_refused():
      ({"uid": [1000, 0, 1000, 1000]}, "uid 0"),
      ({"uid": 1000}, "uid 1000 is not the four uids of the Uid line"),
      ({"uid": [True, 1000, 1000, 1000]}, "uid [True, 1000, 1000, 1000] is not the four uids of the Uid line"),
 +    ({"gid": [1000, 0, 1000, 1000]}, "gid 0"),                                                     # I59-F round 4,
 +    ({"gid": 1000}, "gid 1000 is not the four gids of the Gid line"),                              # VERIFY-I59-F
 +    ({"gid": [True, 1000, 1000, 1000]}, "gid [True, 1000, 1000, 1000] is not the four gids of the Gid line"),  # F-11
++    # I59-F round 5 (VERIFY-I59-F R4-F4): the Groups line, graded when the record carries it, and each id at most
++    # 4294967294 (4294967295 is (uid_t)-1, and /proc reports no larger id)
++    ({"groups": [0]}, "supplementary group 0"),
++    ({"groups": "junk"}, "groups 'junk' is not the gids of the Groups line"),
++    ({"gid": [4294967295] * 4}, "gid 4294967295 is above 4294967294"),
++    ({"gid": [4294967296] * 4}, "gid 4294967296 is above 4294967294"),
++    ({"uid": [4294967295] * 4}, "uid 4294967295 is above 4294967294"),
++    ({"uid": [4294967296] * 4}, "uid 4294967296 is above 4294967294"),
      ("not-json", "unit-identity.json is not JSON"),
      ("drop-key", "unit-identity.json lacks one of unit, pid, exe_realpath, entrypoint_realpath, "
 -                 "entrypoint_sha256, uid, argv"),
@@ -1484,7 +1711,9 @@ index 54ecc8b..4a3aae7 100644
 +                 "entrypoint_sha256, uid, gid, argv"),
  ], ids=["missing", "digest", "exe-path", "entrypoint-path", "effective-uid-0", "uid-not-a-list",
 -        "uid-bool", "not-json", "missing-key"])
-+        "uid-bool", "effective-gid-0", "gid-not-a-list", "gid-bool", "not-json", "missing-key", "missing-gid"])
++        "uid-bool", "effective-gid-0", "gid-not-a-list", "gid-bool", "groups-0", "groups-not-a-list",
++        "gid-4294967295", "gid-4294967296", "uid-4294967295", "uid-4294967296", "not-json", "missing-key",
++        "missing-gid"])
  def test_a7_the_checker_refuses_an_identity_that_is_not_the_pin(tmp_path, mutate, detail):
      """A7: for a run unit whose bundle says venue pc, `unit-identity-invalid: <unit> <detail>` on a
      missing record, a digest or path that is not the pin, or any uid 0 (the record carries all four
@@ -1504,7 +1733,7 @@ index 54ecc8b..4a3aae7 100644
          record.write_text(json.dumps(payload))
      else:
          patch_json(record, **mutate)
-@@ -2670,8 +2697,8 @@ def test_d_pair_leg_reaches_the_relay_through_the_dnat(e3dir):
+@@ -2670,8 +2707,8 @@ def test_d_pair_leg_reaches_the_relay_through_the_dnat(e3dir):
          # A7: the record names the compiled unit that ran.
          identity = json.loads((evidence / "buzz-acp" / "unit-identity.json").read_text())
          assert (identity["pid"], identity["exe_realpath"], identity["entrypoint_realpath"],
@@ -1515,7 +1744,7 @@ index 54ecc8b..4a3aae7 100644
          # D-051: the pair's namespace allowed exactly {relay, OmniRoute} (observed rules).
          rules = json.loads((evidence / "buzz-acp" / "runtime.json").read_text())["rules"]
          assert sorted(r for r in rules if " -j ACCEPT" in r and "-i lo" not in r and "-o lo" not in r) == sorted([
-@@ -3075,7 +3102,7 @@ def test_e3b_r4_sigint_stops_the_runner_with_130(e3dir):
+@@ -3075,7 +3112,7 @@ def test_e3b_r4_sigint_stops_the_runner_with_130(e3dir):
      listener = runner = None
      try:
          listener = _listener(e3dir, 18124)
@@ -1524,7 +1753,7 @@ index 54ecc8b..4a3aae7 100644
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
          _wait_for(lambda: _standin_records(e3dir), 60, "the unit to start inside the namespace")
          standin = _standin_records(e3dir)[0]["pid"]
-@@ -3113,7 +3140,7 @@ def test_e3b_r4_a_stop_in_the_first_leg_starts_no_second_leg(e3dir):
+@@ -3113,7 +3150,7 @@ def test_e3b_r4_a_stop_in_the_first_leg_starts_no_second_leg(e3dir):
      listener = runner = None
      try:
          listener = _listener(e3dir, port)
@@ -1533,7 +1762,7 @@ index 54ecc8b..4a3aae7 100644
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
          _wait_for(lambda: _standin_records(e3dir), 60, "the first unit to start inside its namespace")
          with open(ip_log, "a") as handle:
-@@ -3161,8 +3188,9 @@ signal.signal(signal.SIGTERM, _slow_stop)
+@@ -3161,8 +3198,9 @@ signal.signal(signal.SIGTERM, _slow_stop)
  
  
  def _runner_session(env, evidence, *units):
@@ -1545,7 +1774,7 @@ index 54ecc8b..4a3aae7 100644
                              stderr=subprocess.PIPE, text=True, env=env, start_new_session=True)
  
  
-@@ -4293,3 +4321,610 @@ def test_i59b_a_non_root_run_that_carries_sudo_ids_runs_as_before(e3dir):
+@@ -4293,3 +4331,748 @@ def test_i59b_a_non_root_run_that_carries_sudo_ids_runs_as_before(e3dir):
          run = subprocess.run(drop, capture_output=True, text=True, timeout=60, env=env)
          assert (run.returncode, run.stderr) == (2, "run_s0_05_units: cannot run here (not-root)\n"), run.stderr
      assert _entries(e3dir) == before
@@ -2022,8 +2251,9 @@ index 54ecc8b..4a3aae7 100644
 +
 +def test_i59f_r4_the_checker_reads_an_identity_record_that_carries_the_groups(tmp_path):
 +    """unit-identity.json's one reader, check_egress.py's check_unit_identity, asks for its eight keys (the gid
-+    since I59-F round 4) and ignores any other: the runner's records since round 4 carry the Groups line too. The
-+    synthetic-pass bundle with a Groups line added passes and prints the same identity line."""
++    since I59-F round 4) and grades the Groups line when the record carries one (since round 5, VERIFY-I59-F R4-F4):
++    the runner's records since round 4 carry it. The synthetic-pass bundle with an empty Groups line added passes and
++    prints the same identity line."""
 +    bundle = tmp_path / "bundle"
 +    shutil.copytree(SYNTHETIC, bundle)
 +    record = bundle / "hermes-acp" / "unit-identity.json"
@@ -2037,6 +2267,18 @@ index 54ecc8b..4a3aae7 100644
 +    line = (f"unit-identity: hermes-acp pid 424242 runs {PINS.PINNED_AGENT_REALPATH} "
 +            f"(sha256 {PINS.PINNED_AGENT_ENTRYPOINT_SHA256[:12]}) as uid 1000")
 +    assert line in after.stdout.splitlines() and line in before.stdout.splitlines(), after.stdout
++
++
++def test_i59f_r5_the_checker_passes_a_groups_record_that_holds_no_0(tmp_path):
++    """VERIFY-I59-F R4-F4, the positive control of the table's two groups rows: a Groups line of real gids, none of
++    them 0, passes and prints the same identity line as the empty one."""
++    bundle = copy_bundle(tmp_path, SYNTHETIC)
++    patch_json(bundle / "hermes-acp" / "unit-identity.json", groups=[1000, 65534])
++    result = run_checker(bundle, "--units", "curl,hermes-acp")
++    assert result.returncode == 0, result.stdout
++    assert (f"unit-identity: hermes-acp pid 424242 runs {PINS.PINNED_AGENT_REALPATH} "
++            f"(sha256 {PINS.PINNED_AGENT_ENTRYPOINT_SHA256[:12]}) as uid 1000") in result.stdout.splitlines(), \
++        result.stdout
 +
 +
 +# ===================================================================== I59-F round 4: the verify fold (VERIFY-I59-F)
@@ -2053,8 +2295,9 @@ index 54ecc8b..4a3aae7 100644
 +# climbs below it still match (they moved with it), so only a check of the whole way up to the root sees it.
 +@NEEDS_ROOT
 +def test_i59f_r4_the_walk_stops_when_an_ancestor_moved_out_of_the_root(tmp_path):
-+    """Every climb checks each ".." up to the root: an ancestor moved out of the root stops the walk at the next climb,
-+    and what the walk had not reached in it (p/zz-decoy, now outside/p/zz-decoy) keeps its owner."""
++    """Up to CHECK_BUDGET levels deep (this tree is four), every climb checks each ".." up to the root (round 5 keeps
++    round 4's rule there): an ancestor moved out of the root stops the walk at the next climb, and what the walk had
++    not reached in it (p/zz-decoy, now outside/p/zz-decoy) keeps its owner."""
 +    root, outside = tmp_path / "evidence", tmp_path / "outside"
 +    (root / "p" / "child" / "x").mkdir(parents=True)
 +    (root / "p" / "zz-decoy").mkdir()
@@ -2125,6 +2368,130 @@ index 54ecc8b..4a3aae7 100644
 +    assert not os.path.ismount(root / "d")
 +
 +
++# I59-F round 5 (VERIFY-I59-F R4-F5): the same climb, with a bind mount of a directory of the SAME filesystem on d.
++# ".." then crosses into the bind mount, whose st_dev is the root's: only the mount id tells it apart (a check by
++# st_dev alone words it "moved", the verifier's surviving mutant V4-mount-by-st_dev-only).
++BIND_BEFORE_THE_WAY_UP = """
++import os as _os, subprocess as _sp
++_open, _mounted = _os.open, []
++def _open_after_a_bind_mount(path, flags, mode=0o777, *, dir_fd=None):
++    if path == ".." and not _mounted:
++        _mounted.append(_sp.run(["mount", "--bind", @@FROM@@, @@ON@@], check=True))
++    return _open(path, flags, mode, dir_fd=dir_fd)
++_os.open = _open_after_a_bind_mount
++"""
++
++
++@NEEDS_ROOT
++def test_i59f_r5_the_walk_names_a_same_filesystem_bind_mount_on_its_way_up_as_a_mount(tmp_path):
++    """R4-F5: a bind mount of a directory of the root's own filesystem, on the parent the walk climbs to, stops the
++    walk at that climb, and the stop line names a mount. The st_dev is the same, so only the mount id can tell. What
++    the walk had not reached (d/c) and the bind mount's source keep their owner. The mount is undone by its path."""
++    root, source = tmp_path / "evidence", tmp_path / "bind-source"
++    (root / "d" / "b").mkdir(parents=True)
++    (root / "d" / "c").mkdir()
++    (source / "s").mkdir(parents=True)
++    for entry in (root, root / "d", root / "d" / "b", root / "d" / "c", source, source / "s"):
++        os.lchown(entry, *UNIT_USER)
++    assert os.stat(source).st_dev == os.stat(root).st_dev          # the same filesystem: st_dev cannot tell
++    mover = BIND_BEFORE_THE_WAY_UP.replace("@@FROM@@", repr(str(source))).replace("@@ON@@", repr(str(root / "d")))
++    try:
++        run = _handback(root, *INVOKER, prefix=mover)
++    finally:
++        subprocess.run(["umount", str(root / "d")], capture_output=True, timeout=30)
++    assert (run.returncode, run.stdout) == (0, ""), run.stderr
++    assert run.stderr == (f"run_s0_05_units: handback: 3 entries of {root} (the root included) now belong to "
++                          f"{INVOKER[0]}:{INVOKER[1]}; then it stopped: a mount appeared above {root / 'd' / 'b'} while it"
++                          " ran, so what it had not reached is left as it is\n"), run.stderr
++    assert os.lstat(root / "d" / "c")[4:6] == UNIT_USER
++    assert {os.lstat(path)[4:6] for path in (source, source / "s")} == {UNIT_USER}
++    assert not os.path.ismount(root / "d")
++
++
++# I59-F round 5 (VERIFY-I59-F R4-F3): the cost of the check at each climb. Round 4 checked the whole way up to the
++# root at every climb, so a chain d levels deep cost about d*d/2 opens of "..": 5.4 million at 3,300 levels, 24 s.
++def _chain(root, levels, decoy_at=None):
++    """<root> and a chain of <levels> directories `d` below it, each made relative to a descriptor of its parent (a
++    deep chain passes PATH_MAX), and a file `decoy.txt` owned by UNIT_USER in the directory <decoy_at> levels down."""
++    root.mkdir()
++    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
++    try:
++        for depth in range(1, levels + 1):
++            os.mkdir("d", dir_fd=fd)
++            sub = os.open("d", os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
++            os.close(fd)
++            fd = sub
++            if depth == decoy_at:
++                decoy = os.open("decoy.txt", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644, dir_fd=fd)
++                os.fchown(decoy, *UNIT_USER)
++                os.close(decoy)
++    finally:
++        os.close(fd)
++
++
++# Counts the walk's opens of "..", the unit of its climbing and of its checks, and writes the count at exit.
++COUNT_THE_WAY_UP = """
++import atexit as _atexit, os as _os
++_open, _ups = _os.open, [0]
++def _open_counting(path, flags, mode=0o777, *, dir_fd=None):
++    if path == "..":
++        _ups[0] += 1
++    return _open(path, flags, mode, dir_fd=dir_fd)
++_os.open = _open_counting
++_atexit.register(lambda: open(@@OUT@@, "w").write(str(_ups[0])))
++"""
++
++
++@NEEDS_ROOT
++def test_i59f_r5_the_walk_costs_linear_time_in_its_depth(tmp_path):
++    """R4-F3: each climb now spends at most a fixed budget of checking, on average, so the walk's opens of ".." grow
++    linearly with the depth. Counted through R's own program on a chain of 1,100 and of 3,300 levels: at most 64 per
++    level, and less than four times as many at three times the depth (a square law gives nine). Each chain is handed
++    back whole, with no stop."""
++    counts = {}
++    for levels in (1100, 3300):
++        root, out = tmp_path / f"chain-{levels}", tmp_path / f"ups-{levels}"
++        try:
++            _chain(root, levels)
++            run = _handback(root, *INVOKER, prefix=COUNT_THE_WAY_UP.replace("@@OUT@@", repr(str(out))))
++            assert (run.returncode, run.stdout) == (0, ""), run.stderr[-2000:]
++            assert run.stderr == (f"run_s0_05_units: handback: {levels + 1} entries of {root} (the root included) now "
++                                  f"belong to {INVOKER[0]}:{INVOKER[1]}\n"), run.stderr[-2000:]
++            counts[levels] = int(out.read_text())
++        finally:
++            subprocess.run(["rm", "-rf", "--", str(root)], timeout=120)       # rmtree recurses once per level
++    assert all(counts[levels] <= 64 * levels for levels in counts), counts
++    assert counts[3300] < 4 * counts[1100], counts
++
++
++@NEEDS_ROOT
++def test_i59f_r5_a_deep_walk_checks_the_whole_way_up_within_its_window(tmp_path):
++    """R4-F3, the window R's comment states: deeper than the budget, a climb checks its parent, and the whole way up
++    to the root at least once every ceil(d / CHECK_BUDGET) climbs, d the depth. A mover renames the chain's top out of
++    the root at the first climb from 200 levels down: the walk stops, naming the ancestor, at a climb within that
++    window, and the decoy file 100 levels down (on the way up, far past the window) keeps its owner. A walk that
++    checks only the parent would climb to it and hand it back outside the root."""
++    levels, root, outside = 200, tmp_path / "evidence", tmp_path / "outside"
++    budget = int(re.search(r"^CHECK_BUDGET = (\d+)", _handback_program(), re.MULTILINE).group(1))
++    outside.mkdir()
++    try:
++        _chain(root, levels, decoy_at=levels // 2)
++        mover = MOVE_BEFORE_THE_WAY_UP.replace("@@FROM@@", repr(str(root / "d"))).replace(
++            "@@TO@@", repr(str(outside / "d")))
++        run = _handback(root, *INVOKER, prefix=mover)
++        decoy = os.lstat(outside.joinpath(*["d"] * (levels // 2), "decoy.txt"))
++    finally:
++        subprocess.run(["rm", "-rf", "--", str(root), str(outside)], timeout=120)
++    assert (run.returncode, run.stdout) == (0, ""), run.stderr[-2000:]
++    stop = re.fullmatch(rf"run_s0_05_units: handback: {levels + 1} entries of {re.escape(str(root))} \(the root "
++                        rf"included\) now belong to {INVOKER[0]}:{INVOKER[1]}; then it stopped: an ancestor of "
++                        rf"{re.escape(str(root))}((?:/d)+) moved out of the root while it ran, so what it had not "
++                        r"reached is left as it is\n", run.stderr)
++    assert stop, run.stderr[-2000:]
++    assert stop.group(1).count("/d") >= levels - -(-levels // budget), (stop.group(1).count("/d"), budget)
++    assert decoy[4:6] == UNIT_USER
++
++
 +@NEEDS_NETNS
 +def test_i59f_r4_a7_refuses_a_unit_with_supplementary_group_0(e3dir):
 +    """F-7: the unit launches with an explicit, empty group list (`--clear-groups`), and A7 records the Groups line and
@@ -2156,143 +2523,3 @@ index 54ecc8b..4a3aae7 100644
 +        _stop(listener)
 +        _lib("egress_ns_destroy s0-05-hermes-acp")
 +    assert _census("s0-05-hermes-acp") == CLEAN
-diff --git a/tests/test_s0_01_manifest_parse_linear.py b/tests/test_s0_01_manifest_parse_linear.py
-new file mode 100644
-index 0000000..ec99490
---- /dev/null
-+++ b/tests/test_s0_01_manifest_parse_linear.py
-@@ -0,0 +1,134 @@
-+"""Task #344: S0-01's two manifest parsers build each section's digest in linear time, over the same bytes.
-+
-+`_parse_manifest_body` (proofs/S0-01/check_acp_conformance.py) and `_parse_manifest_gz`
-+(proofs/S0-01/tools/build_capture_record.py) grew each section by `+=` on a dict value. CPython cannot extend a string
-+in place while the dict holds it too, so every line copied its whole section: quadratic. On the old code, here, a
-+200,000-line manifest took 113.94 s in the checker and 53.51 s in the record builder (2026-09-28, task #344). Each
-+timed parse below runs in a child process with BOUND seconds as its timeout, so a quadratic parser fails by the clock,
-+fast. The digests stay the same: every committed golden manifest is parsed by both tools, and each digest is checked
-+against an oracle computed here (the sha256 of a section's lines, each followed by a newline).
-+"""
-+import gzip
-+import hashlib
-+import importlib.util
-+import json
-+import re
-+import subprocess
-+import sys
-+from pathlib import Path
-+
-+import pytest
-+
-+ROOT = Path(__file__).resolve().parents[1]
-+S0_01 = ROOT / "proofs" / "S0-01"
-+CHECKER = S0_01 / "check_acp_conformance.py"
-+BUILDER = S0_01 / "tools" / "build_capture_record.py"
-+GOLDEN_DIR = S0_01 / "evidence" / "golden"
-+GOLDEN = sorted(GOLDEN_DIR.rglob("manifest-*.txt.gz"))
-+LINES_PER_TREE = 50_000          # four trees: 200,000 lines in all
-+BOUND = 20.0                     # seconds of wall time for one child; the old code needed 113.94 s and 53.51 s
-+
-+_pins_spec = importlib.util.spec_from_file_location("s0_01_pins_for_344", S0_01 / "pins.py")
-+PINS = importlib.util.module_from_spec(_pins_spec)
-+_pins_spec.loader.exec_module(PINS)
-+
-+# The child loads one tool by its path, with proofs/S0-01 first on sys.path (both tools `import pins`).
-+LOAD = ("import importlib.util, sys\n"
-+        "sys.path.insert(0, {s0_01!r})\n"
-+        "spec = importlib.util.spec_from_file_location('tool', {path!r})\n"
-+        "mod = importlib.util.module_from_spec(spec)\n"
-+        "spec.loader.exec_module(mod)\n")
-+
-+
-+def _child(tool, body, timeout):
-+    """Run <body> in a child process after loading <tool>; <timeout> is the child's wall bound."""
-+    code = LOAD.format(s0_01=str(S0_01), path=str(tool)) + body
-+    return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=timeout, cwd=str(ROOT))
-+
-+
-+def _big_manifest():
-+    """200,000 lines in the pinned header order, each line in the v2.2 shape (pins.MANIFEST_LINE_RE)."""
-+    out = []
-+    for tree in PINS.MANIFEST_TREES:
-+        out.append(f"## {tree}")
-+        out += [f"{hashlib.sha256(f'{tree}/{i}'.encode()).hexdigest()} f 0644  ./dir{i % 997}/file-{i}.py"
-+                for i in range(LINES_PER_TREE)]
-+    return ("\n".join(out) + "\n").encode()
-+
-+
-+def _oracle(body):
-+    """Each section's sha256, computed apart from both tools: its lines, each followed by a newline."""
-+    sections, current = {}, None
-+    for line in body.decode("utf-8").split("\n"):
-+        if line.startswith("## "):
-+            current = line[3:].strip()
-+            sections[current] = []
-+        elif current is not None and line:
-+            sections[current].append(line)
-+    return {tree: hashlib.sha256("".join(f"{line}\n" for line in lines).encode("utf-8")).hexdigest()
-+            for tree, lines in sections.items()}
-+
-+
-+def test_the_big_manifest_is_one_the_checker_parses_line_by_line():
-+    """The timed input is well formed: 200,000 lines, the pinned header order, every line in the pinned shape. So
-+    the checker reads it to the end and stops only at the pinned per-tree file count."""
-+    lines = _big_manifest().decode().split("\n")[:-1]
-+    assert len(lines) == 4 * (LINES_PER_TREE + 1) and len(PINS.MANIFEST_TREES) == 4
-+    assert [line for line in lines if line.startswith("## ")] == [f"## {tree}" for tree in PINS.MANIFEST_TREES]
-+    shape = re.compile(PINS.MANIFEST_LINE_RE)
-+    assert all(shape.match(line) for line in lines if not line.startswith("## "))
-+
-+
-+def test_the_checker_parses_200000_lines_within_the_bound(tmp_path):
-+    """The checker's parser reads every line, then refuses the per-tree file count (the manifest is not the pinned
-+    tree). That refusal comes after the whole body is read, and within BOUND seconds."""
-+    path = tmp_path / "manifest.txt"
-+    path.write_bytes(_big_manifest())
-+    try:
-+        proc = _child(CHECKER, "try:\n"
-+                               f"    mod._parse_manifest_body(open({str(path)!r}, 'rb').read(), 'big')\n"
-+                               "except mod.Failure as exc:\n"
-+                               "    print(exc)\n", BOUND)
-+    except subprocess.TimeoutExpired:
-+        pytest.fail(f"the checker's manifest parse needed more than {BOUND} s for {4 * LINES_PER_TREE} lines")
-+    assert proc.returncode == 0, proc.stderr[-2000:]
-+    first = PINS.MANIFEST_TREES[0]
-+    assert proc.stdout == (f"big: manifest {first} file count {LINES_PER_TREE} != pinned "
-+                           f"{PINS.PINNED_BASELINE_FILE_COUNTS[first]}\n"), proc.stdout
-+
-+
-+def test_the_record_builder_parses_200000_lines_within_the_bound(tmp_path):
-+    """The record builder's parser returns every section's digest within BOUND seconds, each equal to the oracle's."""
-+    body = _big_manifest()
-+    path = tmp_path / "manifest.txt.gz"
-+    path.write_bytes(gzip.compress(body, 1))
-+    try:
-+        proc = _child(BUILDER, "import json\nfrom pathlib import Path\n"
-+                               f"print(json.dumps(mod._parse_manifest_gz(Path({str(path)!r})), sort_keys=True))\n",
-+                      BOUND)
-+    except subprocess.TimeoutExpired:
-+        pytest.fail(f"the record builder's manifest parse needed more than {BOUND} s for {4 * LINES_PER_TREE} lines")
-+    assert proc.returncode == 0, proc.stderr[-2000:]
-+    assert json.loads(proc.stdout) == _oracle(body)
-+
-+
-+def test_there_are_committed_golden_manifests():
-+    """The next test's rows exist: a glob that finds nothing would pass it vacuously."""
-+    assert len(GOLDEN) == 11, [str(path) for path in GOLDEN]
-+
-+
-+@pytest.mark.parametrize("path", GOLDEN, ids=[str(path.relative_to(GOLDEN_DIR)) for path in GOLDEN])
-+def test_a_committed_golden_manifest_keeps_its_digests_in_both_tools(path):
-+    """Both tools, on one committed golden manifest: every digest equals the oracle's, so the bytes each tool hashes
-+    did not change."""
-+    want = _oracle(gzip.decompress(path.read_bytes()))
-+    assert list(want) == list(PINS.MANIFEST_TREES), list(want)
-+    built = _child(BUILDER, "import json\nfrom pathlib import Path\n"
-+                            f"print(json.dumps(mod._parse_manifest_gz(Path({str(path)!r})), sort_keys=True))\n", 120)
-+    assert built.returncode == 0, built.stderr[-2000:]
-+    assert json.loads(built.stdout) == want
-+    checked = _child(CHECKER, "import gzip, json\n"
-+                              f"body = gzip.decompress(open({str(path)!r}, 'rb').read())\n"
-+                              "print(json.dumps(mod._parse_manifest_body(body, 'golden'), sort_keys=True))\n", 120)
-+    assert checked.returncode == 0, checked.stderr[-2000:]
-+    assert json.loads(checked.stdout) == want

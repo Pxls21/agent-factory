@@ -58,9 +58,9 @@ GW = `tests/test_gpu_window.py`, CC = `proofs/S0-04/check_compression.py`.
 What changed:
 - C:91 `import hashlib`. C:237 `def _shape`: `absent` for None, else `<type>, <n> characters, sha256 <8 hex>`.
 - C:149 the `transport` template now takes the shape: `transport: profile api_mode ({}) is not in the permitted set`.
-- C:824 `_fail("transport", _shape(api_mode))`.
-- C:835 `bundle: profile.yaml x-omniroute-compression (<shape>) is not 'off'` (`_shape(value)`).
-- C:843 `bundle: profile.yaml key_env (<shape>) is not 'OMNIROUTE_API_KEY'` (`_shape(block.get('key_env'))`).
+- C:829 `_fail("transport", _shape(api_mode))`.
+- C:840 `bundle: profile.yaml x-omniroute-compression (<shape>) is not 'off'` (`_shape(value)`).
+- C:848 `bundle: profile.yaml key_env (<shape>) is not 'OMNIROUTE_API_KEY'` (`_shape(block.get('key_env'))`).
 - New test T3:991 `test_a_failure_names_a_profile_value_by_its_shape_never_the_value`, 4 rows from
   T3:967 `PROFILE_VALUE_PATHS`: api_mode in the model section, api_mode in the provider block, the compression header,
   key_env. T3:943 `_fake_profile_value` builds a fake value at run time: letters alternate with marks (T3:934 `_MARKS`)
@@ -78,13 +78,13 @@ Mutants: M-E1a (api_mode printed with `repr`) 2 FAILED; M-E1b (the header by `{v
 `!r`) 1; M-E1d (`_shape` hashes `b""`) 6 (the 4 rows and the 2 changed tests).
 
 Messages in C checked for the class (a value read from `hermes/profile.yaml`):
-- C:824 `_shape(api_mode)`, C:835 `_shape(value)`, C:843 `_shape(block.get('key_env'))`: printed the value. Fixed.
+- C:829 `_shape(api_mode)`, C:840 `_shape(value)`, C:848 `_shape(block.get('key_env'))`: printed the value. Fixed.
 - C:256 `absent`, C:258 `is not a regular file`: the file name only.
 - C:296 `is not valid YAML`: the class name only (I59-E).
-- C:769 and C:817 `_obj(profile, "profile.yaml")`, and the providers and provider-block `_obj` reads: no value.
+- C:769 and C:822 `_obj(profile, "profile.yaml")`, and the providers and provider-block `_obj` reads: no value.
 - C:773 `declares {len(providers)} providers`: a count.
-- C:828 `provider block has no extra_headers mapping`: no value.
-- C:802 and C:806 `carries an inline credential under {child_path}`: mapping KEYS and list indices, never a value.
+- C:833 `provider block has no extra_headers mapping`: no value.
+- C:807 and C:811 `carries an inline credential under {child_path}`: mapping KEYS and list indices, never a value.
   Left unchanged (D5).
 - Every other message reads `direct.json`, `omniroute-requests.json`, `hermes/leg.json`, the environ record or the
   timeline, not the profile. For example C:465 `sent as {value!r}` quotes the header the direct probe SENT. Out of the
@@ -97,11 +97,11 @@ What changed:
 - R:107 `_real=$(readlink -m -- "$EVIDENCE_ROOT" && printf x)`: a sentinel read, so a trailing newline of the
   resolved path survives the substitution.
 - R:110 `case $EVIDENCE_REAL in *$'\n'*)`: the resolved path.
-- New test T:4363 `test_i59f_b1_an_evidence_root_that_holds_a_newline_is_refused_before_anything_is_written`, through
+- New test T:4373 `test_i59f_b1_an_evidence_root_that_holds_a_newline_is_refused_before_anything_is_written`, through
   the real runner, 4 rows: the verifier's reproduction (a clone named `nlrepo<newline>`, git itself reads it as a work
   tree); a link to that clone (needs the sentinel); a path through that link (needs the resolved check); a newline
   that `..` drops (no clone: needs the given-path check). Each asserts exit 73, the exact stderr line (quoted with
-  bash's own `printf %q`, T:4355 `_quoted`), empty stdout, no entry changed under tmp_path.
+  bash's own `printf %q`, T:4365 `_quoted`), empty stdout, no entry changed under tmp_path.
 
 Red on the PIN's R (mirror): the rows fail on `assert 1 == 73` (the run went on to its checker); the 4 rows:
 `4 failed, 315 deselected in 3.73s`. Green: `4 passed, 315 deselected in 1.37s`.
@@ -111,11 +111,11 @@ link row; X-B1-resolved (the resolved case never matches) kills the link row (me
 
 ### 3. B-2 (S0-05): no mount point on the same filesystem is descended
 
-What changed: R:629 `def mount_id` reads statx `STATX_MNT_ID` on the entry's own descriptor. R:640 `def hand` leaves
+What changed: R:635 `def mount_id` reads statx `STATX_MNT_ID` on the entry's own descriptor. R:646 `def hand` leaves
 an entry whose mount id differs from the root's: `(a mount point: another mount of this filesystem)`. The comment
 above `_handback() {` now says so, and why: R:595 `STATX_MNT_ID`.
 Mechanism measured first: a bind mount has the root's st_dev (65024) and another mount id (49 against 28).
-New test T:4493 `test_i59f_the_handback_leaves_a_mount_under_the_root_as_it_is`, row `a-bind-mount-B2`: a real leg under
+New test T:4503 `test_i59f_the_handback_leaves_a_mount_under_the_root_as_it_is`, row `a-bind-mount-B2`: a real leg under
 sudo; the test bind-mounts a directory outside the root into the unit's HOME while the unit serves, then sends
 SIGTERM. Asserts: the mount's content unchanged during the run, the outside directory and its file unchanged (still
 65534:65534), exactly one `left as it is` line naming the mount point, and the summary's `1 left as they are`.
@@ -124,20 +124,20 @@ Red on the PIN's R: `AssertionError: the handback changed what the mount holds` 
 
 ### 4. B-3 (S0-05): an iterative walk; any depth; every entry left is counted
 
-What changed: the handback program (R:611 `_handback() {` to the heredoc's end). R:678 `def enter` opens a directory
-to read and pushes a frame (its path, its st_dev and inode, the names still to walk). R:705 `while stack:` holds ONE
+What changed: the handback program (R:616 `_handback() {` to the heredoc's end). R:685 `def enter` opens a directory
+to read and pushes a frame (its path, its st_dev and inode, the names still to walk). R:712 `while stack:` holds ONE
 directory open to read. It goes down through the child's O_PATH descriptor and back up through `..`. The way up must
-be the directory it came down from, or the walk stops: R:665 `f"{where} moved while it ran"` (round 4's `off_the_way`), and the
+be the directory it came down from, or the walk stops: R:672 `f"{where} moved while it ran"` (round 4's `off_the_way`), and the
 summary says `then it stopped: … so what it had not reached is left as it is`.
 Tests:
-- T:4580 `test_i59f_b3_the_handback_hands_back_a_1100_level_tree_and_counts_what_it_leaves`, rows
+- T:4590 `test_i59f_b3_the_handback_hands_back_a_1100_level_tree_and_counts_what_it_leaves`, rows
   `the-venue-limit` (20000 here) and `nofile-1024` (set on the runner by `resource.setrlimit`). A real leg under sudo;
-  the unit makes `deep` plus 1,099 levels of `d` (T:4550 `DEEP_TREE`) with two names of one file at the bottom. After
-  SIGTERM, the census (T:4565 `_owners`, a stack: Python 3.11's `os.walk` and `shutil.rmtree` raise RecursionError at
+  the unit makes `deep` plus 1,099 levels of `d` (T:4560 `DEEP_TREE`) with two names of one file at the bottom. After
+  SIGTERM, the census (T:4575 `_owners`, a stack: Python 3.11's `os.walk` and `shutil.rmtree` raise RecursionError at
   this depth, measured) finds every entry the invoker's except the two names, both named on stderr, and the summary
   says `<census - 2> entries … ; 2 left as they are`.
-- T:4464 `test_i59f_b3_the_walk_stops_where_a_directory_moved_under_it`: R's own program, cut from R's bytes
-  (T:4414 `_handback_program`), with a mover (T:4452 `MOVE_BEFORE_THE_WAY_UP`) that renames `evidence/a/b` out of the
+- T:4474 `test_i59f_b3_the_walk_stops_where_a_directory_moved_under_it`: R's own program, cut from R's bytes
+  (T:4424 `_handback_program`), with a mover (T:4462 `MOVE_BEFORE_THE_WAY_UP`) that renames `evidence/a/b` out of the
   root just before the first climb. Asserts the stop line; `a/c` and `z` are left; decoys at `outside/c` and a `z`
   beside the root are untouched.
 Red on the PIN's R: the deep rows fail with entries left from path length 2014 (about level 1,000) and from path
@@ -152,13 +152,13 @@ kills the stop test (the walk goes on from `outside/` and hands back the decoys)
 ### 5. B-4 (S0-05): SUDO ids above 4294967294 refused; the handback checks its ids and types them
 
 What changed: R:139 `if [ "$SUDO_UID" -gt 4294967294 ] || [ "$SUDO_GID" -gt 4294967294 ]` exits 64 before
-anything is written (the pattern above it bounds the digits first). In the handback: R:615 `MAX_ID = 4294967294` and a
+anything is written (the pattern above it bounds the digits first). In the handback: R:620 `MAX_ID = 4294967294` and a
 range check that hands nothing back; `fchownat` gets `argtypes` with `ctypes.c_uint`.
 Tests:
-- T:4399 `test_i59f_b4_under_sudo_an_id_above_4294967294_is_refused_before_anything_is_written`: 4294967295,
+- T:4409 `test_i59f_b4_under_sudo_an_id_above_4294967294_is_refused_before_anything_is_written`: 4294967295,
   4294967296 and 4294967297, each as SUDO_UID and as SUDO_GID (6 rows), through the real runner: exit 64, the exact
   line, nothing written.
-- T:4431 `test_i59f_b4_the_handback_itself_refuses_an_id_libc_would_cut`: the same three values in each position
+- T:4441 `test_i59f_b4_the_handback_itself_refuses_an_id_libc_would_cut`: the same three values in each position
   (6 rows) against R's own handback program (the runner refuses first, so only the cut program reaches the check).
   Asserts the refusal line and no change; then the same program with ids in range hands the tree back.
 Red on the PIN's R: the runner rows fail on `assert 1 == 64`; the handback rows show the PIN handing back to the cut
@@ -169,7 +169,7 @@ range check in place, ctypes' default int conversion masks to the same 32 bits o
 
 ### 6. B-6 (S0-05): the other-filesystem branch is covered
 
-Test: T:4493 `test_i59f_the_handback_leaves_a_mount_under_the_root_as_it_is`, row `a-tmpfs-B6`. A tmpfs under the root,
+Test: T:4503 `test_i59f_the_handback_leaves_a_mount_under_the_root_as_it_is`, row `a-tmpfs-B6`. A tmpfs under the root,
 mounted while the unit serves: left as it is, named `(another filesystem)`, its file unchanged, counted in the summary.
 It passes on the PIN's R: the branch existed and was only untested (D6). Mutant X6 (`if st.st_dev != dev:` becomes
 `if False:`) FAILED: the tmpfs then falls to the mount-id check and is named `(a mount point: another mount of this
@@ -179,9 +179,9 @@ filesystem)`.
 
 What changed: T:1766 `SIGNALS_DEFAULT`, the GW@c32ac3f:316 `INT_DEFAULT` shim extended to SIGINT, SIGHUP and SIGQUIT, and it
 also puts back SIGPIPE and SIGXFSZ (D3). Used by:
-- T:2076 (x4), T:3105 and T:3143 (e3b_r4), T:4595 (the deep test): `SIGNALS_DEFAULT + ["bash", str(RUNNER)`;
-- T:3190 `def _runner_session` (the e3r1 and i59b signal tests).
-New test T:4330 `test_i59f_signal_tests_start_the_runner_with_int_hup_and_quit_at_their_defaults`: both launches first
+- T:2076 (x4), T:3115 and T:3153 (e3b_r4), T:4605 (the deep test): `SIGNALS_DEFAULT + ["bash", str(RUNNER)`;
+- T:3200 `def _runner_session` (the e3r1 and i59b signal tests).
+New test T:4340 `test_i59f_signal_tests_start_the_runner_with_int_hup_and_quit_at_their_defaults`: both launches first
 ignore INT, HUP and QUIT, as a detached gate does. Bare: `trap -- '' SIGINT` and the three ignore bits set. Through the
 shim: all three traps set, and none of the five signals ignored.
 Measured, the verifier's launch form `nohup bash -c '… & wait'` (its background job's `SigIgn: 0000000000000007`):
@@ -333,7 +333,7 @@ inode only: `3 passed`; a rename cannot change st_dev).
   `0x1001000` through the GW form and `0x0` through mine. Needs your acceptance.
 - D4. E-2's scope: `stderr == ""` went where E-X7 lands (the I59-E parse-error test, 7 rows) and into the new E-1 rows.
   The other failure tests of T3 whose failure goes to stdout (about 60) were not swept.
-- D5. **Interpretation:** C:802 and C:806 `carries an inline credential under {child_path}` print mapping KEYS
+- D5. **Interpretation:** C:807 and C:811 `carries an inline credential under {child_path}` print mapping KEYS
   (the provider name and key names), never a value. I left
   them: the brief ("Today three do") and the verifier's E-1 count three. A secret pasted as a KEY would print; changing
   it would rewrite 9 path-pinning tests and drop the operator's locator. Your call.
@@ -402,16 +402,16 @@ What changed:
   `[1-9][0-9]{0,9}`; an explicit list since round 4)
   with both ids `-gt 4294967294` refused: exit 64 before anything is written and before any unit launches.
 - The resolved default keeps the old shape check and A4's not-run row; T:2274's `default-owner` row still passes.
-- R:812 `"$UNIT_UID" -eq 0` (numeric) and R:527 `uid[0] != int(want_uid)` (the post-launch compare, numeric).
+- R:822 `"$UNIT_UID" -eq 0` (numeric) and R:527 `uid[0] != int(want_uid)` (the post-launch compare, numeric).
 - T:2274 `["default-owner"]` drops the `explicit` row: its not-run assertion no longer applies. The new `0:0` row covers it; the
   docstring says so.
 
 Tests:
-- T:4640 `test_i59f_a1_an_explicit_unit_user_outside_1_to_4294967294_is_refused_before_any_unit_runs`, the 10 rows
-  of T:4627 `BAD_UNIT_USERS`, through the real runner with a listener, so a leg past the check would reach its
-  launch. Each asserts exit 64, T:4633 `UNIT_USER_REFUSED` as stderr's last line, no stdout, no evidence root, no
+- T:4650 `test_i59f_a1_an_explicit_unit_user_outside_1_to_4294967294_is_refused_before_any_unit_runs`, the 10 rows
+  of T:4637 `BAD_UNIT_USERS`, through the real runner with a listener, so a leg past the check would reach its
+  launch. Each asserts exit 64, T:4643 `UNIT_USER_REFUSED` as stderr's last line, no stdout, no evidence root, no
   stand-in record, no namespace.
-- T:4662 `test_i59f_a1_a_unit_user_in_range_proceeds`: 65534:65534 passes, and the unit's own record says
+- T:4672 `test_i59f_a1_a_unit_user_in_range_proceeds`: 65534:65534 passes, and the unit's own record says
   65534:65534. It is then stopped with SIGTERM (143).
 
 Red on the current bytes: three rows ran on (`assert 1 == 64`). At 4294967296:4294967296 the stand-in recorded
@@ -419,7 +419,7 @@ Red on the current bytes: three rows ran on (`assert 1 == 64`). At 4294967296:42
 and passed; A7 refused only after the launch (`unit identity not observed: uid 0`). The other seven rows already
 exited 64 and failed only on the new message.
 Mutants: X-A1-range (2 FAILED), X-A1-zero (1), X-A1-lead (3), X-A1-all (the positive control, 1).
-Measured equivalents: R:812 `-eq 0` back to `= 0` (`12 passed`) and the A7 compare back to strings (`19 passed`). The check
+Measured equivalents: R:822 `-eq 0` back to `= 0` (`12 passed`) and the A7 compare back to strings (`19 passed`). The check
 above them admits only canonical decimals now.
 
 ### A-2 (S0-04): no CC message prints a value of the provider block
@@ -484,7 +484,7 @@ What changed:
 - A path readlink cannot resolve is left to `_pair_identity`, as before.
 - R:310-311: the comment above R:312 `_pair_identity() {` says `No newline` reaches the path now.
 
-Test: T:4694 `test_i59f_a4_a_pair_identity_path_that_holds_a_newline_is_refused_before_anything_is_written`, 4 rows:
+Test: T:4704 `test_i59f_a4_a_pair_identity_path_that_holds_a_newline_is_refused_before_anything_is_written`, 4 rows:
 the file itself, a link to it, a path through a link to a directory named with a newline, and a newline that `..`
 drops. Each asserts exit 73, the exact line as stderr's last, no stdout, no evidence root, and no key printed.
 Red: 4 × `assert 1 == 73`.
@@ -602,7 +602,7 @@ nine ` M`, the report `??`, nothing else.
 - D-R2-4. A-4's refusal is global, as B-1's is: a newline in `S0_05_PAIR_IDENTITY` refuses the whole run (exit 73)
   even when `buzz-acp` is not in the unit list.
 - D-R2-5. "The post-launch root check compares numerically": I made both numeric, R:527 `int(want_uid)` (A7,
-  post-launch) and R:812 `-eq 0` (A4, pre-launch). Both are measured equivalents now.
+  post-launch) and R:822 `-eq 0` (A4, pre-launch). Both are measured equivalents now.
 - D-R2-6. Not asked, left as it is: R:320 compares the identity file's owner with `"$UNIT_UID"` as strings. Both
   sides are canonical decimals, so it is equivalent too.
 
@@ -672,7 +672,7 @@ pointed at a line that round 3 changed.
 
 What changed:
 - R:277-283: after the resolution and its shape check, `if [ -n "$UNIT_USER" ] && [ "${UNIT_USER##*:}" -eq 0 ]`
-  exits 64 before anything is written and before any unit launches. The message is T:4736 `DEFAULT_GID0_REFUSED`:
+  exits 64 before anything is written and before any unit launches. The message is T:4746 `DEFAULT_GID0_REFUSED`:
   `the unit user resolved from the pinned agent's owner, '<uid>:0', has gid 0 (the root group): set S0_05_UNIT_USER
   to <uid>:<gid>, each id from 1 to 4294967294`. An explicit gid 0 is refused earlier (round 2), so only a resolved
   one reaches this branch.
@@ -681,12 +681,12 @@ What changed:
   `default-owner` agent to 0:65534, and A4's uid-0 row stays reachable and tested.
 
 Tests, through the real runner:
-- T:4742 `test_i59f_r3_a_default_unit_user_with_gid_0_is_refused_before_any_unit_runs`, the rows of
-  T:4735 `DEFAULT_GID0_OWNERS` (65534:0 and 0:0): no `S0_05_UNIT_USER`, the stand-in chowned to the row, a
+- T:4752 `test_i59f_r3_a_default_unit_user_with_gid_0_is_refused_before_any_unit_runs`, the rows of
+  T:4745 `DEFAULT_GID0_OWNERS` (65534:0 and 0:0): no `S0_05_UNIT_USER`, the stand-in chowned to the row, a
   listener up.
   Each asserts exit 64, the message as stderr's last line, no stdout, no evidence root, no unit record, no namespace.
 - Positive controls: T:2227 `test_a2_s0_01_tree_change_fails_the_leg` (a default resolved to 65534:65534 runs, and the
-  stand-in records 65534:65534) and T:4662 `test_i59f_a1_a_unit_user_in_range_proceeds` (an explicit 65534:65534).
+  stand-in records 65534:65534) and T:4672 `test_i59f_a1_a_unit_user_in_range_proceeds` (an explicit 65534:65534).
 
 Red on the round-2 runner: the `65534:0` row launched a unit (`assert 1 == 64`, a stand-in record present). The `0:0`
 row got A4's row (`SKIP hermes-acp: unit would run as root`, `assert 1 == 64`).
@@ -708,16 +708,16 @@ Tests:
   positive control through the real runner (65534:65534); the leg runs.
 - T:2344 `test_a7_a_unit_not_matching_the_pins_is_not_observed`: a setpriv that drops nothing now shows
   T:2367-2372 `; uid 0; gid 0`, and the record's gid is `[0, 0, 0, 0]`.
-- T:2632 `test_d_pair_leg_reaches_the_relay_through_the_dnat`: the binary unit's record carries
-  T:2700-2701 `identity["gid"]` too.
-- T:4766 `test_i59f_r3_a7_refuses_a_unit_whose_gid_is_not_the_wanted_gid`: a PATH setpriv shim runs the real setpriv
-  with `--regid=65532` in place of the asked 65533 (T:4775). The unit user is 65534:65533, so uid and gid differ. The
+- T:2642 `test_d_pair_leg_reaches_the_relay_through_the_dnat`: the binary unit's record carries
+  T:2710-2711 `identity["gid"]` too.
+- T:4776 `test_i59f_r3_a7_refuses_a_unit_whose_gid_is_not_the_wanted_gid`: a PATH setpriv shim runs the real setpriv
+  with `--regid=65532` in place of the asked 65533 (T:4785). The unit user is 65534:65533, so uid and gid differ. The
   row is `not-run|unit identity not observed: gid 65532 is not 65533`, the record holds uid `[65534] * 4` and gid
   `[65532] * 4`, and no canary runs.
 
 Red on the round-2 runner: the live leg's record lacked `{'gid': [65534, 65534, 65534, 65534]}`; the A7 reason lacked
 `; gid 0`; the pair test raised `KeyError: 'gid'`. The shim test first raised `KeyError: 'reason'`. I then made its
-row read `row.get("reason")` (T:4785), and the red re-run read `assert ('run', None) == ('not-run', '...is not 65533')`:
+row read `row.get("reason")` (T:4795), and the red re-run read `assert ('run', None) == ('not-run', '...is not 65533')`:
 the leg ran with the wrong gid and its canaries ran. That re-run: `2 failed in 76.91s (0:01:16)`, with the `65534:0` row.
 Mutants: X-R3-a7-no-record (2), X-R3-a7-no-zero (1), X-R3-a7-no-compare (1), X-R3-a7-want-uid (1, `gid 65532 is not
 65534`), X-R3-a7-uid-line (1, `gid 65534 is not 65533`), X-R3-a7-all (the positive control, 1).
@@ -732,8 +732,8 @@ Mutants: X-R3-a7-no-record (2), X-R3-a7-no-zero (1), X-R3-a7-no-compare (1), X-R
   synthetic-pass bundle with a
   Gid line added passes and prints the same identity line. Its negative control, X-R3-checker-strict (CE's key test
   made exact, in the mirror only), reds it.
-- The other readers are tests. T:1321, T:2370 and T:2698 read the runner's `unit-identity.json`, updated above.
-  T:792, T:2220, T:2396, T:2427 and T:2451 read or patch copies of a committed `unit-identity.json`;
+- The other readers are tests. T:1321, T:2370 and T:2708 read the runner's `unit-identity.json`, updated above.
+  T:792, T:2220, T:2396, T:2437 and T:2461 read or patch copies of a committed `unit-identity.json`;
   they pass unchanged in the gates.
 - The committed evidence and both fixtures (`evidence-synthetic-pass`, `evidence-synthetic-uid0`) are unchanged.
 
@@ -784,11 +784,11 @@ count equals the row's literal.
 - `bash -n` R: rc 0. R's 5 heredocs compile. pyflakes T: rc 0. U+2028/U+2029: 0 in R, T and this report.
 - `scripts/ap_screen.py` against HEAD, whole files, as in round 2:
   - R: 16 = 16.
-  - T: 37 to 38. The new tell is AF-AP-115 on T:4776's `shutil.which("setpriv")`. It is a false positive: the shim
+  - T: 37 to 38. The new tell is AF-AP-115 on T:4786's `shutil.which("setpriv")`. It is a false positive: the shim
     needs the real setpriv's path, resolved before the test changes PATH. It is a test fault, not a verifier's trust
     anchor.
   - With `--tests` (TEST_SCREEN, not run in rounds 1 and 2), T goes from 30 to 31. The new tell is AP-66 on round 1's
-    mover line, T:4459 `_os.open = _open_after_a_move`, not a round-3 line.
+    mover line, T:4469 `_os.open = _open_after_a_move`, not a round-3 line.
 - `scripts/report_lint.py` over the whole report (aliases C, T3, R, T, T4, W, NL, GW, CC, CE, TA; the working
   tree): `report_lint: 198 refs — OK 193, NEAR 0, MISS 0, UNCHECKABLE 5, UNRESOLVED 0 (worktree)`. The 5 are round 1's premise list of PIN grep lines.
 - Host, after every S0-05 run and at the end: `ip netns list` 0 lines, iptables stable form `0528d077bca3781a`,
@@ -809,7 +809,7 @@ df54c0b7b883d2d1 NL. `git status --porcelain`: these nine ` M`, the report `??`,
    65534:65534 runs (T:2227 `test_a2_s0_01_tree_change_fails_the_leg`, twice in the gates). Left open: the PC's
    pinned agent owner is inferred, not read here.
 2. **A7's gid compare refuses a legitimate unit.** Supplementary groups or a partial setgid could make the four gids
-   differ. Ruled out here: the live leg (T:1324) and the pair leg (T:2701) record `[UNIT_USER[1]] * 4` and run, in
+   differ. Ruled out here: the live leg (T:1324) and the pair leg (T:2711) record `[UNIT_USER[1]] * 4` and run, in
    both T gates. A7 compares the real gid and refuses a 0 in any of the four, as the uid line does. Left open: the
    PC's setpriv is not run here.
 3. **The new record breaks a reader.** Ruled out: the one field reader (CE@34d3af0:392 `IDENTITY_KEYS`, a subset test),
@@ -825,7 +825,7 @@ df54c0b7b883d2d1 NL. `git status --porcelain`: these nine ` M`, the report `??`,
   (772 KB, mode 0755), because the units run as uid 65534 and `/tmp/claude-0` is 0700. It was deleted after its log
   was read.
 - D-R3-4. CE does not grade the gid (NOT-done); the runner's A7 does. A record with no gid still passes CE, as before.
-- D-R3-5. The shim test's gids (T:4775 `--regid=65532`, and 65533) have no group entries. setpriv takes numeric
+- D-R3-5. The shim test's gids (T:4785 `--regid=65532`, and 65533) have no group entries. setpriv takes numeric
   gids, so none are needed.
 
 ### Evidence tiers (round 3)
@@ -1067,10 +1067,10 @@ Mutant: X-R4-F2-guard (the check removed): 3.
 ### 3. F-3 and F-8 (tests): the rows the verifier's mutants needed
 
 What changed (tests only):
-- T:4627 `BAD_UNIT_USERS` adds `4294967296:65534`, `65534:4294967296`, `4294967295:65534`, `65534:4294967295`,
+- T:4637 `BAD_UNIT_USERS` adds `4294967296:65534`, `65534:4294967296`, `4294967295:65534`, `65534:4294967295`,
   `0:65534` and `65534:0` (F-3), and `65534:65534` plus a newline (F-14, item 9).
-- T:4639 shows the newline in the row's id as `<newline>`, and each row gets its own listener port:
-  T:4644 `port = 18180 + BAD_UNIT_USERS.index(value)`.
+- T:4649 shows the newline in the row's id as `<newline>`, and each row gets its own listener port:
+  T:4654 `port = 18180 + BAD_UNIT_USERS.index(value)`.
 - T3:967 `PROFILE_VALUE_PATHS` adds T3:973 `"api_mode-a-list"` and T3:983 `"key_env-a-list"`.
 - T4:767 `CONFIG_VALUE_PATHS` adds T4:776 `"key-env-a-list"`.
 - A new last column plants the fake value as it is (T3:963 `def _as_is`, T4:763 `def _as_is`) or inside a list:
@@ -1091,26 +1091,27 @@ Mutants (the verifier's, now killed):
 ### 4. F-4 and F-12 (R's walk): every climb checks the way up to the root
 
 What changed:
-- R:653 `def off_the_way(fd, where)`: from the directory a climb reached, it checks each `..` up to the root against
+- R:659 `def off_the_way`: from the directory a climb reached, it checks each `..` up to the root against
   the stack's frames (st_dev and inode, the root's frame included). It holds at most two descriptors of its own.
   It returns "" while the walk is inside the root, else the stop reason:
-  - R:663 `a mount appeared above {where} while it ran`: the st_dev or the mount id differs (F-12);
-  - R:665 `{where} moved while it ran`: the directory itself moved;
-  - R:666 `an ancestor of {where} moved out of the root while it ran` (F-4's second case);
-  - R:674 `could not be checked`, with the error's class.
-- R:717 `stopped = off_the_way(cur, where)`: every climb runs the check. Round 1 checked the directory itself only.
+  - R:670 `a mount appeared above {where} while it ran`: the st_dev or the mount id differs (F-12);
+  - R:672 `{where} moved while it ran`: the directory itself moved;
+  - R:673 `an ancestor of {where} moved out of the root while it ran` (F-4's second case);
+  - R:681 `could not be checked`, with the error's class.
+- R:727 `stopped = off_the_way`: every climb runs the check. Round 1 checked the directory itself only.
 - R:588 `It changes only what it finds` replaces "It changes nothing outside the root", and points at the limit.
-  R:603-608 states what holds: `every climb checks the whole way up`, and between two climbs a live process can still
-  move an entry out and have it handed back where it then is (F-5 names such a process; out of scope).
+  Round 4's paragraph above `_handback() {` stated what holds (round 5 rewrote it, R4-F3): every climb checks the
+  whole way up, and between two climbs a live process can still move an entry out and have it handed back where it
+  then is (F-5 names such a process; out of scope).
 
 Tests:
-- T:4827 `test_i59f_r4_the_walk_stops_when_an_ancestor_moved_out_of_the_root`: a mover renames the ancestor `p` out
+- T:4850 `test_i59f_r4_the_walk_stops_when_an_ancestor_moved_out_of_the_root`: a mover renames the ancestor `p` out
   of the root the first time the walk opens `..`. The walk stops at that climb with the exact line (4 entries
   handed back), and `outside/p/zz-decoy`, which it had not reached, keeps its owner.
-- T:4880 `test_i59f_r4_the_walk_names_a_mount_on_its_way_up_as_a_mount`: a mover mounts a tmpfs on `d` at the
-  first `..` (T:4868 `MOUNT_BEFORE_THE_WAY_UP`). The stop line names a mount, `d/c` keeps its owner, and the tmpfs
+- T:4904 `test_i59f_r4_the_walk_names_a_mount_on_its_way_up_as_a_mount`: a mover mounts a tmpfs on `d` at the
+  first `..` (T:4892 `MOUNT_BEFORE_THE_WAY_UP`). The stop line names a mount, `d/c` keeps its owner, and the tmpfs
   is unmounted by its path.
-- T:4848 `test_i59f_r4_the_walk_climbs_a_clean_tree_to_its_end`, the positive control: four levels with a file at
+- T:4872 `test_i59f_r4_the_walk_climbs_a_clean_tree_to_its_end`, the positive control: four levels with a file at
   each; all 8 entries are handed back, and the summary names no stop.
 - Round 1's B-3 tests pass unchanged, the 1,100-level tree included.
 
@@ -1128,22 +1129,22 @@ run each, in a mirror). Each climb re-checks the way up, so a walk is quadratic 
 
 What changed:
 - Both launches take `--clear-groups` where they took `--init-groups`: the agent launch
-  (R:909 `--clear-groups -- "${PIN[$exe_pin]}"`) and the pair launch (R:914 `--clear-groups -- "$PY_BIN"`). The list
-  is explicit and empty, the one the scratch probe already used (R:883 `--clear-groups`).
+  (R:919 `--clear-groups -- "${PIN[$exe_pin]}"`) and the pair launch (R:924 `--clear-groups -- "$PY_BIN"`). The list
+  is explicit and empty, the one the scratch probe already used (R:893 `--clear-groups`).
 - setpriv here is util-linux 2.39.3, and its help lists `--clear-groups` (`clear supplementary groups`). Run as
   65534:65534, the Groups line is empty with it, and `65534` with `--init-groups`.
 - A7 reads the Groups line (R:512 `startswith("Groups:")`) and records it (R:520 `"groups": groups`).
 - R:529 `problems += ["supplementary group 0"] if 0 in groups else []`.
-- The comments say so: R:490-493 (`a 0 in it refused`) and R:898-900 (`--clear-groups`).
+- The comments say so: R:490-493 (`a 0 in it refused`) and R:908-910 (`--clear-groups`).
 
 Tests:
 - T:1325 `"groups": []`: the live leg's whole-record pin, the positive control through the real runner.
-- T:2700-2701: the pair leg's record holds `identity["groups"]` equal to `[]`.
+- T:2710-2711: the pair leg's record holds `identity["groups"]` equal to `[]`.
 - T:2367-2373 (`supplementary group 0`): in the A7 not-matching test, setpriv drops nothing, so the record holds
   the suite's own groups (`identity["groups"] == os.getgroups()`), and the reason ends `; supplementary group 0`
   when they hold a 0.
-- T:4901 `test_i59f_r4_a7_refuses_a_unit_with_supplementary_group_0`: a PATH setpriv shim replaces every group
-  option with T:4912 `--groups=0,65534`, as `--init-groups` would on a host that lists the unit user in group 0. The
+- T:5049 `test_i59f_r4_a7_refuses_a_unit_with_supplementary_group_0`: a PATH setpriv shim replaces every group
+  option with T:5060 `--groups=0,65534`, as `--init-groups` would on a host that lists the unit user in group 0. The
   row is `not-run|unit identity not observed: supplementary group 0`. The record holds uid and gid `[65534] * 4`
   and groups `[0, 65534]`, and no canary runs.
 
@@ -1155,8 +1156,8 @@ test. X-R4-F7-record (the record drops `groups`): 2.
 ### 6. F-11 (CE, the two fixtures): CE grades the gid
 
 What changed:
-- CE:113 `IDENTITY_KEYS` adds `"gid"` after `"uid"`. A record without a gid fails at CE:394-395 (`lacks one of`).
-- CE:411-415: a gid that is not four non-negative ints fails `is not the four gids of the Gid line`, and a 0 in it
+- CE:115 `IDENTITY_KEYS` adds `"gid"` after `"uid"`. A record without a gid fails at CE:399-400 (`lacks one of`).
+- CE:418-424: a gid that is not four non-negative ints fails `is not the four gids of the Gid line`, and a 0 in it
   fails `refuse("gid 0")`. Both print as `unit-identity-invalid: <unit> <detail>`.
 - CE:48-49 (`no gid 0`) and CE:111-112 (`the gid since I59-F round 4`) say so.
 - Both synthetic fixtures' `hermes-acp/unit-identity.json` gain `"gid": [1000, 1000, 1000, 1000]`. The uid0
@@ -1164,7 +1165,7 @@ What changed:
 
 Tests: four rows join `test_a7_the_checker_refuses_an_identity_that_is_not_the_pin`, each with its exact line.
 - T:2412-2414: a 0 in the gid (`"gid 0"`), a gid that is not a list, and a bool in it.
-- T:2418 `"drop-gid"`: the key deleted. T:2421 names the four `"effective-gid-0"`, `"gid-not-a-list"`, `"gid-bool"`
+- T:2426 `"drop-gid"`: the key deleted. T:2429-2431 names the four `"effective-gid-0"`, `"gid-not-a-list"`, `"gid-bool"`
   and `"missing-gid"`.
 - The `missing-key` row names the new key list. Both fixture tests pass.
 
@@ -1181,7 +1182,7 @@ runs the round-4 runner, whose A7 writes the gid and the groups.
 ### 7. F-9 (C): no traceback, and a read error is named as one
 
 What changed:
-- C:823 `if not isinstance(api_mode, str) or api_mode not in PERMITTED_API_MODES:`. A list or a mapping fails with
+- C:828 `if not isinstance(api_mode, str) or api_mode not in PERMITTED_API_MODES:`. A list or a mapping fails with
   its shape (the transport reason), not `TypeError: unhashable type`.
 - C:779 `def _walk_credentials` keeps the ids of the mappings and lists open on the current path:
   C:787 `_open.add(id(node))`.
@@ -1196,7 +1197,7 @@ Tests (T3):
 - T3:1023 `test_a_recursive_alias_in_the_provider_block_fails_by_name`, the rows of T3:1015 `RECURSIVE_ALIASES` (a
   list inside itself, a mapping inside itself): exit 1, the one line naming where the alias closes, empty stderr.
 - T3:1034 `test_an_anchor_used_twice_without_a_cycle_is_no_recursive_alias`, the negative control: it passes.
-- T3:1046 `test_a_profile_that_cannot_be_read_is_named_a_read_error`, rows `not-utf-8` (read as root) and
+- T3:1087 `test_a_profile_that_cannot_be_read_is_named_a_read_error`, rows `not-utf-8` (read as root) and
   `unreadable` (mode 0000, read as uid 65534 in a 0711 directory of its own under /tmp):
   `failure_reason: bundle: hermes/profile.yaml cannot be read (<class>)`.
 - T3:876 `def _profile_refusal`: the two parse-error tests (T3:907 and T3:922 `_profile_refusal(cls)`) now expect
@@ -1233,9 +1234,9 @@ What changed:
   cannot split the line.
 
 Tests:
-- T:4815 `test_i59f_r4_the_id_patterns_spell_their_classes_as_explicit_lists`: R's three id patterns hold no range.
-- T:4633 `UNIT_USER_REFUSED` and T:4736 `DEFAULT_GID0_REFUSED` take the value through T:4355 `def _quoted`, bash's
-  own `printf %q` (T:4655 `_quoted(value)`). The new row `65534:65534` plus a newline is refused on one line.
+- T:4838 `test_i59f_r4_the_id_patterns_spell_their_classes_as_explicit_lists`: R's three id patterns hold no range.
+- T:4643 `UNIT_USER_REFUSED` and T:4746 `DEFAULT_GID0_REFUSED` take the value through T:4365 `def _quoted`, bash's
+  own `printf %q` (T:4665 `_quoted(value)`). The new row `65534:65534` plus a newline is refused on one line.
 - T:2297 pins `got 00:0 ` for the resolved-shape refusal.
 
 Red on the round-3 runner: the pattern test found three range patterns, and every refusal row failed on the quoting
@@ -1248,7 +1249,7 @@ quotes raw): 2, the newline row and `0:65534`.
 What changed: C:237 `def _shape` and CC:135 `def _shape`. Each docstring now says it protects a high-entropy value
 (a key, a token) only, and that a short or guessable value is recoverable by `brute force`: C:241-243 and CC:139-140.
 
-Tests: T3:1078 and T4:936 `test_shape_says_it_protects_a_high_entropy_value_only`, a documentation pin read with
+Tests: T3:1119 and T4:936 `test_shape_says_it_protects_a_high_entropy_value_only`, a documentation pin read with
 `ast`.
 Red: both pins failed on the pre-fix docstrings. Mutants: X-R4-F6-doc-C and X-R4-F6-doc-CC (the sentence removed):
 1 each.
@@ -1299,11 +1300,11 @@ Wall time of `tests/test_s0_01_check_acp_conformance.py` (468 tests), alone, eac
 ### unit-identity.json readers (F-7: "update the record's readers as in round 3")
 
 - `grep -rln 'unit-identity'` over the tree's *.py, *.sh and *.yml finds CE, R and T only.
-- CE:377 `def check_unit_identity` is the one field reader. It grades its eight keys (CE:113 `IDENTITY_KEYS`) and
+- CE:382 `def check_unit_identity` is the one field reader. It grades its eight keys (CE:115 `IDENTITY_KEYS`) and
   ignores any other, so it does not grade `groups`; the runner's A7 refuses a 0 there.
-- T:4795 `test_i59f_r4_the_checker_reads_an_identity_record_that_carries_the_groups` replaces round 3's gid reader
+- T:4805 `test_i59f_r4_the_checker_reads_an_identity_record_that_carries_the_groups` replaces round 3's gid reader
   test. The synthetic-pass bundle with `"groups": []` added passes and prints the same identity line.
-- The tests that read the runner's records assert `groups`: T:1325, T:2373 and T:2700.
+- The tests that read the runner's records assert `groups`: T:1325, T:2373 and T:2710.
 - The validator hashes the files for the attestation and reads no field. The committed evidence is unchanged (no
   gid, no groups): that is F-11's red.
 
@@ -1431,14 +1432,14 @@ occurs once; py_compile passes, or `bash -n` and R's 5 heredocs; the collect cou
 - `scripts/ap_screen.py` against HEAD, whole files:
   - S1C 14 = 14, BCR 17 = 17, CE 2 = 2, R 16 = 16.
   - C 0 to 1, CC 0 to 1, T3 6 to 7 and T4 4 to 5: the AP-32 display-hash tells of round 1 and route B, unchanged.
-  - T 37 to 39. The new AF-AP-115 tell is round 4's shim, T:4913 `shutil.which("setpriv")`. It is the same false
-    positive as round 3's at T:4776 `shutil.which("setpriv")`: the shim needs the real setpriv's path, resolved
+  - T 37 to 39. The new AF-AP-115 tell is round 4's shim, T:5061 `shutil.which("setpriv")`. It is the same false
+    positive as round 3's at T:4786 `shutil.which("setpriv")`: the shim needs the real setpriv's path, resolved
     before the test changes PATH.
   - T1L 2 (a new file): AP-32 on T1L:54 and T1L:68 (`hexdigest()`), the fake lines' hashes and the oracle. The
     oracle hashes exactly the bytes the tools hash; the golden rows prove it.
-  - With `--tests`: T 30 to 32. The new tell is AP-66 on T:4875 `_os.open = _open_after_a_mount`, program text that
+  - With `--tests`: T 30 to 32. The new tell is AP-66 on T:4899 `_os.open = _open_after_a_mount`, program text that
     the handback's child runs, so it cannot leak into a later test. Round 1's mover is the same case:
-    T:4459 `_os.open = _open_after_a_move`.
+    T:4469 `_os.open = _open_after_a_move`.
   - With `--tests`: T4 3 to 4. The tell is AF-AP-80 on T4:798 `assert value in path.read_text()`, round 2's
     precondition that the planted value reached the bundle whole; round 4 did not write that line. T3 6 = 6; T1L 0.
 - Host, after every S0-05 run and at the end: `ip netns list` 0 lines, iptables stable form `0528d077bca3781a`, and
@@ -1460,14 +1461,14 @@ df54c0b7b883d2d1 NL, d0f1d1e6bbdc6411 GW. `git status --porcelain`: 14 ` M`, T1L
 
 1. **The gid grading (F-11) or the group list (F-7) refuses the owner's real re-capture.** The PC re-capture runs
    the round-4 runner. Ruled out here: the live leg and the pair leg run through the real runner and record the gid
-   and an empty Groups line (T:1325 `"groups": []`, T:2700 `identity["groups"]`), in both T gates. The
+   and an empty Groups line (T:1325 `"groups": []`, T:2710 `identity["groups"]`), in both T gates. The
    synthetic-pass fixture with a gid passes CE. Left open: the PC's setpriv and its /etc/group are not run here.
    util-linux 2.39.3 here takes `--clear-groups`; the PC's version is not read.
 2. **The per-climb check stops a legitimate handback, or costs too much.** Ruled out: the clean-tree positive
-   control hands back every entry (T:4848 `test_i59f_r4_the_walk_climbs_a_clean_tree_to_its_end`), and round 1's
+   control hands back every entry (T:4872 `test_i59f_r4_the_walk_climbs_a_clean_tree_to_its_end`), and round 1's
    1,100-level tree is handed back whole, in both T gates. The cost is measured: 4.8 s against 2.4 s per row for
    1,100 levels. A real evidence tree is a few levels deep. Left open: between two climbs, a live process can still
-   move an entry out and have it handed back, as R:605-607 says (`Between two climbs`); F-5 is out of scope.
+   move an entry out and have it handed back, as round 4's comment above `_handback() {` said; F-5 is out of scope.
 3. **The widened set (F-1) is the wrong vocabulary again, or prints a value it should not.** The observed field is
    the provider block's `api_mode`, else its `transport` (capture_leg.py, item 1). Every pinned transport in the
    repo is `openai_chat`, and the real bundle now prints it by name:
@@ -1518,4 +1519,307 @@ Adjacent defects (reported, not fixed):
   setpriv's options here; the static checks; the host state.
 - INFERRED: the PC's setpriv takes `--clear-groups` (here, util-linux 2.39.3 does); the PC re-capture passes CE,
   because the round-4 runner writes the gid (not run here); CE is the only field reader (a grep, not a graph query).
+- ASSUMED: nothing beyond the NOT-done list.
+
+## Round 5 (the three attested follow-ups and R4-F5)
+
+Written 2026-09-28 23:3xZ by the same lane, on the coordinator's round-5 message and brief
+(`tasks/briefs/i59/I59-F-R5-brief.md`, main tree). Worktree HEAD 34d3af0. Round 5 changed C, T3, R, CE and T, the
+brief's five files; every other file is round 4's (the final list below).
+
+Premise (22:29:57Z, `bash scripts/premise_block.sh` from the main tree, fed the brief's eight commands): every line
+equals the brief's. The five lane files hash 1e69424390142b44 C, 383bbddc7b8140bc CE, 5c4600661faeaf29 R,
+9720944aa3e6da44 T3 and aaca225c88805245 T; the patch `5cf9db295c98fddc`, the verifier's report `be65de75d9c49032`;
+HEAD 34d3af0 and 16 porcelain lines. Only the disk line moved (11,747 MB free, against 12,019).
+
+Report upkeep (23:3xZ): round 5 moved lines in C, T3, R, CE and T. The line map is difflib's, from round 4's bytes
+(copies saved before the first edit, their sha256 prefixes checked against round 4's list). 100 refs moved with their
+lines. 7 pointed at lines round 5 changed. 5 cite the same thing on its new line or range:
+- R:659 `def off_the_way` and R:727 `stopped = off_the_way`, both written without their round-4 arguments;
+- T:2429-2431, where the A7 table's ids now stand (`"effective-gid-0"`);
+- CE:48-49 (`no gid 0`) and CE:111-112 (`the gid since I59-F round 4`), whose numbers held.
+
+2 read in words: round 4's refs to R's paragraph above `_handback() {`, which round 5 rewrote. Lint before the upkeep:
+`report_lint: 357 refs — OK 250, NEAR 7, MISS 95, UNCHECKABLE 5, UNRESOLVED 0 (worktree)`. After it, before this
+section: `report_lint: 355 refs — OK 350, NEAR 0, MISS 0, UNCHECKABLE 5, UNRESOLVED 0 (worktree)`.
+
+### NOT-done
+
+- Out of scope by the brief: R4-F2 (re-pin T's `LIVE_OUTPUT` after the PC re-capture: the landing step), F-5, R4-F6,
+  R4-F8, R4-F9 (`netns_lib.sh` is outside the boundary) and R4-F10.
+- CE bounds the uid and the gid above, as the brief asks, but not the Groups entries: a group above 4294967294 still
+  passes CE. One more `max(groups)` line if you want it.
+- The window item 2 leaves stays, by design, and R's comment states it (R4-F6's class): deeper than 32 levels, an
+  ancestor moved out of the root is seen at the next whole-way check, at most ceil(d / 32) climbs later, or when the
+  walk climbs out of it. The window between two climbs stays at every depth.
+- No re-mint and no commit. The committed evidence is untouched, so F-11's red stays: T's 8, TA's S0-05 row and
+  S0-05's spec leg 1, one cause each time.
+- Not run: the PC (the re-capture, its setpriv, its ids), real CI.
+
+### DISCREPANCIES
+
+- D-R5-1. **Item 2's mechanism is a budget, a variant of the verifier's first option.** A fixed "every k climbs"
+  stays quadratic, divided by k. Instead each climb earns 32 levels of checking (R:621 `CHECK_BUDGET = 32`) and checks
+  the whole way up when its earnings cover the depth, its parent alone otherwise. So a tree up to 32 levels deep keeps
+  round 4's check at every climb, and the cost is linear at any depth. "Once at the end" holds by construction: the
+  walk's last climb lands in the root, a check of one frame, which the budget always covers.
+- D-R5-2. **Item 2's red is a count, not a clock.** T counts the walk's opens of ".." through R's own program
+  (deterministic, no flaky bound). The timing table is measured apart, the handback program alone.
+- D-R5-3. **No red on round 4's bytes for item 4, and none for two guards of round-5 code.** The bind-mount row
+  passes on round 4's R: the real code already names that mount (the verifier's item 1); its red is the verifier's
+  mutant V4-mount-by-st_dev-only, now killed. The window test reads `CHECK_BUDGET`, which round 4 lacks, so it errors
+  there; CE's new positive control passes there. Their reds are mutants too (the table).
+- D-R5-4. **Two test rows beyond the brief's list.** T3's `int-in-extra_headers` (a non-string key one mapping deeper,
+  so the path named is the holding mapping's, not always the provider block), and T's positive control for the groups
+  rows (it kills X-R5-F4-groups-any).
+- D-R5-5. **Two round-4 docstrings corrected** (comments are claims): the groups reader test now says CE grades the
+  Groups line, and the ancestor test says every climb checks the whole way up to 32 levels deep. Their code is
+  unchanged.
+- D-R5-6. **The 30 round-4 mutant rows were re-run from rebuilt drivers.** Round 4's drivers were deleted at its end;
+  I rebuilt them from the transcript's record of them. Two anchors moved with round 5's `off_the_way` (X-R4-F4-chain,
+  X-R4-F4-first-only), and group C's collect count went from 21 to 27 (the A7 table's six new rows).
+- D-R5-7. Scratch outside the scratchpad, temporary, as in rounds 3 and 4: the mirror `/tmp/i59f-r5-mirror`, private
+  basetemps `/tmp/i59f-bt-*` and `/tmp/i59f-ps-*`, the timing chains `/tmp/i59f-time`, the read-half probe
+  `/tmp/i59f-reads-*`, and T3's own `/tmp/s0-03-unreadable-*`. Each was deleted after use.
+
+### TL;DR
+
+- Done: R4-F1 (C), R4-F3 (R), R4-F4 (CE) and R4-F5 (T). Each code change went red on round 4's bytes first, then
+  green; each item has a named mutant its test kills.
+- Mutation: 13 new rows, each `KILLED`, the verifier's survivor V4-mount-by-st_dev-only among them. Round 4's 30 rows,
+  re-run on round 5's bytes: each `KILLED`, with round 4's FAILED counts.
+- R4-F3, the handback program alone at 1,100, 2,200 and 3,300 levels: round 4 2.30 s, 11.08 s and 22.78 s (605,550,
+  2,421,100 and 5,446,650 opens of ".."); round 5 0.23 s, 0.46 s and 0.58 s (35,642, 71,905 and 108,216 opens).
+- Gates, twice each: the 12 files of round 4's list pass, except T, `8 failed, 355 passed`, twice: F-11's one cause,
+  as before. TA's S0-01 to S0-05 rows: `1 failed, 4 passed`, twice (S0-05, the same cause).
+  `validate-ledger integrity` names the same five proofs, S0-01 to S0-05.
+- Host: before and after every S0-05 run, `ip netns list` empty, iptables `0528d077bca3781a`, mounts
+  `2dd93d06015feb4d`.
+
+### Red and green runs (each on round 4's bytes of the file it fixes, then on the fix)
+
+| run | the bytes under test | selection | result |
+|---|---|---|---|
+| red, 22:36:13Z | round 4's C | T3's new test, 4 rows | `4 failed in 1.56s` |
+| green, 22:36:26Z | the fix | the same, plus the two alias tests (7) | `7 passed in 1.71s` |
+| red, 22:37:28Z | round 4's CE | the A7 table and four identity tests, 23 | `6 failed, 17 passed in 3.85s` |
+| green, 22:37:51Z | the fix | the same, 23 | `23 passed in 1.86s` |
+| 22:38:39Z | round 4's R | the new bind-mount row and the tmpfs row, 2 | `2 passed in 1.25s` (no red: D-R5-3) |
+| red, 22:41:44Z | round 4's R | the count test and the window test, 2 | `2 failed in 29.06s` |
+| green, 22:42:55Z | the fix | those two, round 4's three walk tests, the bind row, B-3's three walk rows (9) | `9 passed in 6.75s` |
+
+The times are the logs' closing times. Each run used a private `--basetemp` under `/tmp/i59f-bt-*`, removed after it.
+
+### 1. R4-F1 (C, T3): a non-string key fails by its type, never by a traceback
+
+What changed: in C:794 `def _walk_node`, before the credential screen, C:797 `if not isinstance(key, str):` refuses
+the key: C:801 `has a non-string key ({type(key).__name__}) under {path}`. The path is the holding mapping's. Neither
+the key nor its value is printed.
+
+Tests (T3): T3:1061 `test_a_non_string_key_in_the_provider_block_fails_by_its_type`, the rows of
+T3:1048 `NON_STRING_KEYS`: `int` (a random 18-digit int built at run time), `bool`, `null`, and
+`int-in-extra_headers`. Each row plants the key with a fake value built at run time through `yaml.safe_dump`, shows
+the key loads with that type, then asserts exit 1, the one line
+`failure_reason: bundle: profile.yaml has a non-string key (<type>) under <path>`, empty stderr, and no case-folded
+run of 4 characters of the value, nor of an int key's digits, in the output.
+
+Red on round 4's C: each row ended in a traceback, `AttributeError: 'int' object has no attribute 'upper'` (`'bool'`,
+`'NoneType'`). Mutants: X-R5-F1-guard (the check removed): 4. X-R5-F1-ints (the check admits ints): 3, the two int
+rows and the bool row (a bool is an int).
+
+### 2. R4-F3 (R, T): the handback's cost is linear in the depth
+
+What changed:
+- R:621 `CHECK_BUDGET = 32` and R:645 `budget` (0 at the start).
+- The climb: R:724 `budget += CHECK_BUDGET`; R:725 `levels = len(stack) if budget >= len(stack) else 1` (the whole way
+  up when the earnings cover the depth, else the parent alone); R:726 `budget -= levels if levels > 1 else 0`;
+  R:727 `stopped = off_the_way(cur, where, levels)`.
+- R:659 `def off_the_way(fd, where, levels)` checks the top `levels` frames of the stack:
+  R:664 `at, own_at, last = fd, False, len(stack) - levels`, and R:674 `if level > last:` opens ".." only while a
+  frame above is still to be checked. The stop lines are round 4's.
+- R's paragraph above `_handback() {` states the rule, its cost and its window (R:605 `Round 5 (VERIFY-I59-F R4-F3)`,
+  R:609 `The window this leaves`). `cleanup`'s signal disposition is unchanged.
+
+The cost (the handback program alone, cut from R's bytes as T's `_handback_program()` does; a chain of N directories;
+`RLIMIT_NOFILE` 1024; one run each, 22:43Z to 22:44Z):
+
+| levels | round 4 opens of ".." | round 4 | round 5 opens of ".." | round 5 |
+|---|---|---|---|---|
+| 1,100 | 605,550 | 2.30 s | 35,642 | 0.23 s |
+| 2,200 | 2,421,100 | 11.08 s | 71,905 | 0.46 s |
+| 3,300 | 5,446,650 | 22.78 s | 108,216 | 0.58 s |
+
+Round 4's counts are exactly d(d+1)/2; round 5's grow with d, 32.4 to 32.8 per level. The verifier measured round 3
+at 0.07 s, 0.10 s and 0.15 s: round 5 stays three to five times slower than round 3, the price of the budget.
+
+Tests (T):
+- T:4999 `test_i59f_r5_the_walk_costs_linear_time_in_its_depth`: a chain of 1,100 and of 3,300 levels, each
+  directory made relative to its parent's descriptor (T:4966 `def _chain`), through R's own program with the counting
+  prefix T:4986 `COUNT_THE_WAY_UP`. Each chain is handed back whole, with no stop.
+- T:5016 `counts[levels] <= 64 * levels` bounds the opens per level, and T:5017 `assert counts[3300] < 4 * counts[1100]`
+  bounds the growth (a square law gives nine).
+- T:5021 `test_i59f_r5_a_deep_walk_checks_the_whole_way_up_within_its_window`: 200 levels, a decoy file 100 levels
+  down, and a mover that renames the chain's top out of the root at the first climb. The walk stops on
+  `an ancestor of ... moved out of the root`, naming a directory at least 200 - ceil(200 / CHECK_BUDGET) levels
+  deep (the budget is read from R's program), and the decoy keeps its owner.
+- Round 4's three walk tests and round 1's B-3 tests pass unchanged, the 1,100-level tree whole (twice in the T gates).
+
+Red on round 4's R: the count test failed with `{1100: 605550, 3300: 5446650}`; the window test errored
+(`AttributeError`: round 4 has no `CHECK_BUDGET`). Mutants: X-R5-F3-every (the whole way at every climb, round 4's
+rule): 1, the count test. X-R5-F3-unpaid (the budget never paid down): 1, the count test. X-R5-F3-never (the parent
+alone at every climb): 2, the window test and round 4's ancestor test. X-R5-F3-shallow-only (the whole way only up to
+32 levels deep): 1, the window test.
+
+### 3. R4-F4 (CE, T): CE grades the Groups line and bounds each id
+
+What changed:
+- CE:118 `ID_MAX = 4294967294`; CE:414-415 and CE:421-422 refuse a uid or gid above it: `is above {ID_MAX}`, naming
+  the largest.
+- CE:425 `if "groups" in record:` grades the Groups line when the record carries it: a list of non-negative ints
+  (CE:428 `is not the gids of the Groups line`), and no 0 (CE:430 `refuse("supplementary group 0")`, A7's own words).
+  A record written before round 4 has no Groups line and reads as before.
+- CE:49 (`each id at most`) and CE:113 (`graded when present`) say so.
+
+Tests (T): the A7 table gains T:2417-2422 `({"groups": [0]}`, `"groups": "junk"`, and a gid and a uid of 4294967295
+and of 4294967296, each with its exact line (`groups-0`, `groups-not-a-list`, `gid-4294967295`, `gid-4294967296`,
+`uid-4294967295`, `uid-4294967296`). The synthetic-pass fixture with `"groups": []` passes (the round-4 reader test,
+T:4807 `grades the Groups line when the record carries one`), and a Groups line of `[1000, 65534]` passes:
+T:4825 `test_i59f_r5_the_checker_passes_a_groups_record_that_holds_no_0`.
+
+Red on round 4's CE: the six rows passed as valid (exit 0). Mutants: X-R5-F4-groups-zero: 1. X-R5-F4-groups-shape
+(the list check off; `0 in "junk"` then raises): 1. X-R5-F4-groups-any (any non-empty list refused): 1, the positive
+control. X-R5-F4-uid-bound: 2. X-R5-F4-gid-bound: 2. X-R5-F4-bound-by-one (`ID_MAX = 4294967295`): 4 (the 4294967295
+rows pass, and the 4294967296 rows name the wrong bound).
+
+### 4. R4-F5 (T only): a same-filesystem bind mount is named a mount
+
+T:4939 `test_i59f_r5_the_walk_names_a_same_filesystem_bind_mount_on_its_way_up_as_a_mount`. Its mover,
+T:4927 `BIND_BEFORE_THE_WAY_UP`, bind-mounts a directory of the root's own filesystem on `d` at the first climb (the
+test asserts the st_dev is the root's). The stop line is exact, `a mount appeared above <root>/d/b while it ran`; `d/c`
+and the bind source keep their owner; the mount is undone by its path. It passes on round 4's R and on round 5's.
+Its red is the verifier's surviving mutant V4-mount-by-st_dev-only (the mount-id half of the check dropped): 1,
+this row. The tmpfs row still passes under it.
+
+### Mutation table
+
+Mirrors: `/tmp/i59f-r5-mirror` (mode 0755: the units run as uid 65534) and `scratchpad/i59f/mirror-344`, each deleted
+after its log was read. Each row was checked first: every anchor occurs once; py_compile passes, or `bash -n` and R's
+5 heredocs; the collect count equals the row's literal. A row is `KILLED` when it gives exactly its expected FAILED
+count, `ERROR=0` and exit 1. Rows ran 22:47Z to 23:01Z. Baselines, unmutated: A `20 passed in 1.69s`, B
+`12 passed in 3.03s`, B5 `5 passed in 1.84s`, CE5 `23 passed in 3.77s`, C `27 passed in 3.18s`, W5
+`7 passed in 3.29s`, network namespaces `8 passed in 73.86s (0:01:13)`, pair `1 passed in 39.98s`, #344
+`15 passed in 8.93s`.
+
+The 13 new rows:
+
+| row | mutant | FAILED |
+|---|---|---|
+| X-R5-F1-guard | C's non-string key check removed | 4 |
+| X-R5-F1-ints | the check admits ints | 3 |
+| X-R5-F3-every | the whole way up at every climb (round 4's rule) | 1 |
+| X-R5-F3-never | the parent alone at every climb | 2 |
+| X-R5-F3-shallow-only | the whole way only up to 32 levels deep | 1 |
+| X-R5-F3-unpaid | the budget never paid down | 1 |
+| X-R5-F4-groups-zero | no supplementary-group-0 refusal | 1 |
+| X-R5-F4-groups-shape | the Groups list check off | 1 |
+| X-R5-F4-groups-any | any non-empty Groups line refused | 1 |
+| X-R5-F4-uid-bound | the uid bound removed | 2 |
+| X-R5-F4-gid-bound | the gid bound removed | 2 |
+| X-R5-F4-bound-by-one | `ID_MAX = 4294967295` | 4 |
+| V4-mount-by-st_dev-only | the verifier's: a mount named by st_dev alone | 1 |
+
+Round 4's 30 rows on round 5's bytes, each `KILLED` with round 4's FAILED count: X-R4-F1-drop 3, X-R4-F1-add 1,
+X-R4-F2-guard 3, X-R4-F10-text 8, N5 1, X-R4-F6-doc-CC 1; X-R4-F9-hash 1, X-R4-F9-cycle 2, X-R4-F9-ever 1,
+X-R4-F9-read 2, N4 2, X-R4-F6-doc-C 1; X-R4-F13-range 1, X-R4-F4-chain 1, X-R4-F4-first-only 1, X-R4-F12-word 1,
+X-R4-F11-gid0 1, X-R4-F11-key 2; N1 2, N2 2, N3 1, X-R4-F14-raw 2, X-R4-F7-launch 1, X-R4-F7-a7 1, X-R4-F7-record 2,
+X-R4-F7-pair 1; X-344-c-old 1, X-344-b-old 1, X-344-c-bytes 11, X-344-b-bytes 12.
+
+### Gates, pasted from `scripts/test_summary.sh`, twice each
+
+The gate list is round 4's 12 files (round 5's five files are named by T3, T4, T and `test_edit_snapshot_ap_screen.py`,
+all in it). Each run had a private `--basetemp` under `/tmp/i59f-bt-g5-*`, removed after it.
+
+| file | set | run 1 | run 2 |
+|---|---|---|---|
+| T1L | `1 files set=b00026b98230` | `15 passed in 8.44s` | `15 passed in 8.39s` |
+| T4 | `1 files set=2e5825a9019e` | `201 passed in 21.96s` | `201 passed in 20.42s` |
+| `test_edit_snapshot_ap_screen.py` | `1 files set=3d4383148bd3` | `197 passed in 0.23s` | `197 passed in 0.24s` |
+| `test_pc_suite_set_id.py` | `1 files set=aca91e7d0b0f` | `3 passed in 0.19s` | `3 passed in 0.16s` |
+| T3 | `1 files set=696563f67d3c` | `225 passed in 39.56s` | `225 passed in 38.60s` |
+| `test_s0_01_audit_cp5_controls.py` | `1 files set=17a682bf802d` | `3 passed in 1.45s` | `3 passed in 1.35s` |
+| `test_s0_01_pc_tools.py` | `1 files set=852dc4610aeb` | `106 passed in 2.28s` | `106 passed in 2.05s` |
+| `test_s0_01_spec_runner.py` | `1 files set=cf2007c5ce13` | `15 passed in 10.03s` | `15 passed in 13.30s` |
+| `test_s0_01_frame_tee.py` | `1 files set=7756619494e8` | `121 passed in 177.20s (0:02:57)` | `121 passed in 177.41s (0:02:57)` |
+| `test_s0_01_scripted_backend.py` | `1 files set=b10e41027c9e` | `348 passed in 100.65s (0:01:40)` | `348 passed in 100.90s (0:01:40)` |
+| `test_s0_01_check_acp_conformance.py` | `1 files set=31306c49985e` | `468 passed in 149.68s (0:02:29)` | `468 passed in 149.70s (0:02:29)` |
+| T | `1 files set=9f0502080347` | `8 failed, 355 passed in 344.66s (0:05:44)` | `8 failed, 355 passed in 345.40s (0:05:45)` |
+
+- Counts: T3 is 221 + 4. T is 353 + 10 (six table rows, the groups control, the bind row, the count and window tests).
+- T's 8, the same 8 failure sections in both runs, each carrying F-11's line (the spec-leg test's in pytest's
+  shortened form): `test_the_committed_live_root_needs_its_unit_list`, `test_every_spec_leg_behaves_exactly_as_declared`,
+  `test_the_committed_live_bundle_passes_with_every_line_pinned`, and `test_a_hostile_copy_of_the_live_bundle_fails_by_name`
+  rows `c2-egress-open`, `c1-proxy-new-spelling`, `gate-inert`, `override-present` and `identity-not-pinned`. The line:
+  `unit-identity-invalid: buzz-acp unit-identity.json lacks one of unit, pid, exe_realpath, entrypoint_realpath, entrypoint_sha256, uid, gid, argv`.
+- TA's drift guard, rows S0-01 to S0-05 of `test_every_repo_file_a_checker_reads_is_attested` (a selection of
+  `1 files set=96d60da64331`): `1 failed, 4 passed in 17.22s` and `1 failed, 4 passed in 16.98s`. S0-01 to S0-04 pass.
+  S0-05 fails at its first assert, leg 1's exit, on F-11's line. Its read half, observed apart with TA's `_observe` and
+  the validator's `proof_attestation` (read only): 14 reads, none outside the attestation, none tested outside it, none
+  inside uncovered, no child process.
+- Expected reds, each twice: `test_validate_ledger.py` (`1 files set=852bbd75ee1d`) `2 failed, 33 passed in 8.46s` and
+  `2 failed, 33 passed in 8.98s`, the same two tests as rounds 2 to 4; `test_proof_status.py`
+  (`1 files set=cce0ecd44cb2`, short `--basetemp`) `1 failed, 32 passed in 6.58s` and `1 failed, 32 passed in 6.70s`,
+  the same one. Their cause: `python3 scripts/validate-ledger integrity` (twice, the same output) reports S0-01 to
+  S0-05 INVALID and the rest PRESENT, with exactly round 4's five lines:
+  `attestation-mismatch: S0-01 proofs/S0-01/check_acp_conformance.py`, `... S0-02 proofs/S0-01/check_acp_conformance.py`,
+  `... S0-03 proofs/S0-01/check_acp_conformance.py`, `... S0-04 proofs/S0-04/check_compression.py`,
+  `... S0-05 proofs/S0-05/check_egress.py`.
+- The changed inputs per proof are round 4's: S0-01 S1C and BCR; S0-02 S1C; S0-03 S1C and C; S0-04 CC; S0-05 CE, both
+  fixtures and R. The dry run of every spec leg against its committed stdout hash is round 4's too: S0-01 to S0-03
+  identical, S0-04's positive stdout changed, S0-05's leg 1 exits 1 (F-11).
+
+### Static checks and host state
+
+- pyflakes over C, T3, CE and T: rc 0. `bash -n` R: rc 0, and R's 5 heredocs compile. U+2028 and U+2029: 0 in the five
+  files and in this report.
+- `scripts/ap_screen.py`, round 4's bytes against round 5's, whole files: C 1 = 1, T3 7 = 7 (`--tests` 6 = 6), R 16 =
+  16, CE 2 = 2, T 39 = 39. With `--tests`, T goes from 32 to 34: AP-66 on the two new movers,
+  T:4934 `_os.open = _open_after_a_bind_mount` and T:4993 `_os.open = _open_counting`. Each is program text the
+  handback's child runs (as round 4's two movers): false positives.
+- Host: before (22:34:51Z) and after every S0-05 run and at the end, `ip netns list` 0 lines, iptables stable form
+  `0528d077bca3781a`, mount-point hash `2dd93d06015feb4d` (27 mounts). No `/tmp/i59f-*` and no
+  `/tmp/s0-03-unreadable-*` is left; `/tmp/e3-5t328okv` and `/tmp/e3-nw8nn6mk` predate this round.
+- Disk: 11634 MB free at the end. My scratch stayed under 2 MB.
+- `scripts/report_lint.py` over the whole report (aliases C, T3, R, T, T4, W, NL, GW, CC, CE, TA, S1C, BCR, T1L; the
+  working tree): `report_lint: 398 refs — OK 393, NEAR 0, MISS 0, UNCHECKABLE 5, UNRESOLVED 0 (worktree)`.
+  The 5 are round 1's premise list of PIN grep lines.
+
+### Final sha256 prefixes (the bytes every round-5 gate ran on)
+
+Changed in round 5: 4721d03166294bb4 C, 6cae194d12743368 T3, af3badbb5c10f587 R, 6a4ca561aff32507 CE,
+c185c5f8c18eda3a T. Unchanged since round 4: 41014abdff4601cf S1C, 1557dc3010401225 BCR, 4784750397ef56ca T1L,
+09c45268d76dbfd1 CC, ffd707f874d74f28 T4, af1b9d92cbc1e4e7 `evidence-synthetic-pass/hermes-acp/unit-identity.json`,
+7b176e89a4892b85 `evidence-synthetic-uid0/hermes-acp/unit-identity.json`. Unchanged since round 2: 594fc5b0d0564392
+W, df54c0b7b883d2d1 NL, d0f1d1e6bbdc6411 GW. `git status --porcelain`: 14 ` M`, T1L and this report `??`.
+
+### Self-attack (round 5): the three likeliest ways this round is wrong
+
+1. **The budget lets a deep move through farther than R's comment says.** The bound comes from the arithmetic: a
+   whole-way check at depth d costs d, and after at most ceil(d / 32) climbs the earnings cover it. Ruled out by test:
+   the window test (200 levels) stops the walk inside that bound with the decoy untouched, and X-R5-F3-never and
+   X-R5-F3-shallow-only die on it. Left open, by design: the window itself, and moves between two climbs (R4-F6's
+   class; F-5 is out of scope).
+2. **The count measures the wrong cost.** Opens of ".." could stand in for a cost that hides elsewhere (fstat, statx).
+   Ruled out: each frame checked costs one fstat and, above the first, one open of "..", and statx runs only on a
+   mismatch; the clock agrees with the count (0.23 s, 0.46 s, 0.58 s against 35,642, 71,905 and 108,216 opens).
+3. **CE's new checks refuse the real re-capture.** The round-4 runner's records carry `groups` (`[]` under
+   `--clear-groups`: T's live leg pins it) and real ids, so they pass: the synthetic-pass fixture with `"groups": []`
+   and with `[1000, 65534]` passes. Left open: the PC's ids and groups (NOT run here: PC only).
+
+### Evidence tiers (round 5)
+
+- VERIFIED (run here, pasted above): the premise; the red and green runs; the 13 new mutant rows and round 4's 30 on
+  round 5's bytes, with their baselines; the timing and count table; the gates, twice each; TA's rows and the read
+  half; the expected reds, integrity and the per-proof changed inputs; the dry run of the spec legs; the static checks;
+  the host state.
+- INFERRED: the PC re-capture passes CE's new checks (the round-4 runner writes `groups` and real ids; not run here).
 - ASSUMED: nothing beyond the NOT-done list.
