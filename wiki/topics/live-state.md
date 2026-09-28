@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-28 15:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin 14b356c (the D-103 records, LS-DESIGN v2, the LS-B9 brief); its CI run is pending; the main tree is the primary.** The worktree `/home/user/i59-landing` hosts I59-F; its `.lanes-live` adds `proofs/S0-04/check_compression.py`, `tests/test_gpu_window.py` and the lane's report.
+- **RUNNING (sandbox, three lanes):** SCRUB2-R1 round 2 (task #321, main tree); I59-F round 3, D-R2-2 and D-R2-3 (task #335, worktree, the same agent resumed; round 2 folded A-1..A-4, 15 of 15 mutants killed); LS-B7, the task list as a view of the ledger (task #339, main tree; its hooks stay off while `.jev/task-sync-off` exists).
+- **NEXT:** LS-B9 when a slot frees; VERIFY-I59-F after round 3 (its draft is in the scratchpad), then the re-mint of S0-03, S0-04 and S0-05 and the owner's one re-sign; VERIFY-SCRUB2-R1 after round 2.
+- **WAITING ON THE OWNER:** the request transport (LS-DESIGN v2 §3); the 11 GB under `/home/user/scratch`; whether S0-01 joins the re-mint for task #344 (its checker's quadratic manifest parse).
+
 **2026-09-28 15:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin d4f7397 (CI #1112 passed), plus local doc commits; the main tree is the primary.** The worktree `/home/user/i59-landing` hosts I59-F round 2; its `.lanes-live` adds `proofs/S0-04/check_compression.py`, `tests/test_gpu_window.py` and the lane's report.
 - **RUNNING (sandbox, three lanes):** SCRUB2-R1 round 2 (task #321, main tree); I59-F round 2, the fold of A-1..A-4 (task #335, worktree, the same agent resumed); LS-B7, the task list as a view of the ledger (task #339, main tree, dispatched with the D-103 commit; its hooks stay off while `.jev/task-sync-off` exists).
