@@ -11,6 +11,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-28 18:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin c4b87d1 (CI run #1116 passed), plus local commits; the main tree is the primary.**
+- **RUNNING (sandbox, three lanes):** I59-F round 4 (task #335 + #344: VERIFY-I59-F's follow-ups and the S0-01 parse fix, worktree `/home/user/i59-landing`); VERIFY-LS-B7 (task #339); LS-B9 round 2 (task #339: ripwire in `gate`, a `review` stack with sentrux and ripwire, D-104 (1)).
+- **HOME:** VERIFY-I59-F (MERGE-READY-WITH-FOLLOWUPS); SCRUB2-R1 round 2 (task #321, report of record saved; its five files still in the main tree, declared in `.lanes-live`).
+- **NEXT, as slots free:** VERIFY-SCRUB2-R1-R2; VERIFY-LS-B9 after its round 2; after I59-F round 4, its verify, then ONE re-mint of S0-01, S0-03, S0-04 and S0-05 and the owner's one signature (D-104 (3)).
+- **OWNER RULED (D-104):** ripwire and sentrux active in the stacks; the 11 GB of 2026-09-15 mutation copies go to the PC, verified, then deleted here (in progress); one re-mint with S0-01. Still open: the chat form (the command form stands).
+
 **2026-09-28 18:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin c4b87d1 (its CI run #1116 pending), plus local commits; the main tree is the primary.**
 - **RUNNING (sandbox, three lanes):** SCRUB2-R1 round 2 (task #321, main tree); VERIFY-I59-F (task #335, a partial copy under `/tmp/vf-wt`); VERIFY-LS-B7 (task #339, a small copy under `/tmp/vlsb7`).

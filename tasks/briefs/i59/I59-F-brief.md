@@ -202,3 +202,38 @@ Round 3 stopped item 1 (D-R2-2) on a boundary conflict: CC has no mode set of it
 > Gates as before: every test that names CC or T4, twice each, with set ids. Also run the S0-04 and S0-05 rows of TA's drift guard, to show S0-04 reads no new repo file.
 >
 > Append your results to the round-3 section under a subheading "Item 1, route B", with the final sha256 prefixes. Return that subsection as your hand-back message.
+
+## ROUND 4 (the verify fold and task #344): the message sent to the resumed lane, 2026-09-28 18:1xZ (18:13:31Z), verbatim
+
+VERIFY-I59-F graded rounds 1-3 MERGE-READY-WITH-FOLLOWUPS (`tasks/briefs/i59/VERIFY-I59-F-report.md`); the owner ruled one re-mint with S0-01 (D-104 (3)).
+
+> I59-F round 4 (task #335, plus task #344): fold VERIFY-I59-F's findings and the S0-01 parse fix before the one re-mint. The owner ruled "just do the fix first and then re-mint everything at once", so this is the last build round before the re-mint of S0-01, S0-03, S0-04 and S0-05.
+>
+> VERIFY-I59-F graded your patch MERGE-READY-WITH-FOLLOWUPS. Its report of record is /home/user/agent-factory/tasks/briefs/i59/VERIFY-I59-F-report.md; read its findings F-1 to F-16 (lines 384-481) first. Nothing changed inside your boundary while you were idle. Same rules as before: no git writes, no PC bridge, no subagents, no outward action; no stub, fake or shortcut; fake values are built at run time.
+>
+> Boundary (the worktree's .lanes-live, updated). Your nine files, plus:
+> - proofs/S0-05/check_egress.py (CE);
+> - the two synthetic fixtures proofs/S0-05/fixtures/evidence-synthetic-pass/ and evidence-synthetic-uid0/;
+> - proofs/S0-01/check_acp_conformance.py and proofs/S0-01/tools/build_capture_record.py;
+> - a NEW test file tests/test_s0_01_manifest_parse_linear.py (do not edit tests/test_s0_01_check_acp_conformance.py; it is 6,641 lines).
+> Each item below needs a red before the fix on the current bytes, a green after, and a named mutant its test kills.
+>
+> 1. F-1: route B's known set is the wrong vocabulary. S0-04 observes the provider block's Hermes `transport` (capture_leg.py:121; `openai_chat` in the committed real evidence). Widen CC's known set to the Hermes provider transport names as well as S0-03's two api_modes. Take each name from a pinned source in the repo, as data: at least proofs/S0-03/hermes/config.yaml and the committed real S0-04 evidence. Cite each source file:line in the comment. Pin the set with a T4 test that reads those sources as data. The real bundle must then print `openai_chat` by name: pin that line against proofs/S0-04/evidence. An unknown value still prints only its shape.
+> 2. F-2: a provider block that is not a JSON object fails with `provider block is not a JSON object` and prints nothing of it. Add T4 rows for an array and a string.
+> 3. F-3 and F-8 (tests): add the asymmetric rows to T's BAD_UNIT_USERS (4294967296:65534, 65534:4294967296, 4294967295:65534, 65534:4294967295, 0:65534, 65534:0), and a non-string row to T3's PROFILE_VALUE_PATHS and T4's CONFIG_VALUE_PATHS. The verifier's surviving mutants N1 to N5 must then die.
+> 4. F-4 and F-12 (R's walk): every climb checks that the walk is still inside the root (compare with the root's device and inode), and the walk stops loudly when it is not. Correct the comment "It changes nothing outside the root" to state what holds. Word the stop line apart for "moved" and "a mount appeared on a parent".
+> 5. F-7 (R's launch and A7): launch units with an explicit group list, so no supplementary group is inherited (for example `--clear-groups`, or `--groups=<gid>`; verify what setpriv supports here). A7 also records the Groups line and refuses a 0 in it. Update the record's readers as in round 3.
+> 6. F-11 (CE): grade the gid. A unit-identity record without a gid key, or with a 0 in it, fails CE with an exact reason. Add the gid key to both synthetic fixtures (uid0 keeps its uid 0). The committed real evidence will fail CE until the PC re-capture at the re-mint, which records the gid through round 3's A7. Name that red as expected, with its one cause.
+> 7. F-9 (C): an unhashable api_mode and a recursive alias end in a failure_reason line, never a traceback. A read error is named as a read error, not "not valid YAML".
+> 8. F-10 (CC): the observation text says task #35 was decided by D-021 on 2026-09-08. Drop "open decision" and "ADR 0002 deviation". Update T4's pin.
+> 9. F-13 and F-14 (R): id patterns use explicit character lists (`[123456789][0123456789]…`), as netns_lib.sh's rule X1 does. The refusal quotes the value with printf %q.
+> 10. F-6: `_shape`'s docstring in C and CC says it protects high-entropy values, not short guessable ones.
+> 11. Task #344 (S0-01): `_parse_manifest_body` (check_acp_conformance.py:1066) and tools/build_capture_record.py:44 build each digest by `+=` on a dict value, which is quadratic. Collect each section's lines in a list and join once. The output must be byte-identical: check on every committed golden manifest that the digests equal the old code's, with the old code run from a scratch copy. The new test file proves linear time: a 200,000-line manifest parses under a wall bound the old code misses, with the old code as the red. Also report tests/test_s0_01_check_acp_conformance.py's wall time before and after, run alone with a private --basetemp.
+>
+> Out of scope: F-5 (a unit that leaves its namespace survives the teardown; pre-existing, no egress) becomes a follow-up issue, and F-15 and F-16 are notes.
+>
+> Gates: every test that names each changed file, twice each, pasted with set ids, and TA's drift guard rows for S0-01, S0-04 and S0-05. The expected reds are the attestation mismatches: now S0-01, S0-03, S0-04 and S0-05. Name any other red and its cause.
+>
+> Disk: about 1.3 GB free. Keep scratch small and deleted, and use a private --basetemp outside any work tree.
+>
+> Report: append "## Round 4 (the verify fold and task #344)" to tasks/briefs/i59/I59-F-report.md, in the same form as before, with the final sha256 prefixes of every changed file. Return that section as your hand-back message.
