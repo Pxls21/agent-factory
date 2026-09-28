@@ -11,6 +11,15 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-28 22:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin a430de7 (CI run #1123 running), plus local commits; the main tree is the primary.**
+- **RUNNING (sandbox, three lanes):** SCRUB2-R1 round 3 (task #321); TRIM-AUDIT (task #346, D-105); VERIFY-LS-B9 round 3 (task #339).
+- **HOME:** VERIFY-I59-F round 4 (MERGE-READY-WITH-FOLLOWUPS; the re-mint set is S0-01 to S0-05; never run `proof-runner` for S0-05 before the PC re-capture is committed).
+- **BRIEFED, WAITING FOR A SLOT:** I59-F round 5 (`tasks/briefs/i59/I59-F-R5-brief.md`: R4-F1, R4-F3, R4-F4, R4-F5).
+- **LIVE (D-102):** the task list is a view of the ledger.
+- **NEXT:** I59-F round 5 at the next free slot, then its verify, then the landing: the patch applied, S0-01 to S0-04 re-minted, the S0-05 PC re-capture with the round-5 runner, `LIVE_OUTPUT` re-pinned, S0-05 re-minted, and the owner's one signature; after VERIFY-LS-B9 round 3, land and wire the stacks; after SCRUB2-R1 round 3, its verifier resumed; TRIM-AUDIT's evidence into the D-105 design.
+- **WAITING ON THE OWNER:** only the chat form of LS-DESIGN v2 §3 (the command form stands).
+
 **2026-09-28 21:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin a430de7 (CI run #1123 running); the main tree is the primary.**
 - **RUNNING (sandbox, three lanes):** VERIFY-I59-F round 4 (tasks #335 and #344); SCRUB2-R1 round 3 (task #321); TRIM-AUDIT (task #346, D-105).
