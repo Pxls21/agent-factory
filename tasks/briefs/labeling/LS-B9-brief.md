@@ -87,7 +87,11 @@ command, every instrument, `unmapped — <tool> unavailable` when one is absent)
    - `scripts/gate_files.py PATH…`: prints, sorted and unique, one per line, every file under `tests/` named
      `test_*.py` and every file under `harness-ports/tests/` (tracked or untracked, never `__pycache__`, text files
      only) whose text contains a given path string, plus each given path that is itself such a file. It is the
-     project rule "a changed file's gate includes every test that names its path" as a script.
+     project rule "a changed file's gate includes every test that names its path" as a script. With `--why` it prints
+     instead one line per file: the file, the kind of each mention (`code`, or `comment` for a `#` line or a
+     docstring line) and their line numbers. A comment-only mention still counts; the table lets the coordinator see
+     it before paying for the file (2026-09-28: a test file that names the incident log only in two comments ran over
+     19 minutes in a docs gate).
    - `scripts/handback_extract.py --transcript PATH --out FILE`: streams the subagent JSONL, never whole; writes the
      `message` of the last `SubagentHandback` tool_use to FILE with control tags neutralized (`<` becomes `<\` before
      `system-reminder`, `function_calls`, `invoke`, `parameter` and `antml:` tags); prints `handback: found|absent`,
@@ -100,7 +104,7 @@ command, every instrument, `unmapped — <tool> unavailable` when one is absent)
    | Label | Parameters | Steps (group: step = argv) |
    |---|---|---|
    | `harvest` | `agent` (agent, required), `report` (path) | 1: `models` = `python3 scripts/hiccup_scan.py --transcript {transcript} --out {run}/hiccup.md`; `handback` = `python3 scripts/handback_extract.py --transcript {transcript} --out {run}/handback.md`. 2: `agent_row` = `grep -F "\| {agent} \|" {run}/hiccup.md`; `lint` = `python3 scripts/report_lint.py --root {tree} {report}` when report is set, else on `{run}/handback.md`; `sha` = `sha256sum {report}` when set |
-   | `gate` | `paths` (paths, required), `mode` (choice plan/run, default plan), `runs` (choice 1/2, default 2) | 1: `tests` = `python3 scripts/gate_files.py {paths*}`. 2: `setid` = `bash scripts/pc_suite.sh set-id -- {@tests*}`. 3: `run` = `bash scripts/test_summary.sh {@tests*}`, when mode=run, repeat `{runs}`, timeout 1800 |
+   | `gate` | `paths` (paths, required), `mode` (choice plan/run, default plan), `runs` (choice 1/2, default 2) | 1: `tests` = `python3 scripts/gate_files.py {paths*}`; `why` = `python3 scripts/gate_files.py --why {paths*}`. 2: `setid` = `bash scripts/pc_suite.sh set-id -- {@tests*}`. 3: `run` = `bash scripts/test_summary.sh --basetemp={run}/bt {@tests*}`, when mode=run, repeat `{runs}`, timeout 1800 (a private basetemp: concurrent pytest runs share `/tmp/pytest-of-root`, which keeps only the last three sessions). 4: `clean` = `rm -rf -- {run}/bt`, when mode=run, required false |
    | `ctx` | `files` (paths, required), `q` (text), `sym` (symbols) | 1: `pack` = `bash scripts/lane_context.sh {q?:-q} {sym*:-s} -o {run}/ctx.md {files*}` (print the pack, capped; verify how the script writes it) |
    | `impact` | `sym` (symbol, required) | 1, in parallel: `gitnexus` = `node .gitnexus/run.cjs impact {sym} --direction upstream --repo .` (timeout 120); `crg_callers` = `code-review-graph query callers_of {sym}`; `crg_tests` = `code-review-graph query tests_for {sym}`; `ripwire` = `bash scripts/ripwire_review.sh edit-check {sym}` |
    | `find` | `q` (text, required), `words` (words, split_from q) | 1, in parallel: `graft` = `graft ask {q}`; `rulings` = `python3 scripts/owner_rulings.py {words*}`; `chat` = `python3 scripts/chat_find.py {q} --hits 5`; `registry` = the AF-AP registry rows (lines starting `\| AF-AP-`) in `docs/INCIDENT-LOG.md` that contain any of the words, case-insensitive (git grep's `--and` grouping; verify) |
