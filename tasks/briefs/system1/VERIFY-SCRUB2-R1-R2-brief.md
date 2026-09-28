@@ -77,7 +77,7 @@ are yours to read and run in your copy.
 
 ```
 $ git rev-parse --short HEAD
-fc4d1a1
+54877b9
 $ git status --porcelain -- scripts/transcript_export.py scripts/session_export.py tests/test_transcript_export.py tests/test_session_export.py docs/research/findings/laya-ft-labels/2026-09-25-recorded/dataset-manifest.json
  M docs/research/findings/laya-ft-labels/2026-09-25-recorded/dataset-manifest.json
  M scripts/session_export.py
@@ -116,5 +116,7 @@ $ ls -la /tmp/claude-0/-home-user/bdab799a-dc80-5933-9c9e-c80f206f9a17/scratchpa
 $ df -m / | tail -1
 /dev/vda          258020 36639      1300  97% /
 ```
+
+Coordinator note (19:1xZ): the `git rev-parse` line above read the local id before `push_clean.sh` rewrote the unpushed range (trailers only, the same tree); it shows the commit's id on origin, 54877b9, the D-105 commit (stale_ids).
 
 The builder's floor, quoted from its report (your item 5 re-runs it): `12 files set=27f27a25516b`: `855 passed` twice.
