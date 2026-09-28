@@ -11,6 +11,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-28 18:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin c4b87d1 (its CI run #1116 pending), plus local commits; the main tree is the primary.**
+- **RUNNING (sandbox, three lanes):** SCRUB2-R1 round 2 (task #321, main tree); VERIFY-I59-F (task #335, a partial copy under `/tmp/vf-wt`); VERIFY-LS-B7 (task #339, a small copy under `/tmp/vlsb7`).
+- **HOME, NOT LANDED:** LS-B9, the stack runner (`scripts/stack.py`, `scripts/stacks.toml`, two helpers, `tests/test_stack.py`; untracked in the main tree): all eight stacks ran for real, and `python3 scripts/stack.py harvest agent=<id>` extracted LS-B9's own report in one call. Its round 2 (a temp dir outside the work tree for the gate stack, a cap on saved output, ratings for content stacks only) waits for a free slot, then its verify. LS-B7 as before (off until its verify).
+- **NEXT, as slots free:** LS-B9 round 2; then VERIFY-LS-B9; the I59-F landing and re-mint after its verify.
+- **WAITING ON THE OWNER:** the request transport (LS-DESIGN v2 §3); the 11 GB under `/home/user/scratch` (about 1.33 GB free now); whether S0-01 joins the re-mint for task #344.
+
 **2026-09-28 17:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin a1a639b (CI run #1114 on c9889ee passed; this push's run pending); the main tree is the primary.**
 - **RUNNING (sandbox, three lanes):** SCRUB2-R1 round 2 (task #321, main tree); LS-B9, the stack runner and eight stacks (task #339, main tree); VERIFY-I59-F (task #335) on the patch of record `tasks/briefs/i59/I59-F.patch` (rounds 1-3 and route B: 51 of 51 mutants killed by the builder), in a partial copy under `/tmp/vf-wt`.
