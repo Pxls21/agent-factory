@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-28 15:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin d4f7397 (CI #1112 passed), plus local doc commits; the main tree is the primary.** The worktree `/home/user/i59-landing` hosts I59-F round 2; its `.lanes-live` adds `proofs/S0-04/check_compression.py`, `tests/test_gpu_window.py` and the lane's report.
+- **RUNNING (sandbox, three lanes):** SCRUB2-R1 round 2 (task #321, main tree); I59-F round 2, the fold of A-1..A-4 (task #335, worktree, the same agent resumed); LS-B7, the task list as a view of the ledger (task #339, main tree, dispatched with the D-103 commit; its hooks stay off while `.jev/task-sync-off` exists).
+- **NEXT:** LS-B9 (the stack runner and eight stacks, D-103: `tasks/briefs/labeling/LS-B9-brief.md`) when a slot frees; VERIFY-I59-F after round 2, then the re-mint of S0-03, S0-04 and S0-05 and the owner's one re-sign; VERIFY-SCRUB2-R1 after round 2.
+- **WAITING ON THE OWNER:** the request transport (a tool call now, recommended; the chat form only on their word: LS-DESIGN v2 §3); the 11 GB of 2026-09-15 mutation copies under `/home/user/scratch` (the classifier refused the delete; about 1.6 GB free).
+
 **2026-09-28 14:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin d4f7397; the main tree is the primary again.** With the owner's authorization (D-102) the main tree was reset to origin and fast-forwarded; the SCRUB2-R1 lane's five files were byte-identical before and after. The worktree `/home/user/i59-landing` now only hosts the I59-F lane (its seven files in that tree's `.lanes-live`).
 - **RUNNING (sandbox, three lanes):** SCRUB2-R1 round 2 (task #321, main tree); I59-F (task #335, worktree); LS-PREMORTEM (task #339, read-only).

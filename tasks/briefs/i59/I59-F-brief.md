@@ -161,3 +161,24 @@ coordinator folded A-1 to A-4 into this lane before the verify round, so the own
 > Disk: the container has about 1.6 GB free, and lane_gate.sh refuses below 1,500 MB. Make no large copies. Delete any tree copy a red run leaves behind (about 218 MB each) once you have read its log. If the floor stops a gate, stop and report it; do not work around it.
 >
 > Report: append a section "## Round 2 (the fold of A-1..A-4)" to tasks/briefs/i59/I59-F-report.md, in the same form as round 1: per item, gates twice, the mutation table, static checks, host state, final sha256 prefixes of every file you changed, discrepancies, NOT-done. Return that section as your hand-back message. If the report-file write is refused, the hand-back message is the report of record.
+
+## ROUND 3 (D-R2-2 and D-R2-3): the message sent to the resumed lane, 2026-09-28 15:5xZ (15:51:20Z), verbatim
+
+Round 2 (appended to the lane's report) folded A-1 to A-4 with 15 of 15 mutants killed. Two of its discrepancies were
+folded before the verify round; this is the last pre-verify round.
+
+> I59-F round 3 (task #335): two small folds from your round-2 discrepancies, then the verify round. This is the last pre-verify round.
+>
+> What changed while you ran: nothing inside your boundary. Round 2 is accepted as reported. Same boundary and rules as round 2.
+>
+> 1. D-R2-2 (S0-04's api_mode observation). The mode name is an enum the owner reads, not a secret (task #35, decided 2026-09-08: chat_completions is the live transport). The observation prints the name when it is one of the known modes, and the shape otherwise. Take the known set from the checkers' own permitted set, not from a new list: C's transport set, or CC's own if it has one; say which you used. Failure messages keep printing the shape. Tests: a known mode prints its name (pin the exact line); an unknown fake value built at run time prints only its shape, with no case-folded 4-character run of it in stdout or stderr. Name a mutant for each.
+> 2. D-R2-3 (VERIFY-E3 F11, both halves).
+>    - A unit identity resolved from the default (a pinned agent owned by <uid>:0) is refused with gid 0, as an explicit one is: exit 64, before anything is written and before any unit launches.
+>    - A7 records the unit's Gid line beside its Uid line and compares it numerically with the wanted gid.
+>    - Tests through the real runner: the <uid>:0 default is refused; the A7 record carries the gid; the positive control proceeds with 65534:65534.
+>    - Keep the committed evidence's shape readable by the validators: find every reader of unit-identity.json (grep) and state that each still reads the new record. If one would break, stop and report instead.
+>    - Name a mutant for each half.
+>
+> Gates as in round 2: every test that names a changed file, twice each, summary lines pasted with their set ids. The expected reds stay the same three: S0-03, S0-04 and S0-05 attestation mismatches.
+>
+> Report: append "## Round 3 (D-R2-2 and D-R2-3)" to tasks/briefs/i59/I59-F-report.md, in the same form, with the final sha256 prefixes of every file you changed. Return that section as your hand-back message.
