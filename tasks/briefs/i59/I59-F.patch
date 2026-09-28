@@ -1,0 +1,1525 @@
+diff --git a/.github/workflows/stage0-ci.yml b/.github/workflows/stage0-ci.yml
+index 2890156..d79e1a2 100644
+--- a/.github/workflows/stage0-ci.yml
++++ b/.github/workflows/stage0-ci.yml
+@@ -43,7 +43,7 @@ jobs:
+       - name: Run tests
+         env:
+           S0_01_VENUE: ci   # the S0-01 real-leg corpus is a DECLARED input: CI declares itself and skips the real-producer tests by declaration (VERIFY-CK11 F13/F16)
+-        run: python -m pytest tests/ -q -rs   # -rs: every skip prints its reason (FU-4, VERIFY-I59-A)
++        run: python -m pytest tests/ -q -rfEs   # -rfEs: every failure, error and skip prints its line (FU-4, VERIFY-I59-A; F2, VERIFY-I59-LANDING)
+       - name: Lint scripts
+         run: python -m pyflakes scripts/validate-ledger scripts/proof-runner
+       - name: Lint proofs and tests
+diff --git a/proofs/S0-03/check_omniroute_roundtrip.py b/proofs/S0-03/check_omniroute_roundtrip.py
+index fcd0126..f950979 100644
+--- a/proofs/S0-03/check_omniroute_roundtrip.py
++++ b/proofs/S0-03/check_omniroute_roundtrip.py
+@@ -88,6 +88,7 @@ Usage: check_omniroute_roundtrip.py --route-id ID --expected-model-id ID
+ from __future__ import annotations
+ 
+ import datetime as _dt
++import hashlib
+ import importlib.util
+ import json
+ import re
+@@ -145,7 +146,7 @@ REASONS = {
+     "identity_status": "identity: {} leg row status {!r}, expected 200",
+     "identity_no_hermes_rows": "identity: 0 call_logs rows for the hermes leg's session_tag — unattributable",
+     "roundtrip": "roundtrip: {}",
+-    "transport": "transport: profile api_mode {!r} is not in the permitted set",
++    "transport": "transport: profile api_mode ({}) is not in the permitted set",   # `_shape` of the value
+     "transport_method": "transport: {} leg row method {!r}, expected 'POST'",
+     "transport_path": "transport: {} leg row path {!r} is not a permitted transport path",
+     "env_provider_key": "env: upstream provider key {} present in the Hermes environ",
+@@ -233,6 +234,18 @@ def _fail(key: str, *args):
+     raise Failure(_reason(key, *args))
+ 
+ 
++def _shape(value) -> str:
++    """How a failure message names a value read from the profile: its type, its length (a non-string's repr) and the
++    first 8 hex digits of its sha256, never the value (I59-F, VERIFY-I59-BCE E-1). A profile can hold a key where a
++    name belongs (`key_env: <the key>`), and a key with no `sk-`, `bearer ` or `basic ` prefix passes the credential
++    walk; the shape still lets the operator match the value they hold."""
++    if value is None:
++        return "absent"
++    text = value if isinstance(value, str) else repr(value)
++    digest = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()[:8]
++    return f"{type(value).__name__}, {len(text)} characters, sha256 {digest}"
++
++
+ # --- bounded, typed reads ---------------------------------------------------------------------
+ def _require_file(path: Path, name: str) -> Path:
+     """Reject a non-regular file (FIFO, directory, socket, device) with a named reason BEFORE any
+@@ -786,7 +799,7 @@ def check_transport(profile):
+     if api_mode is None:
+         api_mode = block.get("api_mode")
+     if api_mode not in PERMITTED_API_MODES:
+-        _fail("transport", api_mode)
++        _fail("transport", _shape(api_mode))
+ 
+     headers = block.get("extra_headers")
+     if not isinstance(headers, dict):
+@@ -797,7 +810,7 @@ def check_transport(profile):
+             value = val
+     if not isinstance(value, str) or value.strip().lower() != COMPRESSION_OFF:
+         raise Failure(
+-            f"bundle: profile.yaml {COMPRESSION_REQUEST_HEADER} is {value!r}, expected 'off'"
++            f"bundle: profile.yaml {COMPRESSION_REQUEST_HEADER} ({_shape(value)}) is not 'off'"
+         )
+ 
+     # The launched profile must never carry a key VALUE. Only the exact provider-level env NAME
+@@ -805,7 +818,7 @@ def check_transport(profile):
+     _walk_credentials(block, f"providers.{provider_name}")
+     if block.get("key_env") != "OMNIROUTE_API_KEY":
+         raise Failure(
+-            f"bundle: profile.yaml key_env is {block.get('key_env')!r}, expected 'OMNIROUTE_API_KEY'"
++            f"bundle: profile.yaml key_env ({_shape(block.get('key_env'))}) is not 'OMNIROUTE_API_KEY'"
+         )
+ 
+ 
+diff --git a/proofs/S0-04/check_compression.py b/proofs/S0-04/check_compression.py
+index 8eadc28..af0a572 100644
+--- a/proofs/S0-04/check_compression.py
++++ b/proofs/S0-04/check_compression.py
+@@ -46,6 +46,7 @@ Usage: check_compression.py [--fixtures-dir <dir>] <evidence-root>
+ from __future__ import annotations
+ 
+ import base64
++import hashlib
+ import json
+ import re
+ import stat as _stat
+@@ -69,6 +70,11 @@ COMPRESSION_SOURCE = "request-header"
+ OMNIROUTE_PORT = 20128                           # PC-BRIDGE.md:153-163
+ OMNIROUTE_BASE_SUFFIX = f":{OMNIROUTE_PORT}/v1"
+ KEY_ENV_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
++# The api_mode names the observation prints as they are (I59-F round 3, route B): a mode name is an enum the owner
++# reads, not a secret; any other value prints by its shape. A COPY of S0-03's PERMITTED_API_MODES
++# (proofs/S0-03/check_omniroute_roundtrip.py), kept here so S0-04 reads no file of S0-03 while it grades and its
++# attestation stays its own; tests/test_s0_04_compression.py pins the copy equal to S0-03's set.
++KNOWN_API_MODES = frozenset({"chat_completions", "codex_responses"})
+ FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
+ MAX_EVIDENCE_FILE = 8 * 1024 * 1024
+ 
+@@ -122,6 +128,17 @@ def _short(value, limit: int = 60) -> str:
+     return s if len(s) <= limit else s[:limit] + "...(truncated)"
+ 
+ 
++def _shape(value) -> str:
++    """How a message names a value of the captured provider block: its type, its length (a non-string's repr) and
++    the first 8 hex digits of its sha256, never the value (I59-F round 2, A-2; the format of S0-03's `_shape`).
++    `_short` printed the value itself, cut at 60 characters, so `key_env: <a key>` printed the key whole."""
++    if value is None:
++        return "absent"
++    text = value if isinstance(value, str) else repr(value)
++    digest = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()[:8]
++    return f"{type(value).__name__}, {len(text)} characters, sha256 {digest}"
++
++
+ def _canon(obj) -> bytes:
+     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+ 
+@@ -335,21 +352,22 @@ def check_config_leg(leg_dir: Path, observations: list) -> None:
+     if len(hits) > 1:
+         raise Failure(f"{CONFIG_LEG}: config-header-duplicated: {len(hits)} keys")
+     if hits[0][1] != COMPRESSION_VALUE:
+-        raise Failure(f"{CONFIG_LEG}: config-header-value: {_short(hits[0][1])}")
++        raise Failure(f"{CONFIG_LEG}: config-header-value: {_shape(hits[0][1])}")
+     base_url = provider.get("base_url")
+     if not isinstance(base_url, str) or not base_url.endswith(OMNIROUTE_BASE_SUFFIX):
+-        raise Failure(f"{CONFIG_LEG}: base-url-unexpected: {_short(base_url)}")
++        raise Failure(f"{CONFIG_LEG}: base-url-unexpected: {_shape(base_url)}")
+     key_env = provider.get("key_env")
+     if not isinstance(key_env, str) or not KEY_ENV_RE.match(key_env):
+-        raise Failure(f"{CONFIG_LEG}: key-env-not-a-name: {_short(key_env)}")
++        raise Failure(f"{CONFIG_LEG}: key-env-not-a-name: {_shape(key_env)}")
+     api_mode = provider.get("api_mode")
+     if not isinstance(api_mode, str) or not api_mode:
+         raise Failure(f"{CONFIG_LEG}: api-mode-absent")
+     # RECORDED, never asserted: docs/03 §2 pins `codex_responses` and the live profiles use
+     # `chat_completions` (docs/OMNIROUTE-HERMES-FEDORA-HANDOFF.md:17). That deviation is the
+     # owner's open decision (task #35); this proof reports it, it does not resolve it.
++    # A known mode prints by its name, any other value by its shape (KNOWN_API_MODES); the failures above print shapes.
+     observations.append(
+-        f"observation: {CONFIG_LEG} api_mode = {_short(api_mode)} "
++        f"observation: {CONFIG_LEG} api_mode = {api_mode if api_mode in KNOWN_API_MODES else _shape(api_mode)} "
+         f"(RECORDED, not asserted - ADR 0002 deviation, owner task #35)")
+ 
+ 
+diff --git a/proofs/S0-05/tools/pc/run_s0_05_units.sh b/proofs/S0-05/tools/pc/run_s0_05_units.sh
+index 0f310d7..1920ffe 100755
+--- a/proofs/S0-05/tools/pc/run_s0_05_units.sh
++++ b/proofs/S0-05/tools/pc/run_s0_05_units.sh
+@@ -96,8 +96,22 @@ EVIDENCE_ROOT=${1:?usage: run_s0_05_units.sh <evidence-root> [unit...]}; shift |
+ # (a root that does not exist yet is read through its nearest existing ancestor). Not `git rev-parse`:
+ # run as root on a clone another user owns, git refuses with `detected dubious ownership` (exit 128),
+ # and a check that reads that failure as "not a work tree" fails open in exactly the sudo case.
+-EVIDENCE_REAL=$(readlink -m -- "$EVIDENCE_ROOT") && [ -n "$EVIDENCE_REAL" ] \
++# I59-F (VERIFY-I59-BCE B-1): a root that holds a newline, as given or as resolved, is refused too (exit 73).
++# Command substitution drops trailing newlines, so the walk below read a clone named `nlrepo<newline>` as
++# `nlrepo` and never looked at its `.git`. The resolved path is read with a sentinel (`printf x`), so a newline
++# at its end survives to be refused, and `$(dirname …)` below never meets one.
++case $EVIDENCE_ROOT in *$'\n'*)
++  echo "run_s0_05_units: evidence root refused: $(printf '%q' "$EVIDENCE_ROOT") holds a newline" \
++       "(AF-AP-169: the work-tree check cannot read such a path exactly)" >&2; exit 73;;
++esac
++_real=$(readlink -m -- "$EVIDENCE_ROOT" && printf x) && [[ $_real == *$'\nx' ]] && EVIDENCE_REAL=${_real%$'\nx'} \
++  && [ -n "$EVIDENCE_REAL" ] \
+   || { echo "run_s0_05_units: evidence root refused: cannot resolve '$EVIDENCE_ROOT'" >&2; exit 73; }
++case $EVIDENCE_REAL in *$'\n'*)
++  echo "run_s0_05_units: evidence root refused: $(printf '%q' "$EVIDENCE_ROOT") resolves to" \
++       "$(printf '%q' "$EVIDENCE_REAL"), which holds a newline (AF-AP-169: the work-tree check cannot read such" \
++       "a path exactly)" >&2; exit 73;;
++esac
+ _dir=$EVIDENCE_REAL
+ while :; do
+   if [ -e "$_dir/.git" ] || [ -L "$_dir/.git" ]; then
+@@ -118,6 +132,12 @@ if [ "$EUID" -eq 0 ] && [ -n "${SUDO_UID:-}" ]; then
+   if ! [[ "$SUDO_UID:${SUDO_GID:-}" =~ ^(0|[1-9][0-9]{0,9}):(0|[1-9][0-9]{0,9})$ ]]; then
+     echo "run_s0_05_units: SUDO_UID and SUDO_GID must be decimal ids, got '$SUDO_UID:${SUDO_GID:-}'" >&2; exit 64
+   fi
++  # I59-F (VERIFY-I59-BCE B-4): each at most 4294967294. uid_t and gid_t are 32 bits, (uid_t)-1 = 4294967295
++  # means "no change" to chown, and a larger id reached libc cut to 32 bits (4294967296 became root). The
++  # pattern above allows ten digits at most, so this comparison stays inside bash's 64-bit arithmetic.
++  if [ "$SUDO_UID" -gt 4294967294 ] || [ "$SUDO_GID" -gt 4294967294 ]; then
++    echo "run_s0_05_units: SUDO_UID and SUDO_GID must be at most 4294967294, got '$SUDO_UID:$SUDO_GID'" >&2; exit 64
++  fi
+   if [ -e "$EVIDENCE_REAL" ] || [ -L "$EVIDENCE_REAL" ]; then
+     echo "run_s0_05_units: evidence root refused: $EVIDENCE_REAL exists; under sudo it must be a new path" \
+          "(everything under it goes to uid $SUDO_UID at exit)" >&2
+@@ -141,6 +161,25 @@ RELAY_PROBE_PATH=/health
+ UNIT_USER=${S0_05_UNIT_USER:-}
+ PAIR_IDENTITY=${S0_05_PAIR_IDENTITY:-}
+ PIN_OVERRIDE=${S0_05_PIN_OVERRIDE:-}
++# I59-F round 2 (A-4): a pair identity path that holds a newline, as given or as resolved, is refused (exit 73)
++# before anything is written, as the evidence root is (B-1). `_pair_identity`'s `$(readlink -m …)` dropped a trailing
++# newline: a regular identity file named `.secrets<newline>`, beside S0-01's `.secrets` and not under it, was refused
++# as `S0-01 path <base>/.secrets`, a path it does not have. The resolved path is read with a sentinel, so its
++# trailing newline survives to be refused; a path readlink cannot resolve is left to `_pair_identity`, as before.
++if [ -n "$PAIR_IDENTITY" ]; then
++  case $PAIR_IDENTITY in *$'\n'*)
++    echo "run_s0_05_units: S0_05_PAIR_IDENTITY refused: $(printf '%q' "$PAIR_IDENTITY") holds a newline (the" \
++         "identity checks cannot read such a path exactly)" >&2; exit 73;;
++  esac
++  if _id_real=$(readlink -m -- "$PAIR_IDENTITY" && printf x) && [[ $_id_real == *$'\nx' ]]; then
++    _id_real=${_id_real%$'\nx'}
++    case $_id_real in *$'\n'*)
++      echo "run_s0_05_units: S0_05_PAIR_IDENTITY refused: $(printf '%q' "$PAIR_IDENTITY") resolves to" \
++           "$(printf '%q' "$_id_real"), which holds a newline (the identity checks cannot read such a path exactly)" >&2
++      exit 73;;
++    esac
++  fi
++fi
+ if [ -n "${ALLOWED_HERMES:-}${ALLOWED_BUZZACP:-}${S0_01_TOOLS:-}" ]; then
+   echo "run_s0_05_units: ALLOWED_HERMES, ALLOWED_BUZZACP and S0_01_TOOLS are retired (A8: allow" \
+        "entries are formed from the namespace's host address and a port; A1: no S0-01 tool); ignored" >&2
+@@ -215,10 +254,30 @@ if [ -n "${PIN[OVERRIDE]}" ]; then
+ fi
+ 
+ # --- A4: the unit user, resolved ONCE ----------------------------------------------------------
++# I59-F round 2 (A-1): an explicit S0_05_UNIT_USER is <uid>:<gid> in canonical decimal (no sign, no leading zero, no
++# empty part), each id from 1 to 4294967294, or the run stops here with exit 64: before anything is written and
++# before any unit launches. setpriv cut --reuid=4294967296 to 0, and the stand-in ran as root until A7 refused the
++# leg after the launch; it takes 4294967295 as "no change", which leaves root in place; 0 is root, and a gid of 0 is
++# the root group (VERIFY-E3 F11). The pattern bounds the digits, so the comparisons stay inside bash's arithmetic.
++# A user resolved from the pinned agent's owner keeps A4's rule below for uid 0 (`not-run|unit would run as root`);
++# its gid 0 is refused after the resolution (I59-F round 3).
++if [ -n "$UNIT_USER" ] && { ! [[ "$UNIT_USER" =~ ^([1-9][0-9]{0,9}):([1-9][0-9]{0,9})$ ]] \
++    || [ "${BASH_REMATCH[1]}" -gt 4294967294 ] || [ "${BASH_REMATCH[2]}" -gt 4294967294 ]; }; then
++  echo "run_s0_05_units: S0_05_UNIT_USER must be <uid>:<gid>, got '$UNIT_USER' (each id a decimal from 1 to" \
++       "4294967294, no sign and no leading zero: 0 is root, and setpriv takes 4294967295 as no change and cuts a" \
++       "larger id to 32 bits)" >&2; exit 64
++fi
+ [ -n "$UNIT_USER" ] || UNIT_USER=$(stat -Lc '%u:%g' -- "${PIN[PINNED_AGENT_REALPATH]}" 2>/dev/null)
+ if [ -n "$UNIT_USER" ] && ! [[ "$UNIT_USER" =~ ^(0|[1-9][0-9]{0,9}):(0|[1-9][0-9]{0,9})$ ]]; then
+   echo "run_s0_05_units: S0_05_UNIT_USER must be <uid>:<gid>, got '$UNIT_USER'" >&2; exit 64
+ fi
++# I59-F round 3 (D-R2-3, VERIFY-E3 F11): a user resolved from the pinned agent's owner with a gid of 0 (the root
++# group) is refused as an explicit one is: exit 64, before anything is written and before any unit launches. An
++# explicit gid 0 was refused above, so only a resolved one reaches this branch; the pattern above bounds the digits.
++if [ -n "$UNIT_USER" ] && [ "${UNIT_USER##*:}" -eq 0 ]; then
++  echo "run_s0_05_units: the unit user resolved from the pinned agent's owner, '$UNIT_USER', has gid 0 (the root" \
++       "group): set S0_05_UNIT_USER to <uid>:<gid>, each id from 1 to 4294967294" >&2; exit 64
++fi
+ UNIT_UID=${UNIT_USER%%:*}; UNIT_GID=${UNIT_USER##*:}
+ 
+ # --- the unit table: docs/05_SECURITY.md:74-85, one row per source ---------------------------
+@@ -245,7 +304,8 @@ UNITS=("$@")
+ _pin_ok() { [ -f "$1" ] && [ "$(readlink -f -- "$1")" = "$1" ] && [ "$(sha256sum -- "$1" | cut -d' ' -f1)" = "$2" ]; }
+ 
+ # A6: the pair's identity file, checked in this order and read without printing. Sets PAIR_KEY, or
+-# ID_REFUSED to the refusal detail. S0-01's .secrets is refused by PATH, before the file is opened.
++# ID_REFUSED to the refusal detail. S0-01's .secrets is refused by PATH, before the file is opened. No newline
++# reaches the path here: the top refuses one (I59-F round 2, A-4), so `$(readlink -m …)` below loses nothing.
+ _pair_identity() {
+   local file=$PAIR_IDENTITY real mode line
+   PAIR_KEY=""; ID_REFUSED=""
+@@ -425,11 +485,12 @@ PY
+ }
+ 
+ # A7: which process runs in the namespace, read from /proc at canary time and written to
+-# <unit>/unit-identity.json. Prints "ok" or every mismatch against the pins ("; "-joined).
++# <unit>/unit-identity.json. Prints "ok" or every mismatch against the pins ("; "-joined). Its Uid and Gid
++# lines are both recorded and compared as numbers (the Gid line since I59-F round 3, VERIFY-E3 F11).
+ _unit_identity() {  # <pid> <unit> <kind agent|binary> <exe pin> <entrypoint pin> <sha256 pin>
+-  python3 -B - "$1" "$ns" "$2" "$3" "$4" "$5" "$6" "$UNIT_UID" "$EVIDENCE_ROOT/$2/unit-identity.json" <<'PY'
++  python3 -B - "$1" "$ns" "$2" "$3" "$4" "$5" "$6" "$UNIT_UID" "$UNIT_GID" "$EVIDENCE_ROOT/$2/unit-identity.json" <<'PY'
+ import hashlib, json, os, subprocess, sys
+-pid, ns, unit, kind, want_exe, want_entry, want_sha, want_uid, out = sys.argv[1:10]
++pid, ns, unit, kind, want_exe, want_entry, want_sha, want_uid, want_gid, out = sys.argv[1:11]
+ def sha256(path):
+     digest = hashlib.sha256()
+     with open(path, "rb") as fh:
+@@ -441,7 +502,9 @@ try:
+     with open(f"/proc/{pid}/cmdline", "rb") as fh:
+         argv = [a.decode(errors="surrogateescape") for a in fh.read().split(b"\0")[:-1]]
+     with open(f"/proc/{pid}/status") as fh:
+-        uid = [int(v) for v in next(l for l in fh if l.startswith("Uid:")).split()[1:5]]
++        status = fh.read().splitlines()
++    uid = [int(v) for v in next(l for l in status if l.startswith("Uid:")).split()[1:5]]
++    gid = [int(v) for v in next(l for l in status if l.startswith("Gid:")).split()[1:5]]
+     entry = os.path.realpath(argv[1]) if kind == "agent" and len(argv) > 1 else exe
+     entry_sha = sha256(entry if kind == "agent" else f"/proc/{pid}/exe")
+     in_ns = pid in subprocess.run(["ip", "netns", "pids", ns], capture_output=True, text=True).stdout.split()
+@@ -449,13 +512,14 @@ except (OSError, StopIteration, ValueError, IndexError) as exc:
+     sys.exit(print(f"no unit process {pid}: {exc.__class__.__name__}") or 1)
+ with open(out, "w") as fh:
+     json.dump({"unit": unit, "pid": int(pid), "exe_realpath": exe, "entrypoint_realpath": entry,
+-               "entrypoint_sha256": entry_sha, "uid": uid, "argv": argv}, fh, indent=2, sort_keys=True)
++               "entrypoint_sha256": entry_sha, "uid": uid, "gid": gid, "argv": argv}, fh, indent=2, sort_keys=True)
+     fh.write("\n")
+ problems = [f"pid {pid} not in {ns}"] if not in_ns else []
+ problems += [f"exe {exe} is not {want_exe}"] if exe != want_exe else []
+ problems += [f"entrypoint {entry} is not {want_entry}"] if entry != want_entry else []
+ problems += [f"entrypoint sha256 {entry_sha} is not the pin"] if entry_sha != want_sha else []
+-problems += ["uid 0"] if 0 in uid else ([f"uid {uid[0]} is not {want_uid}"] if str(uid[0]) != want_uid else [])
++problems += ["uid 0"] if 0 in uid else ([f"uid {uid[0]} is not {want_uid}"] if uid[0] != int(want_uid) else [])
++problems += ["gid 0"] if 0 in gid else ([f"gid {gid[0]} is not {want_gid}"] if gid[0] != int(want_gid) else [])
+ print("; ".join(problems) or "ok")
+ sys.exit(1 if problems else 0)
+ PY
+@@ -517,61 +581,129 @@ NS_LIVE=""; LOG_PIDS=""; FIFO_DIRS=""
+ # to SUDO_UID:SUDO_GID, so the invoking user can delete the evidence without sudo. It changes nothing
+ # outside the root. It never follows a symbolic link: each entry is opened O_PATH|O_NOFOLLOW relative to
+ # its directory's descriptor and its owner is changed on that descriptor (fchownat, AT_EMPTY_PATH), so a
+-# link's own owner changes, never its target's, and no path is looked up twice. It leaves as it is, and
+-# names on stderr, a non-directory with more than one link (another path may name it: the unit user can
+-# hard-link a file it may write into its scratch tree, A2) and an entry on another filesystem (a mount
+-# point is not descended). A parent that `mkdir -p` made ABOVE the root is outside it and keeps its
+-# owner. A SIGKILL runs no trap, so no handback.
++# link's own owner changes, never its target's, and no entry's name is looked up twice. It leaves as it is,
++# and names on stderr, a non-directory with more than one link (another path may name it: the unit user can
++# hard-link a file it may write into its scratch tree, A2), an entry on another filesystem (its st_dev), and
++# a mount point of the root's own filesystem (its mount id, statx STATX_MNT_ID, Linux 5.8: a bind mount has
++# the root's st_dev, I59-F B-2): no mount point is descended. A parent that `mkdir -p` made ABOVE the root
++# is outside it and keeps its owner. A SIGKILL runs no trap, so no handback.
++# I59-F (B-3): the walk is iterative. It holds one directory open to read, plus the entry it hands back: it
++# goes down through that entry's descriptor and back up through "..", which must be the very directory it
++# came down from (st_dev and inode), or the walk stops there and the summary says so. So a tree of any depth
++# is handed back under RLIMIT_NOFILE 1024, and the summary counts every entry left as it is (the recursion it
++# replaces dropped a subtree below about 1,000 levels, or 511 under 1024 descriptors, as one entry). (B-4)
++# Each id is at most 4294967294 and reaches fchownat as an unsigned int; the runner refuses a larger one
++# first (exit 64), and the handback refuses it too.
+ _handback() {
+   python3 -B - "$EVIDENCE_REAL" "${HANDBACK%%:*}" "${HANDBACK##*:}" <<'PY'
+-import ctypes, os, stat, sys
++import ctypes, errno, os, stat, sys
+ root, uid, gid = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
++MAX_ID = 4294967294                            # uid_t is 32 bits; (uid_t)-1 = 4294967295 means "no change"
++if not (0 <= uid <= MAX_ID and 0 <= gid <= MAX_ID):
++    sys.exit(print(f"run_s0_05_units: handback: nothing handed back: {uid}:{gid} is out of range (each id is 0 to "
++                   f"{MAX_ID})", file=sys.stderr))
+ libc = ctypes.CDLL(None, use_errno=True)
++libc.fchownat.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_uint, ctypes.c_uint, ctypes.c_int)
++statx = getattr(libc, "statx", None)
++if statx is not None:
++    statx.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_uint, ctypes.c_void_p)
++AT_EMPTY_PATH = STATX_MNT_ID = 0x1000
+ def own(fd):                                   # fchownat(fd, "", uid, gid, AT_EMPTY_PATH): the inode fd pins
+-    if libc.fchownat(fd, b"", uid, gid, 0x1000) != 0:
++    if libc.fchownat(fd, b"", uid, gid, AT_EMPTY_PATH) != 0:
++        err = ctypes.get_errno()
++        raise OSError(err, os.strerror(err))
++def mount_id(fd):                              # statx(fd, "", AT_EMPTY_PATH, STATX_MNT_ID): the mount fd is on
++    buf = ctypes.create_string_buffer(256)     # struct statx: stx_mask at byte 0, stx_mnt_id at byte 144
++    if statx is None:
++        raise OSError(errno.ENOSYS, "this libc has no statx")
++    if statx(fd, b"", AT_EMPTY_PATH, STATX_MNT_ID, buf) != 0:
+         err = ctypes.get_errno()
+         raise OSError(err, os.strerror(err))
+-done, left = 0, []
+-def hand(fd, where, dev):
++    if not ctypes.c_uint32.from_buffer(buf, 0).value & STATX_MNT_ID:
++        raise OSError(errno.EOPNOTSUPP, "statx gives no mount id on this kernel")
++    return ctypes.c_uint64.from_buffer(buf, 144).value
++done, left, stack, stopped = 0, [], [], ""
++def hand(fd, where):
++    """Hand back the entry fd pins, or name it in `left` with the reason. True for a directory handed back."""
+     global done
+     st = os.fstat(fd)
+     if st.st_dev != dev:
+         return left.append(f"{where} (another filesystem)")
++    if mount_id(fd) != mnt:
++        return left.append(f"{where} (a mount point: another mount of this filesystem)")
+     if not stat.S_ISDIR(st.st_mode) and st.st_nlink != 1:
+         return left.append(f"{where} (a hard link: {st.st_nlink} paths name it)")
+     own(fd)
+     done += 1
+-    if stat.S_ISDIR(st.st_mode):
+-        sub = os.open(".", os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
+-        try:
+-            for name in sorted(os.listdir(sub)):
+-                child = None
+-                try:
+-                    child = os.open(name, os.O_PATH | os.O_NOFOLLOW, dir_fd=sub)
+-                    hand(child, os.path.join(where, name), dev)
+-                except FileNotFoundError:
+-                    pass
+-                except (OSError, RecursionError) as exc:
+-                    left.append(f"{os.path.join(where, name)} ({exc.__class__.__name__}: {exc})")
+-                finally:
+-                    if child is not None:
+-                        os.close(child)
+-        finally:
+-            os.close(sub)
++    return stat.S_ISDIR(st.st_mode)
++def enter(fd, where):
++    """Open the directory fd pins to read it; push its path, its (st_dev, inode) and the names still to walk."""
++    sub = os.open(".", os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
++    try:
++        st = os.fstat(sub)
++        stack.append((where, (st.st_dev, st.st_ino), sorted(os.listdir(sub), reverse=True)))
++    except OSError:
++        os.close(sub)
++        raise
++    return sub
+ try:
+     top = os.open(root, os.O_PATH | os.O_NOFOLLOW | os.O_DIRECTORY)
+ except OSError as exc:
+     sys.exit(print(f"run_s0_05_units: handback: nothing handed back: {root}: {exc.strerror}", file=sys.stderr))
+ try:
+-    hand(top, root, os.fstat(top).st_dev)
++    dev, mnt = os.fstat(top).st_dev, mount_id(top)
++except OSError as exc:
++    os.close(top)
++    sys.exit(print(f"run_s0_05_units: handback: nothing handed back: {root}: {exc.strerror}", file=sys.stderr))
++cur = None
++try:
++    if hand(top, root):
++        cur = enter(top, root)
+ except OSError as exc:
+     left.append(f"{root} ({exc.__class__.__name__}: {exc})")
+ finally:
+     os.close(top)
++while stack:
++    where, _, names = stack[-1]
++    if not names:                              # this directory is done: back up to the one it came down from
++        stack.pop()
++        if stack:
++            try:
++                up = os.open("..", os.O_RDONLY | os.O_DIRECTORY, dir_fd=cur)
++            except OSError as exc:
++                stopped = f"the way up from {where} would not open ({exc.__class__.__name__}: {exc})"
++                break
++            os.close(cur)
++            cur = up
++            st = os.fstat(cur)
++            if (st.st_dev, st.st_ino) != stack[-1][1]:
++                stopped = f"{where} moved while it ran"
++                break
++        continue
++    name = names.pop()
++    path = os.path.join(where, name)
++    child = None
++    try:
++        child = os.open(name, os.O_PATH | os.O_NOFOLLOW, dir_fd=cur)
++        if hand(child, path):
++            sub = enter(child, path)
++            os.close(cur)
++            cur = sub
++    except FileNotFoundError:
++        pass
++    except OSError as exc:
++        left.append(f"{path} ({exc.__class__.__name__}: {exc})")
++    finally:
++        if child is not None:
++            os.close(child)
++if cur is not None:
++    os.close(cur)
+ for entry in left:
+     print(f"run_s0_05_units: handback: left as it is: {entry}", file=sys.stderr)
+ print(f"run_s0_05_units: handback: {done} entries of {root} (the root included) now belong to {uid}:{gid}"
+-      + (f"; {len(left)} left as they are" if left else ""), file=sys.stderr)
++      + (f"; {len(left)} left as they are" if left else "")
++      + (f"; then it stopped: {stopped}, so what it had not reached is left as it is" if stopped else ""),
++      file=sys.stderr)
+ PY
+ }
+ # F3: cleanup destroys only namespaces this runner created and still owns (owner record = $$);
+@@ -639,7 +771,7 @@ for unit in "${UNITS[@]}"; do
+     RESULT[$unit]="not-run|unit user unresolved (set S0_05_UNIT_USER)"; echo "SKIP $unit: unit user unresolved" >&2
+     continue
+   fi
+-  if [ "$UNIT_UID" = 0 ]; then
++  if [ "$UNIT_UID" -eq 0 ]; then                      # numeric (I59-F round 2): never a string compare
+     RESULT[$unit]="not-run|unit would run as root"; echo "SKIP $unit: unit would run as root" >&2
+     continue
+   fi
+diff --git a/tests/test_gpu_window.py b/tests/test_gpu_window.py
+index df95a09..50798fe 100644
+--- a/tests/test_gpu_window.py
++++ b/tests/test_gpu_window.py
+@@ -312,9 +312,14 @@ def test_term_stops_the_running_job_at_once_and_restores(win):
+ 
+ # Scripts under test start with SIGINT at its default disposition: a detached launcher (`nohup ... &`, as
+ # scripts/lane_gate.sh advises) starts the whole run with SIGINT ignored, bash cannot trap a signal that was ignored at
+-# entry, and every INT test would hang to its timeout (AF-AP-210). exec keeps the pid.
++# entry, and every INT test would hang to its timeout (AF-AP-210). exec keeps the pid. It also puts back SIGPIPE and
++# SIGXFSZ (I59-F round 2, A-3): this interpreter ignores both at its own startup, and a bare exec handed both ignores to
++# the script under test (SigIgn 0x1001000), which a shell never does.
+ INT_DEFAULT = [sys.executable, "-c",
+-               "import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])"]
++               "import os, signal, sys\n"
++               "for name in ('SIGINT', 'SIGPIPE', 'SIGXFSZ'):\n"
++               "    signal.signal(getattr(signal, name), signal.SIG_DFL)\n"
++               "os.execvp(sys.argv[1], sys.argv[1:])"]
+ 
+ 
+ def _start(w, jobs, **extra):
+@@ -322,6 +327,25 @@ def _start(w, jobs, **extra):
+                             stderr=subprocess.PIPE, text=True)
+ 
+ 
++def test_scripts_under_test_start_with_int_pipe_and_xfsz_at_their_defaults():
++    """I59-F round 2 (A-3): the script under test starts as a shell would start it. The launch first ignores SIGINT, as
++    a detached gate does; through INT_DEFAULT, bash then has none of SIGINT, SIGPIPE and SIGXFSZ ignored. The shim's
++    own interpreter ignores SIGPIPE and SIGXFSZ at its startup, and a bare exec handed both on (SigIgn 0x1001000). The
++    bare launch shows the SIGINT ignore reaching bash, so the probe is one that can see an ignore."""
++    def ignore_int():
++        signal.signal(signal.SIGINT, signal.SIG_IGN)
++    probe = ["bash", "-c", "grep '^SigIgn:' /proc/$$/status"]
++    watched = (signal.SIGINT, signal.SIGPIPE, signal.SIGXFSZ)
++
++    def ignored(run):
++        mask = int(run.stdout.split()[1], 16)
++        return {sig for sig in watched if mask >> (sig - 1) & 1}
++    bare = subprocess.run(probe, preexec_fn=ignore_int, capture_output=True, text=True, timeout=30)
++    shimmed = subprocess.run(INT_DEFAULT + probe, preexec_fn=ignore_int, capture_output=True, text=True, timeout=30)
++    assert ignored(bare) == {signal.SIGINT}, bare.stdout
++    assert ignored(shimmed) == set(), shimmed.stdout
++
++
+ def _wait_for(pred, seconds=15):
+     deadline = time.monotonic() + seconds
+     while not pred():
+diff --git a/tests/test_no_laya_in_gates.py b/tests/test_no_laya_in_gates.py
+index e2e240d..b56abba 100644
+--- a/tests/test_no_laya_in_gates.py
++++ b/tests/test_no_laya_in_gates.py
+@@ -870,7 +870,8 @@ def _stage0_ci_with_a_sourcing_step(apostrophe):
+     one apostrophe in an earlier step name. Returns the text and the new run: line (1-based)."""
+     lines = (REPO_ROOT / ".github" / "workflows" / "stage0-ci.yml").read_text().split("\n")
+     name_at = lines.index("      - name: Install dependencies")
+-    run_at = lines.index("        run: python -m pytest tests/ -q -rs   # -rs: every skip prints its reason (FU-4, VERIFY-I59-A)")
++    run_at = lines.index("        run: python -m pytest tests/ -q -rfEs   # -rfEs: every failure, error and skip prints its line"
++                         " (FU-4, VERIFY-I59-A; F2, VERIFY-I59-LANDING)")
+     assert name_at < run_at
+     if apostrophe:
+         lines[name_at] = "      - name: Install the suite's dependencies"
+diff --git a/tests/test_s0_03_omniroute.py b/tests/test_s0_03_omniroute.py
+index 0a16e10..8ede0de 100644
+--- a/tests/test_s0_03_omniroute.py
++++ b/tests/test_s0_03_omniroute.py
+@@ -12,6 +12,7 @@ individually falsified is a tautology wearing six hats (AF-AP-30).
+ """
+ from __future__ import annotations
+ 
++import hashlib
+ import http.server
+ import importlib.util
+ import inspect
+@@ -445,7 +446,7 @@ def test_conjunct_v_transport(passing):
+     result = run_checker(passing)
+     assert result.returncode == 1
+     assert result.stdout.strip() == (
+-        "failure_reason: transport: profile api_mode 'codex_app_server' "
++        f"failure_reason: transport: profile api_mode ({_shape_of('codex_app_server')}) "
+         "is not in the permitted set")
+ 
+ 
+@@ -550,7 +551,7 @@ def test_conjunct_v_requires_the_compression_header_in_the_profile(passing):
+     profile.write_text(profile.read_text().replace("'off'", "'default'"))
+     result = run_checker(passing)
+     assert result.returncode == 1
+-    assert "x-omniroute-compression is 'default', expected 'off'" in result.stdout
++    assert f"x-omniroute-compression ({_shape_of('default')}) is not 'off'" in result.stdout
+ 
+ 
+ def test_conjunct_vi_env(passing):
+@@ -896,6 +897,9 @@ def test_profile_parse_error_is_a_named_failure_that_never_prints_the_key(passin
+     assert result.returncode == 1, result.stdout + result.stderr
+     assert result.stdout.strip() == (
+         f"failure_reason: bundle: hermes/profile.yaml is not valid YAML ({cls.__name__})"), result.stderr[-2000:]
++    # I59-F (VERIFY-I59-BCE E-2): the failure goes to stdout, so stderr is empty. The 8-character screen above is the
++    # contract's own bound, and a write of 7 characters of the key to stderr passed under it (mutant E-X7).
++    assert result.stderr == "", result.stderr[-2000:]
+ 
+ 
+ @pytest.mark.parametrize("row", PROFILE_PARSE_ERRORS, ids=_PARSE_ERROR_IDS)
+@@ -913,6 +917,77 @@ def test_profile_parse_failure_chains_no_error_that_quotes_the_key(passing, row)
+     assert failure.__cause__ is None and failure.__suppress_context__
+ 
+ 
++# --------------------------------------------------------------------------- a profile value is named by its shape
++# I59-F (VERIFY-I59-BCE E-1, AF-AP-232's class widened): no failure message prints a value read from the profile. A
++# profile can hold a key where a name belongs (`key_env: <the key>`), and a key with no `sk-`, `bearer ` or `basic `
++# prefix passes the credential walk. Three messages printed such a value whole: api_mode (the transport reason), the
++# compression header and key_env. Each now names the value by its shape: its type, its length and the first 8 hex
++# digits of its sha256, enough to match a value the operator holds.
++_MARKS = "~^|+*!@%&=<>?;"      # printable, and never in a checker message
++
++
++def _shape_of(value) -> str:
++    """The shape the contract prints for a value read from the profile (a non-string by its repr)."""
++    text = value if isinstance(value, str) else repr(value)
++    return f"{type(value).__name__}, {len(text)} characters, sha256 {hashlib.sha256(text.encode()).hexdigest()[:8]}"
++
++
++def _fake_profile_value() -> str:
++    """A FAKE value built at run time, with no `sk-`, `bearer ` or `basic ` prefix (the walk would catch those first).
++    Letters and marks alternate, so every run of 4 characters holds two marks, and no mark is in any checker message:
++    a run of 4 found in the output is the value itself, never a coincidence."""
++    return "".join(secrets.choice(string.ascii_letters) + secrets.choice(_MARKS) for _ in range(12))
++
++
++def _runs_of(value: str, text: str, width: int = 4) -> list:
++    """Every run of <width> characters of <value> that <text> carries, both sides case-folded."""
++    folded = text.casefold()
++    return sorted({value[i:i + width].casefold() for i in range(len(value) - width + 1)} & {
++        folded[i:i + width] for i in range(len(folded) - width + 1)})
++
++
++def _put_api_mode_in_the_provider_block(doc, value):
++    """The old layout: api_mode in the provider block, read when the model section names none."""
++    del doc["model"]["api_mode"]
++    doc["providers"]["s0-03-omniroute"]["api_mode"] = value
++
++
++PROFILE_VALUE_PATHS = [
++    # (id, how the fake value enters the profile, the exact stdout with the value's shape)
++    ("api_mode", lambda doc, value: doc["model"].__setitem__("api_mode", value),
++     lambda shape: f"failure_reason: transport: profile api_mode ({shape}) is not in the permitted set\n"),
++    ("api_mode-in-the-provider-block", _put_api_mode_in_the_provider_block,
++     lambda shape: f"failure_reason: transport: profile api_mode ({shape}) is not in the permitted set\n"),
++    ("compression-header", lambda doc, value: doc["providers"]["s0-03-omniroute"]["extra_headers"].__setitem__(
++        "x-omniroute-compression", value),
++     lambda shape: f"failure_reason: bundle: profile.yaml x-omniroute-compression ({shape}) is not 'off'\n"),
++    ("key_env", lambda doc, value: doc["providers"]["s0-03-omniroute"].__setitem__("key_env", value),
++     lambda shape: f"failure_reason: bundle: profile.yaml key_env ({shape}) is not 'OMNIROUTE_API_KEY'\n"),
++]
++
++
++@pytest.mark.parametrize("put,reason", [row[1:] for row in PROFILE_VALUE_PATHS],
++                         ids=[row[0] for row in PROFILE_VALUE_PATHS])
++def test_a_failure_names_a_profile_value_by_its_shape_never_the_value(passing, put, reason):
++    """Through the real CLI, one path per message: a fake value in the profile fails the check with the exact reason,
++    which carries the value's shape, and no case-folded run of 4 of its characters reaches stdout or stderr. The screen
++    is first shown to see a printed value, and the value to reach the file whole: the message is then the only reason
++    the value is absent."""
++    value = _fake_profile_value()
++    assert not value.lower().startswith(("sk-", "sk_", "bearer ", "basic "))
++    assert _runs_of(value, f"key_env is {value!r}") and not _runs_of(value, reason(_shape_of(value)))
++    profile = passing / "hermes" / "profile.yaml"
++    doc = yaml.safe_load(profile.read_text())
++    put(doc, value)
++    profile.write_text(yaml.safe_dump(doc, sort_keys=False))
++    assert yaml.safe_load(profile.read_text()) == doc
++    result = run_checker(passing)
++    assert _runs_of(value, result.stdout + result.stderr) == [], "a run of the profile value was printed"
++    assert result.returncode == 1, result.stdout + result.stderr
++    assert result.stdout == reason(_shape_of(value)), result.stdout
++    assert result.stderr == "", result.stderr[-2000:]
++
++
+ # --------------------------------------------------------------------------- spec + schema
+ def test_spec_validates_against_the_schema():
+     import jsonschema
+diff --git a/tests/test_s0_04_compression.py b/tests/test_s0_04_compression.py
+index 5144b2e..4521d13 100644
+--- a/tests/test_s0_04_compression.py
++++ b/tests/test_s0_04_compression.py
+@@ -9,15 +9,21 @@ record shape breaks here instead of silently at capture time on the PC.
+ """
+ from __future__ import annotations
+ 
++import ast
+ import base64
++import errno
++import hashlib
+ import http.client
+ import json
++import locale
+ import os
+ import secrets
+ import shutil
+ import socket
++import string
+ import subprocess
+ import sys
++import tempfile
+ import time
+ from pathlib import Path
+ 
+@@ -89,7 +95,7 @@ def test_pass_line_is_exact():
+ def test_observations_are_recorded_not_asserted():
+     code, out = run_checker(PASS_BUNDLE)
+     assert code == 0
+-    assert "observation: config api_mode = chat_completions" in out
++    assert OBSERVATION.format("chat_completions") in out.splitlines(), out   # I59-F round 3 (route B): a known mode
+     assert out.count("observation:") == 3
+ 
+ 
+@@ -715,7 +721,7 @@ def test_config_field_mutations(tmp_path):
+         ({"key_env": "not a variable name"}, "key-env-not-a-name"),
+         ({"key_env": None}, "key-env-not-a-name"),
+         ({"api_mode": ""}, "api-mode-absent"),
+-        ({"extra_headers": {"x-omniroute-compression": "on"}}, "config-header-value: on"),
++        ({"extra_headers": {"x-omniroute-compression": "on"}}, f"config-header-value: {_shape_of('on')}"),
+     ]
+     for index, (patch, expected) in enumerate(cases):
+         b = bundle(tmp_path, f"cfg-{index}")
+@@ -728,6 +734,147 @@ def test_config_field_mutations(tmp_path):
+         assert expected in out, (patch, out)
+ 
+ 
++# I59-F round 2 (A-2, the E-1 class in S0-04): no message of the checker prints a value of the captured provider
++# block. Three failure reasons and the api_mode observation printed one through `_short` (a 60-character cut, the value
++# itself): round 1 printed `config: key-env-not-a-name: Zq~FAKEnot-a-key~X9^v` whole. Each now names the value by
++# its shape, as S0-03's checker does: its type, its length and the first 8 hex digits of its sha256. Keys may print.
++_MARKS = "~^|+*!@%&=<>?;"      # printable, and never in a checker message
++
++
++def _shape_of(value) -> str:
++    """The shape the contract prints for a value of the provider block (a non-string by its repr)."""
++    text = value if isinstance(value, str) else repr(value)
++    return f"{type(value).__name__}, {len(text)} characters, sha256 {hashlib.sha256(text.encode()).hexdigest()[:8]}"
++
++
++def _fake_config_value() -> str:
++    """A FAKE value built at run time. Letters and marks alternate, so every run of 4 characters holds two marks, and
++    no mark is in any checker message: a run of 4 found in the output is the value itself, never a coincidence."""
++    return "".join(secrets.choice(string.ascii_letters) + secrets.choice(_MARKS) for _ in range(12))
++
++
++def _runs_of(value: str, text: str, width: int = 4) -> list:
++    """Every run of <width> characters of <value> that <text> carries, both sides case-folded."""
++    folded = text.casefold()
++    return sorted({value[i:i + width].casefold() for i in range(len(value) - width + 1)} & {
++        folded[i:i + width] for i in range(len(folded) - width + 1)})
++
++
++CONFIG_VALUE_PATHS = [
++    # (id, how the fake value enters the provider block, the exit code, the exact stdout line with the value's shape)
++    ("config-header-value", lambda block, value: block["extra_headers"].__setitem__("x-omniroute-compression", value),
++     1, lambda shape: f"failure_reason: config: config-header-value: {shape}"),
++    ("base-url-unexpected", lambda block, value: block.__setitem__("base_url", value),
++     1, lambda shape: f"failure_reason: config: base-url-unexpected: {shape}"),
++    ("key-env-not-a-name", lambda block, value: block.__setitem__("key_env", value),
++     1, lambda shape: f"failure_reason: config: key-env-not-a-name: {shape}"),
++    ("api-mode-observation", lambda block, value: block.__setitem__("api_mode", value),
++     0, lambda shape: f"observation: config api_mode = {shape} (RECORDED, not asserted - ADR 0002 deviation, owner "
++                      "task #35)"),
++]
++
++
++@pytest.mark.parametrize("put,code,line", [row[1:] for row in CONFIG_VALUE_PATHS],
++                         ids=[row[0] for row in CONFIG_VALUE_PATHS])
++def test_a_message_names_a_config_value_by_its_shape_never_the_value(tmp_path, put, code, line):
++    """Through the real CLI, one path per message: a fake value in the captured provider block gives the exact line,
++    which carries the value's shape, and no case-folded run of 4 of its characters reaches stdout or stderr. The screen
++    is first shown to see a printed value, and the value to reach the bundle whole: the message is then the only
++    reason the value is absent. The api_mode is recorded, not asserted, so that row passes and pins its observation."""
++    value = _fake_config_value()
++    assert _runs_of(value, f"key-env-not-a-name: {value}") and not _runs_of(value, line(_shape_of(value)))
++    b = bundle(tmp_path)
++    path = b / "config" / "hermes-provider.json"
++    block = load(path)
++    put(block, value)
++    store(path, block)
++    assert value in path.read_text()
++    proc = subprocess.run([sys.executable, str(CHECKER), str(b)], capture_output=True, text=True, timeout=180,
++                          cwd=str(ROOT))
++    assert _runs_of(value, proc.stdout + proc.stderr) == [], "a run of the config value was printed"
++    assert proc.returncode == code, proc.stdout + proc.stderr
++    assert line(_shape_of(value)) in proc.stdout.splitlines(), proc.stdout
++    if code:
++        assert proc.stdout == line(_shape_of(value)) + "\n", proc.stdout
++    assert proc.stderr == "", proc.stderr
++
++
++# I59-F round 3, route B (D-R2-2): the api_mode observation prints a KNOWN mode by its name (an enum the owner reads,
++# not a secret) and any other value by its shape. The known set is the checker's own copy of S0-03's
++# PERMITTED_API_MODES, pinned equal to it here: the checker never reads S0-03's file while it grades, so S0-04's
++# attestation stays its own. Failure messages print every value by its shape, a mode name included.
++S0_03_CHECKER = ROOT / "proofs" / "S0-03" / "check_omniroute_roundtrip.py"
++OBSERVATION = "observation: config api_mode = {} (RECORDED, not asserted - ADR 0002 deviation, owner task #35)"
++
++
++def _s0_03_permitted_api_modes():
++    """S0-03's PERMITTED_API_MODES, read from its checker's source as DATA: parsed, never imported or run."""
++    tree = ast.parse(S0_03_CHECKER.read_text(encoding="utf-8"))
++    found = [node.value for node in tree.body if isinstance(node, ast.Assign)
++             and [getattr(target, "id", None) for target in node.targets] == ["PERMITTED_API_MODES"]]
++    assert len(found) == 1, "S0-03's checker assigns PERMITTED_API_MODES once, at module level"
++    call = found[0]
++    assert isinstance(call, ast.Call) and getattr(call.func, "id", None) == "frozenset" and len(call.args) == 1
++    return frozenset(ast.literal_eval(call.args[0]))
++
++
++def _provider_block_with(tmp_path, set_value):
++    """A copy of the pass bundle whose captured provider block is changed by <set_value>."""
++    b = bundle(tmp_path)
++    path = b / "config" / "hermes-provider.json"
++    block = load(path)
++    set_value(block)
++    store(path, block)
++    return b
++
++
++def test_the_known_api_modes_are_a_copy_of_s0_03s_permitted_set():
++    """The pin: the checker's KNOWN_API_MODES equals S0-03's PERMITTED_API_MODES, read as data. A drift on either
++    side reds here."""
++    import importlib.util
++    spec = importlib.util.spec_from_file_location("check_compression", CHECKER)
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    assert isinstance(module.KNOWN_API_MODES, frozenset), type(module.KNOWN_API_MODES)
++    assert module.KNOWN_API_MODES == _s0_03_permitted_api_modes(), sorted(module.KNOWN_API_MODES)
++
++
++@pytest.mark.parametrize("mode", ["chat_completions", "codex_responses"])
++def test_a_known_api_mode_is_observed_by_its_name(tmp_path, mode):
++    """Through the real CLI: a mode of S0-03's permitted set, in the captured provider block, is observed by its
++    name, the exact line pinned. The bundle still passes: the mode is recorded, not asserted."""
++    assert mode in _s0_03_permitted_api_modes()
++    code, out = run_checker(_provider_block_with(tmp_path, lambda block: block.__setitem__("api_mode", mode)))
++    assert code == 0, out
++    assert OBSERVATION.format(mode) in out.splitlines(), out
++    assert _shape_of(mode) not in out, out
++
++
++@pytest.mark.parametrize("value", ["Chat_Completions", "chat_completions "], ids=["case", "trailing-space"])
++def test_a_value_near_a_known_api_mode_is_observed_by_its_shape(tmp_path, value):
++    """Membership is exact: a case or whitespace variant of a known mode is not one, and prints by its shape (the
++    fake-value row above covers a value that is nothing like a mode)."""
++    code, out = run_checker(_provider_block_with(tmp_path, lambda block: block.__setitem__("api_mode", value)))
++    assert code == 0, out
++    assert OBSERVATION.format(_shape_of(value)) in out.splitlines(), out
++
++
++FAILURE_FIELDS = [
++    ("config-header-value", lambda block, value: block["extra_headers"].__setitem__("x-omniroute-compression", value)),
++    ("base-url-unexpected", lambda block, value: block.__setitem__("base_url", value)),
++    ("key-env-not-a-name", lambda block, value: block.__setitem__("key_env", value)),
++]
++
++
++@pytest.mark.parametrize("reason,put", FAILURE_FIELDS, ids=[row[0] for row in FAILURE_FIELDS])
++def test_a_failure_prints_a_known_mode_name_by_its_shape(tmp_path, reason, put):
++    """Only the observation prints a known mode by name: a failure message prints its value by its shape, even when
++    the value is a mode name. The whole output is the one failure line."""
++    code, out = run_checker(_provider_block_with(tmp_path, lambda block: put(block, "chat_completions")))
++    assert code == 1, out
++    assert out == f"failure_reason: config: {reason}: {_shape_of('chat_completions')}\n", out
++
++
+ def test_unexpected_provider_field_is_refused(tmp_path):
+     """Reachability: a field that is NOT credential-shaped still has to be refused, else the
+     unexpected-fields check would only ever be reached through the screen (unreachable code)."""
+@@ -1140,6 +1287,7 @@ def test_capture_leg_reports_a_yaml_error_by_position_only(tmp_path, cls, label,
+     mark = raw.problem_mark
+     assert proc.stderr == (f"capture_leg: profile {profile} is not valid YAML ({cls}) "
+                            f"at line {mark.line + 1}, column {mark.column + 1}\n"), proc.stderr
++    assert proc.stdout == "", proc.stdout      # I59-F (C-2): the failure is on stderr only (mutant C-X6)
+ 
+ 
+ # I59-C (VERIFY-S0-04-LEAK-R1 G2): some parse errors are not YAMLErrors. An explicit tag's constructor raises a plain
+@@ -1169,6 +1317,58 @@ def test_capture_leg_reports_a_non_yaml_parse_error_by_class_only(tmp_path, cls,
+     assert proc.returncode == 1, proc.stderr
+     assert proc.stderr == f"capture_leg: profile {profile} is not valid YAML ({cls}) at an unknown position\n", \
+         proc.stderr
++    assert proc.stdout == "", proc.stdout      # I59-F (C-2): the failure is on stderr only (mutant C-X6)
++
++
++# I59-F (VERIFY-I59-BCE C-1): `do_config` READS the profile outside its parse handler, so a read error keeps the
++# tool's own line and never reads as a YAML error. A handler that took the read in (mutant C-X4) printed each of them
++# as "not valid YAML (<Class>) at an unknown position", and no test saw it. One test per read error, the line whole,
++# on stderr only.
++def _run_config(profile, out, **drop):
++    return subprocess.run([sys.executable, str(CAPTURE), "--config", "--profile", str(profile), "--out", str(out)],
++                          capture_output=True, text=True, timeout=60, cwd=str(ROOT), **drop)
++
++
++@pytest.mark.parametrize("error", ["missing", "a-fifo", "not-utf-8"])
++def test_capture_leg_reports_a_profile_read_error_on_its_own_line(tmp_path, error):
++    """A missing profile, a FIFO (never opened) and a file that is not UTF-8 each end with exit 1 and the read's own
++    line: `read_regular`'s refusal, or the decode error main() names by its class. The oracle for the decode line is
++    this venue's own decoder, and it must refuse the bytes, or the row proves nothing."""
++    profile = tmp_path / "config.yaml"
++    if error == "missing":
++        expected = f"capture_leg: profile not found: {profile}\n"
++    elif error == "a-fifo":
++        os.mkfifo(profile)
++        expected = f"capture_leg: profile is not a regular file: {profile}\n"
++    else:
++        raw = (PROFILE_HEAD + "    name: caf\xe9\n").encode("latin-1")          # a lone 0xe9 is no UTF-8
++        profile.write_bytes(raw)
++        with pytest.raises(UnicodeDecodeError) as decoded:
++            raw.decode(locale.getpreferredencoding(False))
++        expected = f"capture_leg: UnicodeDecodeError: {decoded.value}\n"
++    proc = _run_config(profile, tmp_path / "out")
++    assert (proc.returncode, proc.stderr, proc.stdout) == (1, expected, ""), (proc.returncode, proc.stderr)
++    assert not (tmp_path / "out").exists()
++
++
++def test_capture_leg_reports_an_unreadable_profile_on_its_own_line():
++    """A profile its reader may not open: mode 0000, read as uid 65534 when the suite runs as root (root reads every
++    file) and as the suite's own uid otherwise. The directory is our own under /tmp, mode 0711 (pytest's tmp_path is
++    0700), so the open fails on the file itself, never on the way to it; the line is main()'s, with its errno."""
++    work = Path(tempfile.mkdtemp(prefix="s0-04-unreadable-", dir="/tmp"))
++    try:
++        work.chmod(0o711)
++        profile = work / "config.yaml"
++        profile.write_text(PROFILE_HEAD)
++        profile.chmod(0o000)
++        drop = {"user": 65534, "group": 65534, "extra_groups": []} if os.geteuid() == 0 else {}
++        proc = _run_config(profile, work / "out", **drop)
++        denied = PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(profile))
++        assert (proc.returncode, proc.stderr, proc.stdout) == (1, f"capture_leg: PermissionError: {denied}\n", ""), \
++            (proc.returncode, proc.stderr)
++        assert not (work / "out").exists()
++    finally:
++        shutil.rmtree(work, ignore_errors=True)
+ 
+ 
+ def test_runner_is_syntactically_valid():
+diff --git a/tests/test_s0_05_egress.py b/tests/test_s0_05_egress.py
+index 54ecc8b..94a3da0 100644
+--- a/tests/test_s0_05_egress.py
++++ b/tests/test_s0_05_egress.py
+@@ -24,6 +24,7 @@ import importlib.util
+ import json
+ import os
+ import re
++import resource
+ import shutil
+ import signal
+ import stat
+@@ -1320,7 +1321,8 @@ def test_runner_live_leg(e3dir):
+         identity = json.loads((evidence / "hermes-acp" / "unit-identity.json").read_text())
+         assert identity == {"unit": "hermes-acp", "pid": standin_pid, "exe_realpath": _agent_interpreter(),
+                             "entrypoint_realpath": standin, "entrypoint_sha256": _sha256(standin),
+-                            "uid": [UNIT_USER[0]] * 4, "argv": [_agent_interpreter(), standin]}, identity
++                            "uid": [UNIT_USER[0]] * 4, "gid": [UNIT_USER[1]] * 4,   # I59-F round 3: the Gid line
++                            "argv": [_agent_interpreter(), standin]}, identity
+         # ... and the checker grades that REAL record against the REAL pins once the override row is
+         # gone: the stand-in is not the pinned unit.
+         graded = e3dir / "graded"
+@@ -1754,6 +1756,19 @@ def _stop(process):
+         process.wait(timeout=10)
+ 
+ 
++# Task #331 (AF-AP-234, VERIFY-I59-BCE item 3): a test that signals the runner starts it through this exec shim, so
++# the runner starts with SIGINT, SIGHUP and SIGQUIT at their defaults whatever the gate's own launch left ignored. A
++# detached gate (`nohup … &`, or a background job with no job control) starts the whole run with them ignored, bash
++# cannot trap a signal ignored at entry, and each INT or HUP test then failed on the launch, not on the runner. The
++# shim of tests/test_gpu_window.py, extended to the three, and it puts back SIGPIPE and SIGXFSZ, which the shim's own
++# interpreter ignores at startup (a bare exec would hand those ignores to the runner). exec keeps the pid.
++SIGNALS_DEFAULT = [sys.executable, "-c",
++                   "import os, signal, sys\n"
++                   "for name in ('SIGINT', 'SIGHUP', 'SIGQUIT', 'SIGPIPE', 'SIGXFSZ'):\n"
++                   "    signal.signal(getattr(signal, name), signal.SIG_DFL)\n"
++                   "os.execvp(sys.argv[1], sys.argv[1:])"]
++
++
+ def _secret_free_environ():
+     """os.environ without any key the pins' redaction rule names (the sandbox exports real tokens):
+     a runner under test never needs them, and a leak into a unit must be proven with PLANTED fakes.
+@@ -2057,7 +2072,7 @@ def test_x4_runner_cleanup_reaps_its_own_namespace_at_exit(e3dir):
+     listener = runner = None
+     try:
+         listener = _listener(e3dir, port)
+-        runner = subprocess.Popen(["bash", str(RUNNER), str(evidence), "hermes-acp"],
++        runner = subprocess.Popen(SIGNALS_DEFAULT + ["bash", str(RUNNER), str(evidence), "hermes-acp"],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+         _wait_for(lambda: _standin_records(e3dir), 60, "the unit to start inside the namespace")
+         standin = _standin_records(e3dir)[0]["pid"]
+@@ -2255,13 +2270,16 @@ def test_a2_s0_01_tree_change_fails_the_leg(e3dir):
+ 
+ 
+ @NEEDS_NETNS
+-@pytest.mark.parametrize("how", ["explicit", "default-owner"])
++@pytest.mark.parametrize("how", ["default-owner"])
+ def test_a4_a_root_unit_user_is_refused(e3dir, how):
+     """A4: the unit user is resolved once — the operator input, or the owner of the pinned agent
+     realpath — and a resolved uid 0 is `not-run|unit would run as root`, before anything is made.
+-    `default-owner`: the (overridden) agent realpath is owned by root and no input is given."""
++    `default-owner`: the (overridden) agent realpath is owned by root and no input is given. An
++    explicit `0:0` is refused with exit 64 since I59-F round 2 (test_i59f_a1_…, its row `0:0`). The agent's group
++    is 65534 since round 3: a resolved gid of 0 exits 64 first (test_i59f_r3_a_default_…, its row `0:0`)."""
+     evidence = e3dir / "evidence"
+     env = _runner_env(e3dir, 18096, unit_user="0:0" if how == "explicit" else None)
++    os.chown(json.loads((e3dir / "override.json").read_text())["PINNED_AGENT_REALPATH"], 0, 65534)
+     _run_runner(env, evidence, "hermes-acp")
+     row = _unit_row(evidence, "hermes-acp")
+     assert (row["status"], row["reason"]) == ("not-run", "unit would run as root"), row
+@@ -2325,7 +2343,7 @@ def test_a6_identity_file_refusals(e3dir, case):
+ def test_a7_a_unit_not_matching_the_pins_is_not_observed(e3dir):
+     """A7, the runner half: at canary time the runner records which process runs in the namespace
+     (<unit>/unit-identity.json: pid, /proc/<pid>/exe realpath, entrypoint realpath and sha256, the
+-    Uid line, argv) and runs the canaries ONLY if it matches the pins — else `not-run|unit identity
++    Uid and Gid lines, argv) and runs the canaries ONLY if it matches the pins — else `not-run|unit identity
+     not observed: <detail>`, every mismatch named. Two faults from the test side: the interpreter pin
+     is overridden to another path (exe mismatch), and a PATH `setpriv` shim runs the unit WITHOUT
+     dropping privileges (uid 0 — the runner-side uid check, E6)."""
+@@ -2346,9 +2364,10 @@ def test_a7_a_unit_not_matching_the_pins_is_not_observed(e3dir):
+         runner = _run_runner(env, evidence, "hermes-acp", timeout=240)
+         row = _unit_row(evidence, "hermes-acp")
+         assert (row["status"], row["reason"]) == (
+-            "not-run", f"unit identity not observed: exe {_agent_interpreter()} is not {wrong_exe}; uid 0"), row
++            "not-run", f"unit identity not observed: exe {_agent_interpreter()} is not {wrong_exe}; uid 0; gid 0"), row
+         identity = json.loads((evidence / "hermes-acp" / "unit-identity.json").read_text())
+         assert identity["uid"] == [0, 0, 0, 0] and identity["exe_realpath"] == _agent_interpreter(), identity
++        assert identity["gid"] == [0, 0, 0, 0], identity                      # I59-F round 3: the Gid line
+         assert not (evidence / "hermes-acp" / "canaries.jsonl").exists(), "the canaries ran for an unobserved unit"
+         standin = _standin_records(e3dir)[0]["pid"]
+         assert not _pid_alive(standin)
+@@ -2670,8 +2689,8 @@ def test_d_pair_leg_reaches_the_relay_through_the_dnat(e3dir):
+         # A7: the record names the compiled unit that ran.
+         identity = json.loads((evidence / "buzz-acp" / "unit-identity.json").read_text())
+         assert (identity["pid"], identity["exe_realpath"], identity["entrypoint_realpath"],
+-                identity["entrypoint_sha256"], identity["uid"]) == \
+-            (pair["unit_pid"], str(buzz), str(buzz), _sha256(buzz), [UNIT_USER[0]] * 4), identity
++                identity["entrypoint_sha256"], identity["uid"], identity["gid"]) == \
++            (pair["unit_pid"], str(buzz), str(buzz), _sha256(buzz), [UNIT_USER[0]] * 4, [UNIT_USER[1]] * 4), identity
+         # D-051: the pair's namespace allowed exactly {relay, OmniRoute} (observed rules).
+         rules = json.loads((evidence / "buzz-acp" / "runtime.json").read_text())["rules"]
+         assert sorted(r for r in rules if " -j ACCEPT" in r and "-i lo" not in r and "-o lo" not in r) == sorted([
+@@ -3075,7 +3094,7 @@ def test_e3b_r4_sigint_stops_the_runner_with_130(e3dir):
+     listener = runner = None
+     try:
+         listener = _listener(e3dir, 18124)
+-        runner = subprocess.Popen(["bash", str(RUNNER), str(evidence), "hermes-acp"],
++        runner = subprocess.Popen(SIGNALS_DEFAULT + ["bash", str(RUNNER), str(evidence), "hermes-acp"],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+         _wait_for(lambda: _standin_records(e3dir), 60, "the unit to start inside the namespace")
+         standin = _standin_records(e3dir)[0]["pid"]
+@@ -3113,7 +3132,7 @@ def test_e3b_r4_a_stop_in_the_first_leg_starts_no_second_leg(e3dir):
+     listener = runner = None
+     try:
+         listener = _listener(e3dir, port)
+-        runner = subprocess.Popen(["bash", str(RUNNER), str(evidence), "hermes-acp", "buzz-acp"],
++        runner = subprocess.Popen(SIGNALS_DEFAULT + ["bash", str(RUNNER), str(evidence), "hermes-acp", "buzz-acp"],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+         _wait_for(lambda: _standin_records(e3dir), 60, "the first unit to start inside its namespace")
+         with open(ip_log, "a") as handle:
+@@ -3161,8 +3180,9 @@ signal.signal(signal.SIGTERM, _slow_stop)
+ 
+ 
+ def _runner_session(env, evidence, *units):
+-    """The REAL runner in its own session: its pgid is its pid, the group a group-directed signal names."""
+-    return subprocess.Popen(["bash", str(RUNNER), str(evidence), *units], stdout=subprocess.PIPE,
++    """The REAL runner in its own session: its pgid is its pid, the group a group-directed signal names. It starts
++    through SIGNALS_DEFAULT (task #331), so a signal test does not depend on how its gate was launched."""
++    return subprocess.Popen(SIGNALS_DEFAULT + ["bash", str(RUNNER), str(evidence), *units], stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, env=env, start_new_session=True)
+ 
+ 
+@@ -4293,3 +4313,486 @@ def test_i59b_a_non_root_run_that_carries_sudo_ids_runs_as_before(e3dir):
+         run = subprocess.run(drop, capture_output=True, text=True, timeout=60, env=env)
+         assert (run.returncode, run.stderr) == (2, "run_s0_05_units: cannot run here (not-root)\n"), run.stderr
+     assert _entries(e3dir) == before
++
++
++# ===================================================================== I59-F (task #335): the I59-B follow-ups
++# tasks/briefs/i59/I59-F-brief.md, from VERIFY-I59-BCE's B-1 to B-6 and item 3 (task #331).
++
++
++def test_i59f_signal_tests_start_the_runner_with_int_hup_and_quit_at_their_defaults():
++    """Task #331 (AF-AP-234): a bash started with SIGINT, SIGHUP and SIGQUIT ignored cannot trap them, which is how a
++    detached gate made four signal tests fail. Through SIGNALS_DEFAULT it traps all three, and it starts with none of
++    the five the shim sets ignored (its own interpreter ignores SIGPIPE and SIGXFSZ, which a bare exec would pass on).
++    Both launches first ignore the three, as a detached gate does; the bare launch shows the ignore reaching bash."""
++    def ignore_three():
++        for sig in (signal.SIGINT, signal.SIGHUP, signal.SIGQUIT):
++            signal.signal(sig, signal.SIG_IGN)
++    probe = ["bash", "-c", "trap 'exit 91' INT; trap 'exit 92' HUP; trap 'exit 93' QUIT; trap -p INT HUP QUIT; "
++                           "grep '^SigIgn:' /proc/$$/status"]
++    watched = (signal.SIGINT, signal.SIGHUP, signal.SIGQUIT, signal.SIGPIPE, signal.SIGXFSZ)
++
++    def ignored(run):
++        mask = int(run.stdout.splitlines()[-1].split()[1], 16)
++        return {sig for sig in watched if mask >> (sig - 1) & 1}
++    bare = subprocess.run(probe, preexec_fn=ignore_three, capture_output=True, text=True, timeout=30)
++    shimmed = subprocess.run(SIGNALS_DEFAULT + probe, preexec_fn=ignore_three, capture_output=True, text=True,
++                             timeout=30)
++    assert bare.stdout.splitlines()[:3] == ["trap -- '' SIGINT", "trap -- '' SIGHUP", "trap -- '' SIGQUIT"], bare
++    assert ignored(bare) == {signal.SIGINT, signal.SIGHUP, signal.SIGQUIT}, bare.stdout
++    assert shimmed.stdout.splitlines()[:3] == ["trap -- 'exit 91' SIGINT", "trap -- 'exit 92' SIGHUP",
++                                               "trap -- 'exit 93' SIGQUIT"], shimmed
++    assert ignored(shimmed) == set(), shimmed.stdout
++
++
++def _quoted(text):
++    """<text> as bash's own `printf %q` renders it: how the runner names a path that holds a newline."""
++    return subprocess.run(["bash", "-c", 'printf %q "$1"', "quote", text], capture_output=True, text=True,
++                          timeout=30, check=True).stdout
++
++
++@pytest.mark.parametrize("shape", ["a-clone-whose-name-ends-in-a-newline", "a-link-to-that-clone",
++                                   "a-path-through-a-link-to-that-clone", "a-newline-that-dotdot-drops"])
++def test_i59f_b1_an_evidence_root_that_holds_a_newline_is_refused_before_anything_is_written(tmp_path, shape):
++    """VERIFY-I59-BCE B-1, through the real runner: `$(readlink -m …)` and `$(dirname …)` drop trailing newlines, so
++    the work-tree walk read a clone named `nlrepo<newline>` as `nlrepo` and the run wrote into the clone. A root that
++    holds a newline, as given or as resolved, is refused with exit 73 and a named reason before anything is written:
++    the verifier's reproduction; a symbolic link to that clone (the given path holds no newline, the resolved one ends
++    in it, and only a sentinel read keeps it); a path through that link (the newline sits mid-path, where the walk's
++    `$(dirname …)` would drop it at an ancestor); a newline that `..` drops (no clone at all: the refusal keys on the
++    newline). On a venue without root the old runner stopped at its venue check (exit 2), so the rc reds there too."""
++    env = _git_free_environ(tmp_path)
++    clone = tmp_path / "nlrepo\n"
++    if shape != "a-newline-that-dotdot-drops":
++        subprocess.run(["git", "init", "-q", str(clone)], check=True, timeout=30, env=env)
++        inside = subprocess.run(["git", "-C", str(clone), "rev-parse", "--is-inside-work-tree"], capture_output=True,
++                                text=True, timeout=30, env=env)
++        assert inside.stdout == "true\n", (inside.returncode, inside.stderr)     # git itself reads a work tree
++    if shape in ("a-link-to-that-clone", "a-path-through-a-link-to-that-clone"):
++        (tmp_path / "link").symlink_to(clone)
++        root, real = (tmp_path / "link", clone) if shape == "a-link-to-that-clone" else \
++            (tmp_path / "link" / "evidence", clone / "evidence")
++        named = f"{_quoted(str(root))} resolves to {_quoted(str(real))}, which holds a newline"
++    else:
++        root = clone / "evidence" if shape == "a-clone-whose-name-ends-in-a-newline" else \
++            tmp_path / "a\n" / ".." / "evidence"
++        named = f"{_quoted(str(root))} holds a newline"
++    before = _entries(tmp_path)
++    runner = subprocess.run(["bash", str(RUNNER), str(root), "not-a-unit"], capture_output=True, text=True,
++                            timeout=120, env=env)
++    assert runner.returncode == 73, (runner.returncode, runner.stderr)
++    assert runner.stderr == (f"run_s0_05_units: evidence root refused: {named} (AF-AP-169: the work-tree check "
++                             "cannot read such a path exactly)\n"), runner.stderr
++    assert runner.stdout == "" and _entries(tmp_path) == before
++
++
++@NEEDS_ROOT
++@pytest.mark.parametrize("which", ["SUDO_UID", "SUDO_GID"])
++@pytest.mark.parametrize("value", ["4294967295", "4294967296", "4294967297"])
++def test_i59f_b4_under_sudo_an_id_above_4294967294_is_refused_before_anything_is_written(e3dir, which, value):
++    """VERIFY-I59-BCE B-4: the id pattern admits ten digits, and libc takes 32 bits, where 4294967295 is (uid_t)-1,
++    "no change". 4294967296 reached chown as 0 (root) and 4294967297 as 1 while the summary named the id asked for.
++    Under sudo an id above 4294967294, as SUDO_UID or SUDO_GID, is refused with exit 64 before anything is written."""
++    env = _sudo(_secret_free_environ())
++    env[which] = value
++    before = _entries(e3dir)
++    runner = subprocess.run(["bash", str(RUNNER), str(e3dir / "new"), "hermes-acp"], capture_output=True, text=True,
++                            timeout=120, env=env)
++    assert runner.returncode == 64, (runner.returncode, runner.stderr[-2000:])
++    assert runner.stderr == ("run_s0_05_units: SUDO_UID and SUDO_GID must be at most 4294967294, got "
++                             f"'{env['SUDO_UID']}:{env['SUDO_GID']}'\n"), runner.stderr
++    assert runner.stdout == "" and _entries(e3dir) == before
++
++
++def _handback_program():
++    """The Python program R's `_handback` runs (its heredoc), cut from R's bytes at call time as `_census_function`
++    cuts the census: a mutant of R is what these tests run. The runner starts it as `python3 -B - <root> <uid> <gid>`."""
++    text = RUNNER.read_text()
++    start = text.index("\n_handback() {") + 1
++    body = text.index("<<'PY'\n", start) + len("<<'PY'\n")
++    return text[body:text.index("\nPY\n}\n", body) + 1]
++
++
++def _handback(root, uid, gid, prefix=""):
++    return subprocess.run(["python3", "-B", "-", str(root), str(uid), str(gid)], input=prefix + _handback_program(),
++                          capture_output=True, text=True, timeout=120)
++
++
++@NEEDS_ROOT
++@pytest.mark.parametrize("uid,gid", [(4294967295, INVOKER[1]), (4294967296, INVOKER[1]), (4294967297, INVOKER[1]),
++                                     (INVOKER[0], 4294967295), (INVOKER[0], 4294967296), (INVOKER[0], 4294967297)])
++def test_i59f_b4_the_handback_itself_refuses_an_id_libc_would_cut(tmp_path, uid, gid):
++    """VERIFY-I59-BCE B-4, the handback's own check (the runner refuses first, so only R's own program, cut from R,
++    reaches it): an id above 4294967294 hands nothing back and says so; libc would have cut it to 32 bits. The same
++    program given ids in range hands the tree back (the cut is the working handback, not a stub)."""
++    root = tmp_path / "evidence"
++    (root / "sub").mkdir(parents=True)
++    (root / "sub" / "own.txt").write_text("the unit's file\n")
++    for entry in (root, root / "sub", root / "sub" / "own.txt"):
++        os.lchown(entry, *UNIT_USER)
++    before = _entries(root)
++    run = _handback(root, uid, gid)
++    assert (run.returncode, run.stdout) == (0, ""), run.stderr
++    assert run.stderr == (f"run_s0_05_units: handback: nothing handed back: {uid}:{gid} is out of range (each id is"
++                          " 0 to 4294967294)\n"), run.stderr
++    assert _entries(root) == before
++    run = _handback(root, *INVOKER)
++    assert {entry[:2] for entry in _entries(root).values()} == {INVOKER}, run.stderr
++
++
++# The mover of the test below: the first time the walk opens "..", a mover has just renamed the directory the walk
++# stands in out of the root (after the walk handed back all of it, before it climbs back).
++MOVE_BEFORE_THE_WAY_UP = """
++import os as _os
++_open, _moved = _os.open, []
++def _open_after_a_move(path, flags, mode=0o777, *, dir_fd=None):
++    if path == ".." and not _moved:
++        _moved.append(_os.rename(@@FROM@@, @@TO@@))
++    return _open(path, flags, mode, dir_fd=dir_fd)
++_os.open = _open_after_a_move
++"""
++
++
++@NEEDS_ROOT
++def test_i59f_b3_the_walk_stops_where_a_directory_moved_under_it(tmp_path):
++    """B-3's way back up: the walk climbs through "..", which must be the directory it came down from. A mover
++    renames evidence/a/b to outside/b just before the walk climbs out of it; ".." is then outside/, and the walk stops
++    and says so on its summary line. What it had not reached (evidence/a/c, evidence/z) is left as it is. Without the
++    check the walk would go on from outside/ and hand back what lies there: the decoys outside/c and z beside the root
++    carry the names the walk still had to visit, so a walk that climbs anywhere but home changes them."""
++    root, outside = tmp_path / "evidence", tmp_path / "outside"
++    for rel in ("a/b", "a/c", "z"):
++        (root / rel).mkdir(parents=True)
++    (outside / "c").mkdir(parents=True)
++    (tmp_path / "z").mkdir()
++    for entry in (root, root / "a", root / "a" / "b", root / "a" / "c", root / "z", outside, outside / "c",
++                  tmp_path / "z"):
++        os.lchown(entry, *UNIT_USER)
++    mover = MOVE_BEFORE_THE_WAY_UP.replace("@@FROM@@", repr(str(root / "a" / "b"))).replace(
++        "@@TO@@", repr(str(outside / "b")))
++    run = _handback(root, *INVOKER, prefix=mover)
++    assert (run.returncode, run.stdout) == (0, ""), run.stderr
++    assert run.stderr == (f"run_s0_05_units: handback: 3 entries of {root} (the root included) now belong to "
++                          f"{INVOKER[0]}:{INVOKER[1]}; then it stopped: {root / 'a' / 'b'} moved while it ran, so what"
++                          " it had not reached is left as it is\n"), run.stderr
++    assert {rel: owner[:2] for rel, owner in _entries(root).items()} == {".": INVOKER, "a": INVOKER, "a/c": UNIT_USER,
++                                                                         "z": UNIT_USER}
++    assert os.lstat(outside / "b")[4:6] == INVOKER          # handed back while it was the root's
++    assert {os.lstat(path)[4:6] for path in (outside, outside / "c", tmp_path / "z")} == {UNIT_USER}
++
++
++@NEEDS_NETNS
++@pytest.mark.parametrize("kind", ["tmpfs", "bind"], ids=["a-tmpfs-B6", "a-bind-mount-B2"])
++def test_i59f_the_handback_leaves_a_mount_under_the_root_as_it_is(e3dir, kind):
++    """VERIFY-I59-BCE B-6 and B-2, on a real leg under sudo stopped by SIGTERM: a mount made under the evidence root
++    while the unit serves is left as it is, named on stderr with its reason, and counted in the summary. A tmpfs is
++    another filesystem (st_dev; B-6: no test reached that branch, and mutant X6 survived). A bind mount of a directory
++    outside the root is the root's own filesystem, the same st_dev, so only its mount id tells it apart (B-2: the
++    handback walked into it and gave the outside directory and its file to the invoking user)."""
++    ns = "s0-05-hermes-acp"
++    port = 18153 if kind == "tmpfs" else 18154
++    outside = e3dir / "outside"
++    outside.mkdir()
++    (outside / "theirs.txt").write_text("a file outside the evidence root\n")
++    for entry in (outside, outside / "theirs.txt"):
++        os.chown(entry, *UNIT_USER)
++    untouched = _entries(outside)
++    env = _sudo(_runner_env(e3dir, port))
++    evidence = _invoker_dir(e3dir) / "evidence"
++    mnt = evidence / "hermes-acp" / "scratch" / "home" / "mnt"
++    listener = runner = None
++    mounted = False
++    try:
++        listener = _listener(e3dir, port)
++        runner = _runner_session(env, evidence, "hermes-acp")
++        _wait_for(lambda: _standin_records(e3dir), 60, "the unit to serve")
++        mnt.mkdir()
++        if kind == "tmpfs":
++            subprocess.run(["mount", "-t", "tmpfs", "-o", "size=1m,mode=0755", "tmpfs", str(mnt)], check=True,
++                           timeout=30)
++            (mnt / "on-the-tmpfs.txt").write_text("root's file on the tmpfs\n")
++        else:
++            subprocess.run(["mount", "--bind", str(outside), str(mnt)], check=True, timeout=30)
++        mounted = True
++        held = _entries(mnt)
++        runner.send_signal(signal.SIGTERM)
++        out, err = runner.communicate(timeout=120)
++        assert _entries(mnt) == held, "the handback changed what the mount holds"
++    finally:
++        _stop(runner)
++        if mounted and subprocess.run(["umount", str(mnt)], timeout=30).returncode != 0:
++            subprocess.run(["umount", "-l", str(mnt)], timeout=30)
++        _stop(listener)
++        _lib(f"egress_ns_destroy {ns}")
++    assert runner.returncode == 143, (runner.returncode, err[-3000:])
++    assert _census(ns) == CLEAN
++    assert _entries(outside) == untouched
++    reason = {"tmpfs": "another filesystem", "bind": "a mount point: another mount of this filesystem"}[kind]
++    left = [line for line in err.splitlines() if line.startswith("run_s0_05_units: handback: left as it is: ")]
++    assert left == [f"run_s0_05_units: handback: left as it is: {mnt} ({reason})"], err[-3000:]
++    owners = {rel: entry[:2] for rel, entry in _entries(evidence).items()}
++    assert owners.pop("hermes-acp/scratch/home/mnt") == (0, 0), owners     # the directory under the mount, unseen
++    assert set(owners.values()) == {INVOKER}, owners
++    assert (f"run_s0_05_units: handback: {len(owners)} entries of {evidence} (the root included) now belong to "
++            f"{INVOKER[0]}:{INVOKER[1]}; 1 left as they are") in err.splitlines(), err[-3000:]
++
++
++# The unit's scratch tree 1,100 levels deep: `deep` and 1,099 levels of `d`, and at the bottom a file with a second
++# name beside it (a hard link inside the root, so both names are left and counted). The marker tells the test the
++# tree is whole: the unit writes its record BEFORE this code runs.
++DEEP_TREE = """
++_top = os.path.join(os.environ["HOME"], "deep")
++os.mkdir(_top)
++os.chdir(_top)
++for _ in range(1099):
++    os.mkdir("d")
++    os.chdir("d")
++with open("bottom.txt", "w") as fh:
++    fh.write("the deepest file\\n")
++os.link("bottom.txt", "bottom-link.txt")
++os.chdir(os.environ["HOME"])
++open(os.path.join(REC, "deep-done"), "w").close()
++"""
++
++
++def _owners(path):
++    """{path relative to <path>: (uid, gid)} for <path> and every entry under it, never following a symbolic link. A
++    stack, not os.walk: Python 3.11's os.walk recurses once per level and raises RecursionError on the tree above."""
++    out, todo = {}, [str(path)]
++    while todo:
++        entry = todo.pop()
++        st = os.lstat(entry)
++        out[os.path.relpath(entry, path)] = (st.st_uid, st.st_gid)
++        if stat.S_ISDIR(st.st_mode):
++            todo.extend(os.path.join(entry, name) for name in os.listdir(entry))
++    return out
++
++
++@NEEDS_NETNS
++@pytest.mark.parametrize("nofile", [None, 1024], ids=["the-venue-limit", "nofile-1024"])
++def test_i59f_b3_the_handback_hands_back_a_1100_level_tree_and_counts_what_it_leaves(e3dir, nofile):
++    """VERIFY-I59-BCE B-3, on a real leg under sudo stopped by SIGTERM: the unit leaves a tree 1,100 levels deep with
++    two names of one file at the bottom. The recursive walk dropped everything below about 1,000 levels (RecursionError),
++    or below 511 under RLIMIT_NOFILE 1024 (EMFILE: two descriptors per level), and counted the lost subtree as one
++    entry. The iterative walk hands back every entry but the two names, names both, and counts them: its summary is
++    the census's. Run at this venue's descriptor limit, and at 1024 (the PC root's, inferred) set on the runner."""
++    port = 18155 if nofile is None else 18156
++    env = _sudo(_runner_env(e3dir, port, extra=DEEP_TREE))
++    evidence = _invoker_dir(e3dir) / "evidence"
++    bottom = evidence / "hermes-acp" / "scratch" / "home" / "deep" / os.path.join(*["d"] * 1099)
++    limit = (lambda: resource.setrlimit(resource.RLIMIT_NOFILE, (nofile, nofile))) if nofile else None
++    listener = runner = None
++    try:
++        try:
++            listener = _listener(e3dir, port)
++            runner = subprocess.Popen(SIGNALS_DEFAULT + ["bash", str(RUNNER), str(evidence), "hermes-acp"],
++                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
++                                      start_new_session=True, preexec_fn=limit)
++            _wait_for(lambda: (e3dir / "rec" / "deep-done").exists(), 60, "the unit to make its 1,100-level tree")
++            runner.send_signal(signal.SIGTERM)
++            out, err = runner.communicate(timeout=180)
++        finally:
++            _stop(runner)
++            _stop(listener)
++            _lib("egress_ns_destroy s0-05-hermes-acp")
++        assert runner.returncode == 143, (runner.returncode, err[-3000:])
++        assert _census("s0-05-hermes-acp") == CLEAN
++        owners = _owners(evidence)
++        links = {os.path.relpath(bottom / name, evidence) for name in ("bottom.txt", "bottom-link.txt")}
++        assert {rel for rel, owner in owners.items() if owner != INVOKER} == links, sorted(
++            (len(rel), owner) for rel, owner in owners.items() if owner != INVOKER)[:3]
++        assert {owners[rel] for rel in links} == {UNIT_USER} and len(owners) > 1100
++        left = sorted(line for line in err.splitlines() if line.startswith("run_s0_05_units: handback: left as it is"))
++        assert left == [f"run_s0_05_units: handback: left as it is: {bottom / name} (a hard link: 2 paths name it)"
++                        for name in ("bottom-link.txt", "bottom.txt")], [line[-120:] for line in left]
++        assert (f"run_s0_05_units: handback: {len(owners) - 2} entries of {evidence} (the root included) now belong "
++                f"to {INVOKER[0]}:{INVOKER[1]}; 2 left as they are") in err.splitlines(), err[-600:]
++    finally:
++        subprocess.run(["rm", "-rf", "--", str(evidence)], timeout=120)   # e3dir's rmtree recurses per level too
++
++
++# ===================================================================== I59-F round 2: the fold of A-1 and A-4
++# A-1 (containment): an explicit S0_05_UNIT_USER is <uid>:<gid> in canonical decimal (no sign, no leading zero, no
++# empty part) with each id from 1 to 4294967294, or the run stops with exit 64 before anything is written and before
++# any unit launches. Round 1 measured the hole: setpriv cut --reuid=4294967296 to 0 and the stand-in ran as uid 0; A7
++# refused the leg only after the launch. 4294967295 is (uid_t)-1, "no change", which leaves root in place; 0 is root;
++# a gid of 0 is the root group (VERIFY-E3 F11, never ruled on).
++BAD_UNIT_USERS = ["4294967296:4294967296", "4294967295:4294967295", "0:0", "00:00", "01:1", "-1:1", ":1", "1:",
++                  "1x:1", "12345678901:1"]
++UNIT_USER_REFUSED = ("run_s0_05_units: S0_05_UNIT_USER must be <uid>:<gid>, got '{}' (each id a decimal from 1 to "
++                     "4294967294, no sign and no leading zero: 0 is root, and setpriv takes 4294967295 as no change "
++                     "and cuts a larger id to 32 bits)")
++
++
++@NEEDS_NETNS
++@pytest.mark.parametrize("value", BAD_UNIT_USERS)
++def test_i59f_a1_an_explicit_unit_user_outside_1_to_4294967294_is_refused_before_any_unit_runs(e3dir, value):
++    """Through the real runner, with a listener, so a leg that got past the check would reach its launch (round 1:
++    4294967296:4294967296 launched the stand-in as root). Each value: exit 64, the refusal as stderr's last line, no
++    stdout, the evidence root never made, no unit record, no namespace left."""
++    port = 18160 + BAD_UNIT_USERS.index(value)
++    env = _runner_env(e3dir, port, unit_user=value)
++    evidence = e3dir / "evidence"
++    listener = runner = None
++    try:
++        listener = _listener(e3dir, port)
++        runner = _run_runner(env, evidence, "hermes-acp", timeout=240)
++    finally:
++        _stop(listener)
++        _lib("egress_ns_destroy s0-05-hermes-acp")
++    assert runner.returncode == 64, (runner.returncode, _standin_records(e3dir), runner.stderr[-3000:])
++    assert runner.stderr.splitlines()[-1] == UNIT_USER_REFUSED.format(value), runner.stderr[-3000:]
++    assert runner.stdout == "" and not evidence.exists()
++    assert _standin_records(e3dir) == [], "a unit ran"
++    assert _census("s0-05-hermes-acp") == CLEAN
++
++
++@NEEDS_NETNS
++def test_i59f_a1_a_unit_user_in_range_proceeds(e3dir):
++    """The positive control: 65534:65534 passes the check, and the unit runs as that user (its own record); the leg is
++    then stopped with SIGTERM."""
++    port = 18170
++    env = _runner_env(e3dir, port, unit_user="65534:65534")
++    evidence = e3dir / "evidence"
++    listener = runner = None
++    try:
++        listener = _listener(e3dir, port)
++        runner = _runner_session(env, evidence, "hermes-acp")
++        _wait_for(lambda: _standin_records(e3dir), 60, "the unit to start inside the namespace")
++        record = _standin_records(e3dir)[0]
++        runner.send_signal(signal.SIGTERM)
++        out, err = runner.communicate(timeout=120)
++    finally:
++        _stop(runner)
++        _stop(listener)
++        _lib("egress_ns_destroy s0-05-hermes-acp")
++    assert (record["uid"], record["gid"]) == (65534, 65534), record
++    assert runner.returncode == 143, (runner.returncode, err[-3000:])
++    assert "S0_05_UNIT_USER must be" not in err, err[-3000:]
++    assert _census("s0-05-hermes-acp") == CLEAN
++
++
++# A-4: the pair identity path lost a trailing newline in `_pair_identity`'s `$(readlink -m …)`. The loss shows in
++# the refusal: a regular identity file named `.secrets<newline>`, beside S0-01's `.secrets` and not under it, was
++# refused as `S0-01 path <base>/.secrets`, a path it does not have. A path holding a newline, as given or as
++# resolved, is now refused with exit 73 before anything is written, as the evidence root is (B-1).
++@NEEDS_NETNS
++@pytest.mark.parametrize("shape", ["a-file-whose-name-ends-in-a-newline", "a-link-to-that-file",
++                                   "a-path-through-a-link-to-a-directory-whose-name-ends-in-a-newline",
++                                   "a-newline-that-dotdot-drops"])
++def test_i59f_a4_a_pair_identity_path_that_holds_a_newline_is_refused_before_anything_is_written(e3dir, shape):
++    """Through the real runner, the pair's leg with its pins overridden and S0-01's base under the test's control:
++    exit 73, the refusal as stderr's last line (paths quoted with bash's own `printf %q`), no stdout, the evidence root
++    never made. The identity file is a valid one (mode 0600, the unit user's, a key line), so on the old runner the
++    only refusal was the misread path. The key's value is printed nowhere."""
++    base = e3dir / "s0-01-pinned"
++    env = _runner_env(e3dir, 18171, override={**_pair_override(e3dir), "PINNED_HERMES_HOME": str(base / ".hermes-home")})
++    beside = _identity_file(base / ".secrets\n")
++    keys = e3dir / "keys\n"
++    inside = _identity_file(keys / "pair.env")
++    (e3dir / "file-link").symlink_to(beside)
++    (e3dir / "dir-link").symlink_to(keys)
++    if shape == "a-file-whose-name-ends-in-a-newline":
++        given, real = beside, None
++    elif shape == "a-link-to-that-file":
++        given, real = e3dir / "file-link", beside
++    elif shape == "a-path-through-a-link-to-a-directory-whose-name-ends-in-a-newline":
++        given, real = e3dir / "dir-link" / "pair.env", inside
++    else:
++        given, real = e3dir / "a\n" / ".." / "keys-too" / "pair.env", None
++    env["S0_05_PAIR_IDENTITY"] = str(given)
++    named = f"{_quoted(str(given))} holds a newline" if real is None else \
++        f"{_quoted(str(given))} resolves to {_quoted(str(real))}, which holds a newline"
++    evidence = e3dir / "evidence"
++    try:
++        runner = _run_runner(env, evidence, "buzz-acp")
++    finally:
++        _lib("egress_ns_destroy s0-05-buzz-acp")
++    assert runner.returncode == 73, (runner.returncode, runner.stderr[-3000:])
++    assert runner.stderr.splitlines()[-1] == (f"run_s0_05_units: S0_05_PAIR_IDENTITY refused: {named} (the identity"
++                                              " checks cannot read such a path exactly)"), runner.stderr[-3000:]
++    assert runner.stdout == "" and not evidence.exists()
++    assert PAIR_KEY not in runner.stderr
++    assert _census("s0-05-buzz-acp") == CLEAN
++
++
++# ===================================================================== I59-F round 3: VERIFY-E3 F11, both halves
++# D-R2-3. A unit user RESOLVED from the pinned agent's owner is refused with a gid of 0 (the root group), as an explicit
++# one is since round 2: exit 64 before anything is written and before any unit launches. A resolved uid 0 with another
++# group keeps A4's per-unit row (test_a4_a_root_unit_user_is_refused). And A7 reads the Gid line beside the Uid line,
++# records it in unit-identity.json and compares the real gid with the wanted one as numbers.
++DEFAULT_GID0_OWNERS = [(65534, 0), (0, 0)]
++DEFAULT_GID0_REFUSED = ("run_s0_05_units: the unit user resolved from the pinned agent's owner, '{}', has gid 0 (the "
++                        "root group): set S0_05_UNIT_USER to <uid>:<gid>, each id from 1 to 4294967294")
++
++
++@NEEDS_NETNS
++@pytest.mark.parametrize("owner", DEFAULT_GID0_OWNERS, ids=["65534:0", "0:0"])
++def test_i59f_r3_a_default_unit_user_with_gid_0_is_refused_before_any_unit_runs(e3dir, owner):
++    """Through the real runner, with no S0_05_UNIT_USER and a listener, so a leg that got past the check would reach its
++    launch (on the round-2 runner, 65534:0 ran the stand-in with gid 0). Each owner of the agent: exit 64, the refusal
++    as stderr's last line, no stdout, the evidence root never made, no unit record, no namespace left."""
++    port = 18172 + DEFAULT_GID0_OWNERS.index(owner)
++    env = _runner_env(e3dir, port, unit_user=None)
++    os.chown(json.loads((e3dir / "override.json").read_text())["PINNED_AGENT_REALPATH"], *owner)
++    evidence = e3dir / "evidence"
++    listener = runner = None
++    try:
++        listener = _listener(e3dir, port)
++        runner = _run_runner(env, evidence, "hermes-acp", timeout=240)
++    finally:
++        _stop(listener)
++        _lib("egress_ns_destroy s0-05-hermes-acp")
++    assert runner.returncode == 64, (runner.returncode, _standin_records(e3dir), runner.stderr[-3000:])
++    assert runner.stderr.splitlines()[-1] == DEFAULT_GID0_REFUSED.format("%d:%d" % owner), runner.stderr[-3000:]
++    assert runner.stdout == "" and not evidence.exists()
++    assert _standin_records(e3dir) == [], "a unit ran"
++    assert _census("s0-05-hermes-acp") == CLEAN
++
++
++@NEEDS_NETNS
++def test_i59f_r3_a7_refuses_a_unit_whose_gid_is_not_the_wanted_gid(e3dir):
++    """A7 compares the Gid line's real gid with the wanted gid, as numbers. A PATH `setpriv` shim runs the real
++    setpriv with every --regid replaced (65533 asked, 65532 given) and the uid as asked. The unit user is 65534:65533,
++    so its uid and gid differ and the refusal names the wanted gid, not the uid. The canaries never run."""
++    port = 18174
++    shim = e3dir / "shim"
++    shim.mkdir()
++    (shim / "setpriv").write_text(
++        "#!/bin/bash\n# I59-F round 3 test fault: a setpriv that sets another gid than the one asked for\n"
++        'args=(); for a in "$@"; do case $a in --regid=*) args+=(--regid=65532);; *) args+=("$a");; esac; done\n'
++        f'exec {shutil.which("setpriv")} "${{args[@]}}"\n')
++    (shim / "setpriv").chmod(0o755)
++    env = _runner_env(e3dir, port, path_prefix=shim, unit_user="65534:65533")
++    evidence = e3dir / "evidence"
++    listener = None
++    try:
++        listener = _listener(e3dir, port)
++        _run_runner(env, evidence, "hermes-acp", timeout=240)
++        row = _unit_row(evidence, "hermes-acp")
++        assert (row["status"], row.get("reason")) == ("not-run", "unit identity not observed: gid 65532 is not 65533"), row
++        identity = json.loads((evidence / "hermes-acp" / "unit-identity.json").read_text())
++        assert (identity["uid"], identity["gid"]) == ([65534] * 4, [65532] * 4), identity
++        assert not (evidence / "hermes-acp" / "canaries.jsonl").exists(), "the canaries ran for an unobserved unit"
++    finally:
++        _stop(listener)
++        _lib("egress_ns_destroy s0-05-hermes-acp")
++    assert _census("s0-05-hermes-acp") == CLEAN
++
++
++def test_i59f_r3_the_checker_reads_an_identity_record_that_carries_the_gid(tmp_path):
++    """unit-identity.json's one reader, check_egress.py's check_unit_identity, asks only for its seven keys: the
++    committed records (no gid) and the runner's new ones (a gid) grade alike. The synthetic-pass bundle with the
++    Gid line added passes and prints the same identity line."""
++    bundle = tmp_path / "bundle"
++    shutil.copytree(SYNTHETIC, bundle)
++    record = bundle / "hermes-acp" / "unit-identity.json"
++    data = json.loads(record.read_text())
++    assert "gid" not in data, data
++    data["gid"] = [1000, 1000, 1000, 1000]
++    record.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
++    before = run_checker(SYNTHETIC, "--units", "curl,hermes-acp")
++    after = run_checker(bundle, "--units", "curl,hermes-acp")
++    assert after.returncode == before.returncode == 0, (before.stdout, after.stdout)
++    line = (f"unit-identity: hermes-acp pid 424242 runs {PINS.PINNED_AGENT_REALPATH} "
++            f"(sha256 {PINS.PINNED_AGENT_ENTRYPOINT_SHA256[:12]}) as uid 1000")
++    assert line in after.stdout.splitlines() and line in before.stdout.splitlines(), after.stdout
