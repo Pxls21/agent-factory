@@ -11,6 +11,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-28 18:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin 5a6250c (its CI run #1117 pending), plus local commits; the main tree is the primary.**
+- **RUNNING (sandbox, three lanes):** I59-F round 4 (task #335 + #344, worktree `/home/user/i59-landing`); LS-B9 round 2 (task #339: ripwire and sentrux in the stacks); VERIFY-SCRUB2-R1-R2 (task #321). In the background: the deduplicated archive of the 11 GB of mutation copies (`/home/user/scratch-archive.git`; the first third packed to 51 MB), to ship to the PC with `.../scratchpad/ship_bundle.py` (ship_to_pc.py's verified chunk protocol), then deleted here (D-104 (2)).
+- **HOME:** VERIFY-LS-B7 (MERGE-READY-WITH-FOLLOWUPS; go-live preconditions P1-P6 in its report: the override table between `## 1.` and `## 2.`, a dry run then the apply, no hand TaskCreate that turn, the CLAUDE.md rule change, the first-Stop checks, the manifest regenerated at landing); VERIFY-I59-F (folded into round 4).
+- **NEXT:** once the 11 GB is off the disk: land LS-B7 (manifest regeneration), a small LS-B7 round 2 if a slot is free (the verify's F-2 guard against a `## 1b.` after `## 2.`, F-7, F-10, F-5), then go live; the audit for task #346 (D-105, the Jev context trimmer); VERIFY-LS-B9 after its round 2; after I59-F round 4, its verify, then the one re-mint.
+- **WAITING ON THE OWNER:** only the chat form of LS-DESIGN v2 §3 (the command form stands).
+
 **2026-09-28 18:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin c4b87d1 (CI run #1116 passed), plus local commits; the main tree is the primary.**
 - **RUNNING (sandbox, three lanes):** I59-F round 4 (task #335 + #344: VERIFY-I59-F's follow-ups and the S0-01 parse fix, worktree `/home/user/i59-landing`); VERIFY-LS-B7 (task #339); LS-B9 round 2 (task #339: ripwire in `gate`, a `review` stack with sentrux and ripwire, D-104 (1)).
