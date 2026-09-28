@@ -11,6 +11,14 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-28 23:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin 0c11fd1, plus local commits; the main tree is the primary.**
+- **RUNNING (sandbox, three lanes, the D-062 limit):** T0-REPLAY (task #346, D-105); VERIFY-SCRUB2 round 3 (task #321); VERIFY-I59-F round 5 (task #335).
+- **BRIEFED, WAITING FOR A SLOT (drafts in the scratchpad, premise at dispatch):** T1, the hermes-lcm audit (task #346); LS-B9 round 4 with the stacks' wiring (task #339).
+- **D-105:** `docs/research/findings/jev-trim/D105-DESIGN-v1.md`, four owner questions (§8).
+- **NEXT:** harvest each lane as it finishes; after VERIFY-I59-F, the landing and the re-mint of S0-01 to S0-05 with the owner's one signature; after VERIFY-SCRUB2, land or repair the scrubber.
+- **WAITING ON THE OWNER:** the D-105 questions; the chat form of LS-DESIGN v2 §3 (the command form stands).
+
 **2026-09-28 23:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin 6222e4a (the LS-B9 landing, the D-105 design and the TRIM-AUDIT on origin), plus local commits; the main tree is the primary.**
 - **RUNNING (sandbox):** T0-REPLAY (task #346, D-105).
