@@ -12,7 +12,7 @@ last_compiled: 2026-09-03
 ## Active lanes
 
 **2026-09-28 21:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
-- **Origin d71197e (CI run #1122 running), plus local commits; the main tree is the primary.**
+- **Origin a430de7 (CI run #1123 running); the main tree is the primary.**
 - **RUNNING (sandbox, three lanes):** VERIFY-I59-F round 4 (tasks #335 and #344); SCRUB2-R1 round 3 (task #321); TRIM-AUDIT (task #346, D-105).
 - **HOME:** LS-B9 round 3 (F-1 fixed; the stacks await their verify).
 - **BRIEFED, WAITING FOR A SLOT:** VERIFY-LS-B9 round 3 (`tasks/briefs/labeling/VERIFY-LS-B9-R3-brief.md`).
