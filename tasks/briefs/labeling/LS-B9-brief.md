@@ -262,3 +262,32 @@ absolute in a worktree, hence `--path-format=absolute` (git 2.43.0 here); and `s
 list of gate-defining files, a different thing from your `scripts/gate_files.py` (its walk covers `scripts/hooks/*`,
 `.github/workflows/*.yml` and `proofs/*/check_*.py`, so your files need no entry there; `tests/test_no_laya_in_gates.py`
 stays in your gate to prove it).
+
+## ROUND 2 (sent to the lane by message 2026-09-28 18:15:33Z; verbatim)
+
+The coordinator sent round 2 as a message to the resumed lane; the text below is copied from the transcript's SendMessage input, so the contract lives in the repo.
+
+> LS-B9 round 2 (task #339): make ripwire and sentrux active in the stacks, then fix your own findings. The owner, 2026-09-28 18:1xZ: "I want them active and used, especially in the stacks we create labels for." Both are installed here (ripwire 0.4.0 and sentrux 0.5.7, digest-pinned by scripts/setup.sh). Today only `impact` and `ctx` run ripwire, and no stack runs sentrux.
+>
+> Nothing inside your boundary changed while you were idle. Your report of record is tasks/briefs/labeling/LS-B9-report.md; the coordinator saved it with your own `harvest` stack. Same rules as round 1: no git writes, no PC bridge, no subagents, no outward action, no stub. Boundary: your five files, plus a new helper script if an item needs one (name it). Read everything else. Never edit scripts/ripwire_review.sh, scripts/sentrux_review.sh or scripts/lint_delta.py: task #345 owns the wrappers.
+>
+> Items. Each gets a test, a named mutant its test kills, and a real run on this tree pasted in the report.
+> 1. `gate` uses ripwire. Add a step `graph` = `bash scripts/ripwire_review.sh test-gate {paths*}`: the tests the call graph links to the change, plus the untested blast radius. Add a parameter `graph=yes|no`, default yes. With yes, the run step's test list is the union of gate_files' list and ripwire's tests-to-run list. Parse ripwire's list with a small helper; first verify its output format, and paste a real one. The print shows which tests came from which source.
+> 2. A new `review` stack (moved up from wave 2). Parameters: `files` (paths) and `mode` (check, save or compare; default check). Steps:
+>    - `sentrux` = `bash scripts/sentrux_review.sh {mode}`, advisory (required = false; it is never a gate);
+>    - `ripwire` = `bash scripts/ripwire_review.sh test-gate {files*}`;
+>    - `lint` = `scripts/lint_delta.py` on the files (verify its CLI first);
+>    - `ap` = `python3 scripts/ap_screen.py {files*}`.
+>    Use it as `review mode=save` before a build lane and `review mode=compare files=...` after it. Mark `review` as rated (item 5).
+> 3. A missing instrument never reads ok. The wrappers print "missing" and exit 0 when their binary is absent (task #345). Add a step field `unmapped_if`: a literal output substring that turns the step's status into `unmapped — <tool> unavailable`, and fails the run when the step is required. Set it on every ripwire and sentrux step. Test it with RIPWIRE_BIN or SENTRUX_BIN pointed at a missing path.
+> 4. D12: add a built-in `{tmp}`, a per-run directory outside any git work tree (under /tmp, named by the run id). Create it before the first step and remove it after the run, on success, failure and signal alike. The gate run step uses `--basetemp={tmp}/bt`. Prove it with a test that needs a temp dir outside every repository, red under round 1's in-tree basetemp.
+> 5. D19: only stacks with `rated = true` take ratings (find, ctx, impact, echo, review). `rate` and `--rate` refuse any other run with exit 2.
+> 6. Cap saved output per step (20 MB default; a per-step `save_cap_mb`). Truncate with a marker line, and record `truncated: true`. Disk is about 1.3 GB free.
+> 7. `harvest`:
+>    (a) The lint steps become advisory (required = false). A report whose citations the linter misreads still harvests with exit 0, and the lint lines still print.
+>    (b) The extractor also finds a lane's full report. Today a lane (the scrubber repair, 2026-09-28) put its whole report, 63,540 characters, in its final assistant TEXT message and a 3,568-character summary in its hand-back, and `harvest` saved only the summary. handback_extract.py saves the hand-back message as before and, when the lane's last long assistant text block (text blocks only, never a thinking block) is longer, also saves it as `report.md` and says which is longer. The lint runs on the longer one.
+>    (c) D21: with no hand-back, the lint step is SKIPPED, not failed.
+>
+> Gates: tests/test_stack.py and your round-1 gate set, twice each, pasted with set ids. Pass a private --basetemp outside any work tree. Add a CI rehearsal (Python 3.12, no instruments on the PATH): the ripwire and sentrux steps read unmapped there, never ok.
+>
+> Report: append "## Round 2 (ripwire and sentrux active; the round-1 findings)" to your report text. If the file write is refused again, return the whole round-2 section as your final message. Put the full text in the hand-back message itself, not a summary.
