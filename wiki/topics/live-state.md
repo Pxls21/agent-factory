@@ -11,6 +11,14 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-28 19:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin 9d67998 (CI run #1118 running), plus the LS-B7 landing and this note to push; the main tree is the primary.**
+- **RUNNING (sandbox, three lanes):** I59-F round 4 (tasks #335 and #344, worktree `/home/user/i59-landing`); LS-B9 round 2 (task #339: ripwire and sentrux in the stacks); VERIFY-SCRUB2-R1-R2 (task #321).
+- **LIVE NOW (D-102):** the task list is a view of the ledger (`scripts/task_sync.py`, the Stop and SessionStart hooks; the override table `## 1b.`); a task changes only by a ledger edit (CLAUDE.md, Task tracking). P5 is owed after the first live Stop.
+- **DONE today:** the 11 GB on the PC and deleted here (D-104 (2)); six lessons baked; LS-B7 landed.
+- **NEXT:** P5; the audit for task #346 (D-105) when a slot frees; a small LS-B7 round 2 (F-2, F-7, F-10, F-5); VERIFY-LS-B9 after its round 2; after I59-F round 4, its verify, then the one re-mint.
+- **WAITING ON THE OWNER:** only the chat form of LS-DESIGN v2 §3 (the command form stands).
+
 **2026-09-28 19:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin 5a6250c (CI run #1117 passed), plus local commits to push; the main tree is the primary.**
 - **RUNNING (sandbox, three lanes):** I59-F round 4 (task #335 + #344, worktree `/home/user/i59-landing`); LS-B9 round 2 (task #339: ripwire and sentrux in the stacks); VERIFY-SCRUB2-R1-R2 (task #321).
