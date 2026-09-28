@@ -1,11 +1,11 @@
-> **COORDINATOR NOTE (2026-09-28 14:5xZ):** the LS-PREMORTEM lane (sandbox adversarial-verifier, served claude-opus-5-5 on all 215 assistant records, 0 refusal stops, per `scripts/hiccup_scan.py`) returned this report as its final message. This copy is extracted from its hand-back in the subagent transcript, never retyped; control tags are neutralized (`<` became `<\`), as the harness relay did. Disposition: `docs/research/findings/labeling/LS-DESIGN-v2-2026-09-28.md`.
+> **COORDINATOR NOTE (2026-09-28 14:5xZ):** the LS-PREMORTEM lane (sandbox adversarial-verifier, served claude-opus-5-5 on all 215 assistant records, 0 refusal stops, per `scripts/hiccup_scan.py`) returned this report as its final message. This copy is extracted from its hand-back in the subagent transcript, never retyped; control tags are neutralized (`<` became `<\`), as the harness relay did. Two commit ids that a push rewrote are replaced by their ids on origin (in the Lane paragraph). Disposition: `docs/research/findings/labeling/LS-DESIGN-v2-2026-09-28.md`.
 
 # LS-PREMORTEM (task #339): the labeling output style design, attacked before it is built
 
 **Lane.** Sandbox adversarial-verifier in premortem mode, claude-opus-5-5 (per the session environment line). Read-only: no git writes, no bridge, no subagents, no outward action, and no hook, setting or repo file touched.
 
 - **Brief:** `tasks/briefs/labeling/LS-PREMORTEM-brief.md`.
-- **Design attacked:** `docs/research/findings/labeling/LS-DESIGN-2026-09-28.md` at 34d3af0. Both trees were at 34d3af0 when I started. The main tree moved to d7609d8 during the lane. `/home/user/i59-landing` still shows only the other lane's 7 modified files.
+- **Design attacked:** `docs/research/findings/labeling/LS-DESIGN-2026-09-28.md` at 370fead. Both trees were at 370fead when I started. The main tree moved to 40dd47d during the lane. `/home/user/i59-landing` still shows only the other lane's 7 modified files.
 - **Assembled:** 2026-09-28T14:44:21Z (`date -u`).
 - **Scratch:** 8 KB (one probe script).
 - **S1-RATE:** no `[S1 …]` injection reached this lane, so no S1-RATE lines are owed.
@@ -238,7 +238,7 @@ Two weeks on, LS has failed mainly through its transport.
 ### D. The offload
 
 **P23. BLOCKER — `book` cannot carry a real entry (:45 cap; D-101 (6)). L H, I H.**
-- Entry lengths measured at 34d3af0:
+- Entry lengths measured at 370fead:
 
 | Target | Entries | Median length (chars) | Over 200 chars |
 |---|---|---|---|
