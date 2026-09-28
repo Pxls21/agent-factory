@@ -11,6 +11,14 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-28 20:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin 0d06ae7, plus local commits; the main tree is the primary.**
+- **RUNNING (sandbox, three lanes):** I59-F round 4 (tasks #335 and #344, worktree `/home/user/i59-landing`; paused on its own background job); SCRUB2-R1 round 3 (task #321: N1, N2); LS-B9 round 3 (task #339: F-1, every test under its own runner).
+- **HOME:** VERIFY-SCRUB2-R1-R2 (NOT-READY: N1, N2) and VERIFY-LS-B9 (NOT-READY: F-1); both repairs run.
+- **LIVE (D-102):** the task list is a view of the ledger (P5 confirmed).
+- **NEXT:** the audit for task #346 (D-105) when a slot frees; after each round 3, its verifier resumed; after VERIFY-LS-B9 passes, land the stacks and wire them (its pre-wiring list of six); after I59-F round 4, its verify, then the one re-mint; a small LS-B7 round 2.
+- **WAITING ON THE OWNER:** only the chat form of LS-DESIGN v2 §3 (the command form stands).
+
 **2026-09-28 19:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin ca29894 (CI run #1119 running), plus local commits; the main tree is the primary.**
 - **RUNNING (sandbox, three lanes):** I59-F round 4 (tasks #335 and #344, worktree `/home/user/i59-landing`); VERIFY-SCRUB2-R1-R2 (task #321); VERIFY-LS-B9 (task #339, `tasks/briefs/labeling/VERIFY-LS-B9-brief.md`).

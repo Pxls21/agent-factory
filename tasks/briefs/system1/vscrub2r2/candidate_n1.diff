@@ -1,0 +1,40 @@
+--- scripts/transcript_export.py (round 2, sha256 e36f708b5515cd36)
++++ candidate_n1_te.py (VERIFY-SCRUB2-R1-R2 scratch, feasibility only, not a spec)
+@@ -124,6 +124,24 @@
+     return m.group(1) + "<redacted>" if m.group(2) is not None else m.group(0)
+ 
+ 
++def _credentials_floor(m):
++    """FEASIBILITY (verifier scratch): the credentials floor counts the value's CHARACTERS before its first escape (an odd
++    backslash run's last backslash and n, r, t or f): a pair or an odd run counts as the PIN counted it, and F15's shapes,
++    whose escape comes before an eighth character, keep their next line (D1 kept)."""
++    v, i = m.group(2), 0
++    while i < len(v):
++        if v[i] == "\\":
++            j = i
++            while j < len(v) and v[j] == "\\":
++                j += 1
++            if (j - i) % 2 and j < len(v) and v[j] in "nrtf":
++                return m.group(1) + "<redacted>" if j - 1 >= 8 else m.group(0)
++            i = j
++        else:
++            i += 1
++    return m.group(1) + "<redacted>" if len(v) >= 8 else m.group(0)
++
++
+ SECRET_PATTERNS = [
+     # a private-key block, BEGIN through END: PEM and OpenSSH (`… PRIVATE KEY`) and GnuPG's armor
+     # (`PGP PRIVATE KEY BLOCK`, the PGP 2.x `PGP SECRET KEY BLOCK`); a block with no END line (cut
+@@ -193,10 +211,10 @@
+     # keep the next line's words. So a decoded credentials value with a literal `\n`, `\r`, `\t` or `\f` before its eighth
+     # value unit stays (`credentials=abc\n<value>`): the same text, read as raw JSON, is F15's shape
+     # (tasks/briefs/system1/SCRUB2-R1-R2-report.md, D1). Neither value starts at another rule's head (_APART).
+-    (re.compile(r"(" + _KEY_L + r"(?i:pwd)" + _Q + r"\s*[:=]\s*" + _Q + r")(?![/~.$\\]|" + _APART + r")(?=" + _VU + r"{8})"
++    (re.compile(r"(" + _KEY_L + r"(?i:pwd)" + _Q + r"\s*[:=]\s*" + _Q + r")(?![/~.$\\]|" + _APART + r")(?=[^\s\"'&,;]{8})"
+                 + _VU + r"+"), r"\1<redacted>"),
+     (re.compile(r"(" + _KEY_L + r"(?i:credentials)(?:\\*[\"']\s*:|\s*=)\s*" + _Q + r")(?![/~.$\\]|" + _APART + r")"
+-                r"(?=" + _VF + r"{8})" + _VU + r"+"), r"\1<redacted>"),
++                r"(" + _VU + r"+)"), _credentials_floor),
+     # provider-shaped keys. The left anchor is `(?<![A-Za-z0-9])`, not `\b` (AF-AP-224): `\b` wants a non-word character
+     # before the key, so a key glued to an `_` (`mcp__srv__sk-...`, `my_sk-...`) passed whole. An `_` now separates; a
+     # letter or a digit still does not. SCRUB1 measured no left anchor at all on this session's transcripts: 17,692 more
