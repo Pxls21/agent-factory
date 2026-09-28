@@ -56,7 +56,7 @@ scripts. The coordinator designs this from your evidence, so the evidence must b
   text of its own.
 - Return the whole evidence report as your final message (the harness refuses subagent report files; do not write one).
 
-## PREMISE — MEASURED at authoring (2026-09-28 13:3xZ, the worktree `/home/user/i59-landing` at eab2988)
+## PREMISE — MEASURED at authoring (2026-09-28 13:3xZ, the worktree `/home/user/i59-landing` at the I59-F brief commit)
 
 ```
 $ ls docs/research/findings/ | grep -i -E 'jev|map|pipe|system1|laya'
