@@ -13,7 +13,8 @@ last_compiled: 2026-09-03
 
 **2026-09-28 20:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin 0d06ae7, plus local commits; the main tree is the primary.**
-- **RUNNING (sandbox, three lanes):** I59-F round 4 (tasks #335 and #344, worktree `/home/user/i59-landing`; paused on its own background job); SCRUB2-R1 round 3 (task #321: N1, N2); LS-B9 round 3 (task #339: F-1, every test under its own runner).
+- **RUNNING (sandbox, three lanes):** VERIFY-I59-F round 4 (tasks #335 and #344; the held patch `tasks/briefs/i59/I59-F.patch`); SCRUB2-R1 round 3 (task #321: N1, N2); LS-B9 round 3 (task #339: F-1, every test under its own runner).
+- **HOME:** I59-F round 4 (every item built; S0-02 joins the re-mint of S0-01 to S0-05).
 - **HOME:** VERIFY-SCRUB2-R1-R2 (NOT-READY: N1, N2) and VERIFY-LS-B9 (NOT-READY: F-1); both repairs run.
 - **LIVE (D-102):** the task list is a view of the ledger (P5 confirmed).
 - **BRIEFED, WAITING FOR A SLOT:** TRIM-AUDIT (task #346, D-105; `tasks/briefs/jev-trim/TRIM-AUDIT-brief.md`).
