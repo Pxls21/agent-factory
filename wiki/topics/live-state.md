@@ -15,8 +15,8 @@ last_compiled: 2026-09-03
 - **Origin ca29894 (CI run #1119 running), plus local commits; the main tree is the primary.**
 - **RUNNING (sandbox, three lanes):** I59-F round 4 (tasks #335 and #344, worktree `/home/user/i59-landing`); VERIFY-SCRUB2-R1-R2 (task #321); VERIFY-LS-B9 (task #339, `tasks/briefs/labeling/VERIFY-LS-B9-brief.md`).
 - **HOME:** LS-B9 round 2 (built, not landed; the stacks gain ripwire and sentrux, D-104 (1)).
-- **LIVE NOW (D-102):** the task list is a view of the ledger; P5 is owed after the first live Stop.
-- **NEXT:** P5; after VERIFY-LS-B9, land the stacks and wire them into CLAUDE.md, the output styles and the SessionStart catalog; the audit for task #346 (D-105) when a slot frees; a small LS-B7 round 2; after I59-F round 4, its verify, then the one re-mint.
+- **LIVE NOW (D-102):** the task list is a view of the ledger; P5 confirmed at the first live Stop (19:54:06Z).
+- **NEXT:** after VERIFY-LS-B9, land the stacks and wire them into CLAUDE.md, the output styles and the SessionStart catalog; the audit for task #346 (D-105) when a slot frees; a small LS-B7 round 2; after I59-F round 4, its verify, then the one re-mint.
 - **WAITING ON THE OWNER:** only the chat form of LS-DESIGN v2 §3 (the command form stands).
 
 **2026-09-28 19:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
