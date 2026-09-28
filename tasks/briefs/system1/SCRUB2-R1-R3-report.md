@@ -1,4 +1,4 @@
-<!-- Coordinator note (2026-09-28): the SCRUB2-R1 round-3 lane's hand-back, extracted verbatim from its transcript by `python3 scripts/stack.py harvest agent=a88c7c57f2fa2a96b` (run s-20260928T231833Z-9a593b; hand-back sha256 2cc1bdfc83ff; 1510 assistant records, all claude-opus-5-5, 0 refusal stops). The report of record for round 3 (task #321). -->
+<!-- Coordinator note (2026-09-28): the SCRUB2-R1 round-3 lane's hand-back, extracted verbatim from its transcript by `python3 scripts/stack.py harvest agent=a88c7c57f2fa2a96b` (run s-20260928T231833Z-9a593b; hand-back sha256 2cc1bdfc83ff; 1510 assistant records, all claude-opus-5-5, 0 refusal stops). The report of record for round 3 (task #321). Two local commit ids in section 2 (R3-D6) and section 3 were replaced by the commit's subject or its origin id before the push (stale_ids). -->
 
 SCRUB2-R1 round 3 is done (task #321). The harness refuses report-file writes, so this message is the whole round-3 section.
 
@@ -84,7 +84,7 @@ Written 2026-09-28 23:0xZ (from `date -u`) by the SCRUB2-R1 build lane (sandbox 
 - Cause unknown. I infer it was environmental, but that is not verified.
 
 **R3-D6. HEAD moved under the lane.**
-- HEAD went 0d06ae7 (the premise) → a430de7 → 093780c → b20b9c2. These were other lanes' commits, and pushes rewrote some ids.
+- HEAD went 0d06ae7 (the premise) → a430de7 → 093780c (on origin: bb21646) → the commit "T0-REPLAY brief (task #346, D-105) ..." (a local id then). These were other lanes' commits, and pushes rewrote some ids.
 - `git log 0d06ae7..HEAD` over the five files, `known_values_check.py`, `conftest.py`, `pyproject.toml` and `scripts/laya_ft/` lists 0 commits.
 - The floor set stayed 12 files set=27f27a25516b.
 
@@ -133,7 +133,7 @@ Written 2026-09-28 23:0xZ (from `date -u`) by the SCRUB2-R1 build lane (sandbox 
   - 1748-1893: this round's block. The 16 red items (4 tests), `R3_N2`, and 6 new tests.
 - `docs/research/findings/laya-ft-labels/2026-09-25-recorded/dataset-manifest.json`, 21658ac0d86de6151603628e74a256cb2235d8146aae597268ffb6be092b31e9. Only line 10 changed: the exporter hash.
 - Unchanged: `scripts/session_export.py` (0462fe2e9bdd14bc) and `tests/test_session_export.py` (c1bb29a1ec924a71). `scripts/known_values_check.py` is untouched (cfdf2ffec10e6d10).
-- Against HEAD b20b9c2 (rounds 1 to 3): `5 files changed, 805 insertions(+), 19 deletions(-)`.
+- Against HEAD, the commit "T0-REPLAY brief (task #346, D-105) ..." (rounds 1 to 3): `5 files changed, 805 insertions(+), 19 deletions(-)`.
 
 **Counts** (pasted; every run went through `masked.sh absent` with a private `--basetemp`):
 
