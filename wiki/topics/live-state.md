@@ -11,6 +11,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-28 16:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin c9889ee (its CI run #1114 pending), plus local commits; the main tree is the primary.**
+- **RUNNING (sandbox, three lanes):** SCRUB2-R1 round 2 (task #321, main tree; measuring its rows on the transcripts); I59-F round 3, item 1 by route B (task #335, worktree: S0-04 keeps its own copy of the two api_mode names, pinned to S0-03's set by a test); LS-B9, the stack runner and eight stacks (task #339, main tree).
+- **HOME, NOT LIVE:** LS-B7 (the task list as a view of the ledger): built and gated; `.jev/task-sync-off` stays until VERIFY-LS-B7 (briefed) passes; then `## 1b. Task overrides` rows for the 27 ids the ledger never closes in the grammar's words, the first `--apply`, and the CLAUDE.md rule rewrite.
+- **NEXT, as slots free:** VERIFY-LS-B7; VERIFY-I59-F (its draft in the scratchpad; the S0-05 checker's gid grading goes to it as a question), then the re-mint of S0-03, S0-04 and S0-05 and the owner's one re-sign; VERIFY-SCRUB2-R1 after round 2.
+- **WAITING ON THE OWNER:** the request transport (LS-DESIGN v2 §3); the 11 GB under `/home/user/scratch`; whether S0-01 joins the re-mint for task #344.
+
 **2026-09-28 15:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin 14b356c (the D-103 records, LS-DESIGN v2, the LS-B9 brief); its CI run is pending; the main tree is the primary.** The worktree `/home/user/i59-landing` hosts I59-F; its `.lanes-live` adds `proofs/S0-04/check_compression.py`, `tests/test_gpu_window.py` and the lane's report.
 - **RUNNING (sandbox, three lanes):** SCRUB2-R1 round 2 (task #321, main tree); I59-F round 3, D-R2-2 and D-R2-3 (task #335, worktree, the same agent resumed; round 2 folded A-1..A-4, 15 of 15 mutants killed); LS-B7, the task list as a view of the ledger (task #339, main tree; its hooks stay off while `.jev/task-sync-off` exists).
