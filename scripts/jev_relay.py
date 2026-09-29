@@ -35,6 +35,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -319,7 +320,7 @@ def main(argv=None):
         args = ap.parse_args(argv)
     except SystemExit as e:
         return 64 if e.code else 0
-    if not 0 < args.port < 65536 or args.min_gap < 0:
+    if not 0 < args.port < 65536 or not math.isfinite(args.min_gap) or args.min_gap < 0:   # NaN passes a bare < 0
         print("jev_relay: bad --port or --min-gap", file=sys.stderr)
         return 64
     return serve(args)

@@ -365,3 +365,13 @@ def test_a_missing_key_file_stops_the_relay(tmp_path):
     p = subprocess.run([sys.executable, str(RELAY), "serve", "--port", str(free_port()), "--env-file",
                         str(tmp_path / "absent.env"), "--no-default-sources"], capture_output=True, text=True, timeout=30)
     assert p.returncode == 2 and "cannot be used" in p.stderr
+
+
+@pytest.mark.parametrize("gap", ["nan", "inf", "-1"])
+def test_a_gap_that_is_not_a_finite_non_negative_number_is_refused(tmp_path, gap, key):
+    # `nan < 0` is False, so a bare `< 0` guard let `--min-gap nan` through, and max(now, last + nan) is `now`: no gap.
+    env = tmp_path / "api.env"
+    env.write_text("TYPESAFE_API_KEY=%s\nTYPESAFE_BASE_URL=https://api.example.invalid\n" % key)
+    p = subprocess.run([sys.executable, str(RELAY), "serve", "--port", str(free_port()), "--env-file", str(env),
+                        "--min-gap", gap, "--no-default-sources"], capture_output=True, text=True, timeout=30)
+    assert p.returncode == 64 and "bad --port or --min-gap" in p.stderr, (gap, p.returncode, p.stderr)
