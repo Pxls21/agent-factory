@@ -31,6 +31,10 @@ never the final gate verdict.
 > changed file's gate includes every test that names its path (`grep -l <path> tests/ harness-ports/tests/`), not only the
 > tests that import it: a test that reads a source file as DATA (a line it looks up, a literal it greps) has no import edge to
 > it. The sandbox gate also runs the tests CI skips (a LOUD SKIP without graft or a PC tool): nothing else ever runs them.
+> **A test that reads files by PATTERN names none of them (AF-AP-247, 2026-09-29: CI run #1143 went red on the lossless test,
+> which reads every skill CLAUDE.md names):** a changed file under a root some test globs or derives (the skills, every
+> SKILL.md, every committed `.sh`, the entries System-1 quotes) also runs those readers, which no `grep -l` finds. A skill's
+> readers are listed in `env-tool-quirks`, and `scripts/skill_bake_finish.sh` runs them.
 
 > **Seam rule extension (2026-08-25, launcher near-miss):** seam verification applies to the
 > FIX's own dependencies too — every variable your fix references must be proven DEFINED on the

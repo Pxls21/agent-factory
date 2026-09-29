@@ -103,6 +103,7 @@ a scratch copy) to compare with.
 
 **The auto-mode classifier refuses `git remote -v` in a clone as "Credential Exploration" (2026-09-28, the TRIM-AUDIT lane).** A remote URL can hold a token, so reading one is a credential read to the classifier. Take a pinned upstream's URL from `upstream.lock.yaml`, and never work around the refusal.
 **`scripts/task_sync.py` names a registered task from the first mention of its id in the entry's BODY (2026-09-29):** the headline `TASK #352 REGISTERED (where to compact: ...)` still named task #352 after K0, because the body said "Task #352: K0 the published curves". Give each body mention a parenthetical name (`Task #352 (where to compact): ...`) or keep the id out of the body, and check the names with a dry run (`python3 scripts/task_sync.py --ledger todo/BUILD-TASKLIST.md --tasks-dir <dir>`, no `--apply`).
+**A `#N` in a ledger headline is read as a task id (2026-09-29):** the headline `RETRO 13:0xZ (... THE CI #1143 FIX); TASK #375 REGISTERED (backlog)` bound its event to #1143, the CI run's number, in the dry run. Write a CI run in a headline as `run 1143`, without the `#`, and read the dry run's `hwm=` before you commit (a stray id raises it).
 
 ## Test gates and pasted counts
 
