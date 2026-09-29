@@ -1,7 +1,7 @@
 # Project status
 
 **Proof anchors: RE-SIGNED 2026-09-29 (D-107).** The issue #59 batch (task #315) re-minted all twelve proofs on new
-tooling bytes; the owner re-signed all twelve on 975523a at 10:19Z, and the twelve tag objects are committed again as
+tooling bytes; the owner re-signed all twelve on 975523a at 10:24Z (the tags are on GitHub), and the twelve tag objects are committed again as
 `docs/governance/tags/accepted-S0-NN.tag`. `scripts/check-proof-status.py` verifies every signature against the committed
 owner key with no warning. The commits and dates in the proof table below are each proof's original acceptance; every
 current tag points at 975523a.
