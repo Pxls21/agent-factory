@@ -17,6 +17,7 @@ last_compiled: 2026-09-03
 - **HOME:** VERIFY-I59-F round 5: MERGE-READY-WITH-FOLLOWUPS (issue #81; a refusal switched its last 31 minutes to claude-opus-4-8, stated on the report).
 - **WAITING ON THE OWNER:** the S0-05 re-capture (one sudo command on the PC, in the ledger line "I59-F LANDING STAGED" of 00:4xZ; the worktree `~/af-i59f-recap` is ready), then the one landing and the owner's single signature of the twelve; the D-105 questions (§8); the chat form of LS-DESIGN v2 §3.
 - **BRIEFED, WAITING FOR A SLOT:** LS-B9 round 4 with the stacks' wiring.
+- **RETRO 00:5xZ:** item 0o baked into `orchestration` (a brief that probes our own containment states the defensive authorization and asks for a bound); AF-AP-154 recurs.
 
 **2026-09-29 00:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin 0e6d4a1 (pushed 2026-09-29 00:3xZ after CI run #1125 passed); the main tree is the primary.**
