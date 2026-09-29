@@ -36,6 +36,14 @@ expansion.
    the candidates. (P1b 2026-08-02: the production-geometry cell certified 0/10 planted genuine
    Sharpe-3 edges while refusing 18/18 nulls — every prior refusal at that geometry was ambiguous
    between "overfit candidate" and "blind instrument".)**
+   **A timing control is sized for the FASTEST venue on its bad side and the SLOWEST on its good side (AF-AP-248,
+   CI run 1145, 2026-09-29).** A negative control whose bad side is a finite slowdown (a quadratic parse, a retry
+   storm), not a hang, fails a wall-clock bound only on a machine slow enough. The no-word-cap mutant of
+   `tests/test_filepacks.py` took about 5 s here against its 3 s bound, and under 3 s on CI's runner, roughly twice as
+   fast, so the control stopped failing there. Size the input so the bad side is several times the bound on the
+   fastest venue and the good side several times under it on the slowest (at 6,000 pairs the mutant takes 28 to 30 s
+   here and the good side about 1 s), or assert the growth between two input sizes instead of an absolute time. Time
+   the mutant itself: the good side's margin says nothing about the bad side's.
 2. **Execution guards — make cheating structurally impossible, not policy-forbidden.** (a) Isolate
    the env so the agent can't inject the expected result. (b) Timeouts on every subprocess — hollow
    code hides in loose loops. (c) Verify STATE, not returned flags — check the artifact actually

@@ -967,14 +967,17 @@ def check_remote(repo, st, ids, tmp):
 
 
 def check_linear_parse(repo, st, ids, tmp):
-    """F3: 3,000 `time cat` pairs through the wrapper (the verifier's: the 55 s cap). The bound, 3 s, is about ten
-    times the measured time and a third of the uncapped scan's."""
+    """F3: 6,000 `time cat` pairs through the wrapper (the verifier's: the 55 s cap). The bound, 3 s, sits far from
+    both sides on every venue measured: the capped scan is linear, and the uncapped one (the no-word-cap mutant) is
+    quadratic. At 3,000 pairs the uncapped scan took about 5 s here but under 3 s on CI's faster runner (run 1145,
+    2026-09-29: the negative control did not raise), so the pair count doubled: the uncapped time grows about fourfold,
+    the capped one about twofold."""
     build(repo, st)
-    cmd = "echo " + "time cat " * 3000 + "docs/NOTE.md"
+    cmd = "echo " + "time cat " * 6000 + "docs/NOTE.md"
     t0 = time.monotonic()
     ctx = context(run(repo, st, bash(repo, cmd, sid="lin"), timeout=120))
     took = time.monotonic() - t0
-    assert took < 3, "the parse is not linear: 3,000 time-cat pairs took %.1f s" % took
+    assert took < 3, "the parse is not linear: 6,000 time-cat pairs took %.1f s" % took
     assert heads(ctx) == ["docs/NOTE.md"], "the control: the reader's file was read: %s" % heads(ctx)
 
 
