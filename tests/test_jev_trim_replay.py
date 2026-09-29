@@ -1,4 +1,5 @@
-"""T0-REPLAY tests (task #346, D-105; tasks/briefs/jev-trim/T0-REPLAY-brief.md item 6). Deterministic and LLM-free.
+"""T0-REPLAY tests (task #346, D-105; tasks/briefs/jev-trim/T0-REPLAY-brief.md item 6, T0-REPLAY-R2-brief.md items
+2-7). Deterministic and LLM-free.
 
 Every transcript here is synthetic, built at run time in the production record shapes (the key sets of
 tests/fixtures/jev_pipes/record_shapes.json, captured from the real transcript). Each scenario check is a plain function
@@ -8,7 +9,10 @@ computed by hand in the checks, never from the code under test.
 """
 from __future__ import annotations
 
+import bisect
+import collections
 import datetime
+import hashlib
 import importlib.util
 import json
 import secrets
@@ -103,13 +107,15 @@ class Tx:
         self.add(record)
 
     def user(self, body: str, *, origin: str | None = "human", meta: bool = False, source: str | None = None,
-             new_prompt: bool = True) -> None:
+             new_prompt: bool = True, handback: bool = False) -> None:
         if new_prompt:
             self.prompt += 1
         record = self._base("user")
         record.update({"promptId": f"p{self.prompt}", "message": {"role": "user", "content": body}})
         if origin:
             record["origin"] = {"kind": origin}
+            if handback:  # a peer message the harness flags as a subagent's hand-back
+                record["origin"]["handback"] = True
         if meta:
             record["isMeta"] = True
         if source:
@@ -136,10 +142,10 @@ class Tx:
                        "toolUseID": "toolu_stop"})
         self.add(record)
 
-    def boundary(self, summary: str = "a summary of the earlier work") -> None:
+    def boundary(self, summary: str = "a summary of the earlier work", post_tokens: int = 1) -> None:
         record = self._base("system")
         record.update({"subtype": "compact_boundary", "content": "Conversation compacted", "level": "info",
-                       "compactMetadata": {"trigger": "auto", "preTokens": 1, "postTokens": 1},
+                       "compactMetadata": {"trigger": "auto", "preTokens": 1, "postTokens": post_tokens},
                        "logicalParentUuid": "u00000", "parentUuid": None})
         self.add(record)
         self.prompt += 1
@@ -421,6 +427,238 @@ def check_uaa_horizon_only(m, where: Path) -> None:
     assert row["m20"] is False and row["mh"] is True
 
 
+# Round 2 (tasks/briefs/jev-trim/T0-REPLAY-R2-brief.md): version-2 cells.
+
+R1_TO_R6 = ("R1", "R2", "R3", "R4", "R5", "R6")
+AGENT_MESSAGE = '<agent-message from="a0fixture"> [Subagent hand-back] '
+NOTIFICATION = "<task-notification> "
+
+
+def _v2(m, budget, low, age, rules, mode, k, guard="none", opening="record"):
+    return m.Cell(budget, low, age, rules, mode, "request", k, guard, 2, opening)
+
+
+def _eight_steps(tx: Tx) -> None:
+    for c in (1000, 2000, 3000, 4000, 5000, 5100, 5200, 5300):  # check_hysteresis's contexts
+        step(tx, c, TOKENS_1000)
+
+
+def check_request_window_between_turn(m, where: Path) -> None:
+    """Item 2: a between-turn trim fires at stop-hook turn starts only; the current request and the last K requests are
+    protected; the trim takes items of the turn that just finished once they are outside the window."""
+    tx = Tx()
+    tx.user("go")
+    for turn in range(4):
+        for j in range(5):
+            step(tx, 100000 + 1000 * tx.req, TOKENS_1000)
+        tx.stop()
+        tx.user(f"turn {turn}")
+    step(tx, 200000)
+    tl, idx = _built(m, tx, where)
+    starts = {q.index for i, q in enumerate(tl.requests) if i == 0 or q.turn_stop != tl.requests[i - 1].turn_stop}
+    assert starts == {0, 5, 10, 15, 20}
+    k = 3
+    sim = m.simulate(tl, _v2(m, 1, 0, 0, ("R3",), "between-turn", k), idx, keep_map=True)
+    seg = tl.segments[0]
+    assert sim["trims"] and all(t["request"] in starts for t in sim["trims"])
+    finished = 0
+    for (_, pos), mark in sim["archive"].items():
+        it = seg.items[pos]
+        assert mark[2] - it.req > k  # never the current request nor the last K = 3
+        finished += it.turn_stop == tl.requests[mark[2]].turn_stop - 1
+    assert finished >= 3  # at each later turn start, the finished turn's results outside the window were taken
+    per = m.simulate(tl, _v2(m, 1, 0, 0, ("R3",), "per-request", k), idx)
+    assert any(t["request"] not in starts for t in per["trims"])  # the control: per-request trims inside a turn
+
+
+def _opening_fixture(m, where: Path):
+    tx = Tx()
+    tx.boundary()
+    tx.attach({"type": "nested_memory", "path": "/w/CLAUDE.md", "displayPath": "CLAUDE.md",
+               "content": {"content": TOKENS_1000}})
+    tx.attach({"type": "deferred_tools_delta", "addedNames": ["A"], "addedLines": [TOKENS_1000]})
+    for j in range(4):
+        step(tx, 10000 + 1000 * j, TOKENS_1000)
+    tx.attach({"type": "nested_memory", "path": "/w/b/CLAUDE.md", "displayPath": "b/CLAUDE.md",
+               "content": {"content": TOKENS_1000}})
+    for j in range(4):
+        step(tx, 20000 + 1000 * j)
+    tl, idx = _built(m, tx, where)
+    (seg,) = tl.segments
+    opening = [it.pos for it in seg.items if it.start]
+    assert [seg.items[p].name for p in opening] == ["compact_summary", "nested_memory", "deferred_tools_delta"]
+    later = [it.pos for it in seg.items if it.attach_type == "nested_memory" and not it.start]
+    return tl, idx, seg, opening, later
+
+
+def check_opening_group(m, where: Path) -> None:
+    """`group`: every item that entered before a segment's first request is its first user message (protected)."""
+    tl, idx, seg, opening, later = _opening_fixture(m, where)
+    sim = m.simulate(tl, _v2(m, 1, 0, 0, R1_TO_R6, "per-request", 0, opening="group"), idx, keep_map=True)
+    archived = {pos for (_, pos) in sim["archive"]}
+    assert not archived & set(opening)
+    assert later and set(later) <= archived  # the control: the same type later in the segment is taken
+
+
+def check_opening_record(m, where: Path) -> None:
+    """`record` (round 1's reading, the default): only the first user text record is protected; R6 takes the
+    opening attachments once they are older than A."""
+    tl, idx, seg, opening, later = _opening_fixture(m, where)
+    sim = m.simulate(tl, _v2(m, 1, 0, 0, R1_TO_R6, "per-request", 0), idx, keep_map=True)
+    archived = {pos: mark for (_, pos), mark in sim["archive"].items()}
+    summary, *attachments = opening
+    assert summary not in archived  # the first user text record stays
+    assert set(attachments) <= set(archived) and all(archived[p][0] == "R6" for p in attachments)
+
+
+def _r5_fixture(tx: Tx) -> None:
+    tx.user("go")
+    step(tx, 10000)
+    tx.user(NOTIFICATION + TOKENS_1000, origin="task-notification")  # structure: the origin
+    step(tx, 11000)
+    tx.user("a peer's report " + TOKENS_1000, origin="peer", handback=True)  # structure: the flag
+    step(tx, 12000)
+    tx.attach({"type": "queued_command", "commandMode": "task-notification", "prompt": NOTIFICATION + TOKENS_1000})
+    step(tx, 13000)
+    tx.attach({"type": "queued_command", "commandMode": "prompt", "prompt": AGENT_MESSAGE + TOKENS_1000})  # envelope
+    step(tx, 14000)
+    tx.user("please carry on with the plan " + TOKENS_1000)  # negative controls: an ordinary typed message,
+    step(tx, 15000)
+    tx.user("the log shows " + AGENT_MESSAGE + TOKENS_1000)  # one that quotes the tag without opening with it,
+    step(tx, 16000)
+    tx.user("a peer's note " + TOKENS_1000, origin="peer")  # and a peer message without the hand-back flag
+    for j in range(6):
+        step(tx, 17000 + j)
+
+
+def check_r5(m, where: Path) -> None:
+    """Item 3: hand-backs and task notifications are recognized by structure or envelope and stubbed once older than
+    A requests; an ordinary user text is not taken."""
+    tx = Tx()
+    _r5_fixture(tx)
+    tl, idx = _built(m, tx, where)
+    rec = m.recognition(tl)
+    assert {k: v["items"] for k, v in rec["r5_by_kind_name_route"].items()} == {
+        "other_attachment:queued_command:structure": 1, "other_user_text:peer:structure": 1,
+        "other_user_text:task-notification:structure": 1, "typed_user_text:queued_prompt:envelope": 1}
+    sim = m.simulate(tl, _v2(m, 1, 0, 2, ("R5",), "per-request", 0), idx, keep_map=True)
+    seg = tl.segments[0]
+    taken = sorted((seg.items[p].name, mark[0], mark[2] - seg.items[p].req, mark[3])
+                   for (_, p), mark in sim["archive"].items())
+    assert taken == [("peer", "R5", 3, 40), ("queued_command", "R5", 3, 40), ("queued_prompt", "R5", 3, 40),
+                     ("task-notification", "R5", 3, 40)]  # stubs, at the first request past A = 2
+
+
+def _r6_fixture(tx: Tx) -> None:
+    tx.user("go")
+    step(tx, 10000)
+    tx.attach({"type": "edited_text_file", "filename": "/w/a.py", "snippet": TOKENS_1000})
+    step(tx, 11000)
+    tx.attach({"type": "edited_text_file", "filename": "/w/b.py", "snippet": TOKENS_1000})
+    tx.attach({"type": "deferred_tools_delta", "addedNames": ["A"], "addedLines": [TOKENS_1000]})
+    step(tx, 12000)
+    tx.attach({"type": "edited_text_file", "filename": "/w/a.py", "snippet": TOKENS_1000})  # a newer a.py
+    tx.attach({"type": "deferred_tools_delta", "addedNames": ["B"], "addedLines": [TOKENS_1000]})  # no key: the type
+    tx.attach({"type": "invoked_skills", "skills": [{"name": "build-loop", "content": TOKENS_1000}]})  # a skill body
+    for j in range(6):
+        step(tx, 13000 + j)
+
+
+def check_r6(m, where: Path) -> None:
+    """Item 4: an attachment superseded by a newer one of its type and key is archived; any other older than A becomes
+    a stub; a skill body never."""
+    tx = Tx()
+    _r6_fixture(tx)
+    tl, idx = _built(m, tx, where)
+    seg = tl.segments[0]
+    a1, b, d1, a2, d2, skill = [it.pos for it in seg.items if it.attach_type is not None]
+    assert seg.items[skill].attach_type == "invoked_skills"
+
+    def taken(age: int) -> dict:
+        sim = m.simulate(tl, _v2(m, 1, 0, age, ("R6",), "per-request", 0), idx, keep_map=True)
+        return {pos: mark for (_, pos), mark in sim["archive"].items()}
+
+    superseded = taken(1000)  # no attachment gets that old here: supersession alone
+    assert set(superseded) == {a1, d1}  # b.py is another file: a newer a.py supersedes only the older a.py
+    assert all(mark[0] == "R6" and mark[3] == 40 for mark in superseded.values())
+    aged = taken(2)
+    assert set(aged) == {a1, b, d1, a2, d2}  # every attachment, older than A = 2, except the skill body
+    assert all(mark[0] == "R6" for mark in aged.values())
+
+
+def check_reach(m, where: Path) -> None:
+    """Item 5, `reach`: a trim fires only when archiving every eligible item brings the context to L or below."""
+    tx = Tx()
+    tx.user("go")
+    _eight_steps(tx)
+    tl, idx = _built(m, tx, where)
+    # K = 3 protects the results that entered at r-3..r. At request 5 (5,100 > B) one result is eligible: 5,100 - 960 =
+    # 4,140 > L; at 6 two: 3,280 > L; at 7 three: 2,420 <= L, so the trim fires there and archives all three.
+    sim = m.simulate(tl, _v2(m, 5000, 3000, 0, ("R3",), "per-request", 3, "reach"), idx)
+    assert [(t["request"], t["items"]) for t in sim["trims"]] == [(7, 3)]
+    assert sim["blocked"] == 2
+    assert [round(a, 1) for _, a in sim["active"]] == [1000, 2000, 3000, 4000, 5000, 5100, 5200, 2420]
+    none = m.simulate(tl, _v2(m, 5000, 3000, 0, ("R3",), "per-request", 3), idx)
+    assert [(t["request"], t["items"]) for t in none["trims"]] == [(5, 1)]  # the control: no guard fires at 5
+
+
+def check_cooldown(m, where: Path) -> None:
+    """Item 5, `cooldown:C`: at most one trim per C requests."""
+    tx = Tx()
+    tx.user("go")
+    for j in range(12):
+        step(tx, 10000 + 1000 * j, TOKENS_1000)
+    tl, idx = _built(m, tx, where)
+    sim = m.simulate(tl, _v2(m, 1, 0, 0, ("R3",), "per-request", 0, "cooldown:3"), idx)
+    assert [t["request"] for t in sim["trims"]] == [2, 5, 8, 11]  # the first eligible result enters at request 1
+    assert sim["blocked"] == 6  # requests 3, 4, 6, 7, 9 and 10
+    none = m.simulate(tl, _v2(m, 1, 0, 0, ("R3",), "per-request", 0), idx)
+    assert [t["request"] for t in none["trims"]] == list(range(2, 12))  # the control
+
+
+def check_pessimistic(m, where: Path) -> None:
+    """Item 6: the pessimistic bound rewrites everything after the fixed start (first context - postTokens)."""
+    tx = Tx()
+    tx.boundary(post_tokens=600)
+    _eight_steps(tx)
+    tl, idx = _built(m, tx, where)
+    (seg,) = tl.segments
+    assert (seg.fixed_start, seg.fixed_source) == (400.0, "first_context_minus_post_tokens")  # 1,000 - 600 < 990
+    sim = m.simulate(tl, _v2(m, 5000, 3000, 0, ("R3",), "per-request", 0), idx)
+    (trim,) = sim["trims"]
+    # As check_hysteresis: the trim at request 5 archives three results (saves 2,880), sends 2,220; the edit point
+    # keeps 1,010 cached, so round 1's model writes 2,220 - 1,010 - 3 uncached = 1,207 again. The pessimistic bound
+    # keeps only the fixed start: 2,220 - 400 - 3 = 1,817.
+    assert (trim["request"], trim["items"]) == (5, 3)
+    assert trim["extra_write_tokens"] == pytest.approx(1207)
+    assert trim["extra_write_tokens_pessimistic"] == pytest.approx(1817)
+    terms = m.cache_terms(tl, sim, 0.05, 2.0, key="extra_write_tokens_pessimistic")
+    assert terms["extra_write_units"] == pytest.approx(1.95 * 1817, abs=0.05)
+    assert terms["net_units"] == pytest.approx(1.95 * 1817 - 0.05 * 2880 * 3, abs=0.1)
+
+
+def check_composition(m, where: Path) -> None:
+    """Item 7: the composition is taken at the median request AFTER trimming."""
+    tx = Tx()
+    tx.user("go")
+    _eight_steps(tx)
+    tl, idx = _built(m, tx, where)
+    cell = _v2(m, 5000, 3000, 0, ("R3",), "per-request", 0)
+    sim = m.simulate(tl, cell, idx)
+    comp = m.composition(tl, cell, sim, idx)
+    go = len("go") / 2.9
+    # Active after trimming: 1,000 2,000 3,000 4,000 5,000 2,220 2,320 2,420; the lower middle is 2,320 (request 6).
+    # There: results 1-3 are stubs (3 x 40); results 4-6 (3 x 1,000) and inputs 0-5 (6 x 10) are kept; K = 0 protects
+    # request 6's input and result (1,010) and "go" is typed text; inputs 0-4 (50) are outside R3.
+    assert (comp["request"], comp["active"]) == (6, 2320)
+    assert comp["by_kind"]["tool_result"] == 3000 and comp["by_kind"]["tool_input"] == 60
+    assert (comp["stubs"], comp["stub_count"]) == (120, 3)
+    assert comp["kept_protected"] == round(1010 + go, 1)
+    assert comp["kept_outside_every_rule"] == 50 and comp["kept_a_rule_may_take_later"] == 2000
+    assert comp["fixed_start"] == round(1000 - go, 1)
+    assert comp["floor"] == round(1000 - go + 1010 + go + 50 + 120, 1)
+
+
 # ---------------------------------------------------------------- normal behavior
 
 def test_timeline_of_a_hand_built_transcript(tmp_path):
@@ -578,6 +816,225 @@ def test_thinking_is_sized_by_the_model_when_asked(tmp_path):
                                               "modeled_thinking_tokens": round(900 - visible / 3.0, 1)}
 
 
+def test_round_two_protects_a_request_window_in_between_turn_mode(tmp_path):
+    check_request_window_between_turn(replay, tmp_path)
+
+
+def test_round_two_protects_the_opening_group_when_read_as_a_group(tmp_path):
+    check_opening_group(replay, tmp_path)
+
+
+def test_round_two_protects_the_first_user_record_by_default(tmp_path):
+    check_opening_record(replay, tmp_path)
+
+
+def test_r5_recognizes_hand_backs_and_stubs_them(tmp_path):
+    check_r5(replay, tmp_path)
+
+
+def test_r6_archives_superseded_and_old_attachments_but_no_skill_body(tmp_path):
+    check_r6(replay, tmp_path)
+
+
+def test_the_reach_guard_fires_only_when_l_can_be_reached(tmp_path):
+    check_reach(replay, tmp_path)
+
+
+def test_the_cooldown_guard_spaces_the_trims(tmp_path):
+    check_cooldown(replay, tmp_path)
+
+
+def test_the_pessimistic_cache_bound_on_hand_computed_numbers(tmp_path):
+    check_pessimistic(replay, tmp_path)
+
+
+def test_the_composition_at_the_median_after_trimming(tmp_path):
+    check_composition(replay, tmp_path)
+
+
+def check_fixed_start(m, where: Path) -> None:
+    """Item 6's fixed start: the lower of the first context minus the modeled opening items and the first context minus
+    the compaction's postTokens (a segment without a compaction has only the first)."""
+    tx = Tx()
+    tx.user("go")
+    for j in range(3):
+        step(tx, 50000 + j)
+    tx.boundary(post_tokens=45000)  # postTokens lower: 60,000 - 45,000 = 15,000 < 60,000 - the summary
+    for j in range(3):
+        step(tx, 60000 + j)
+    tx.boundary(post_tokens=100)  # the modeled estimate lower: a large opening attachment postTokens leaves out
+    tx.attach({"type": "nested_memory", "path": "/w/CLAUDE.md", "content": {"content": "word " * 5800}})
+    for j in range(3):
+        step(tx, 30000 + j)
+    tl, _ = _built(m, tx, where)
+    summary = len("a summary of the earlier work") / 2.9
+    attachment = (len("/w/CLAUDE.md") + 1 + 29000) / 2.9  # its two strings, joined by one newline
+    got = [(s.fixed_start, s.fixed_source) for s in tl.segments]
+    assert got[0] == (pytest.approx(50000 - len("go") / 2.9), "first_context_minus_the_modeled_opening_items")
+    assert got[1] == (15000.0, "first_context_minus_post_tokens")
+    assert got[2] == (pytest.approx(30000 - summary - attachment), "first_context_minus_the_modeled_opening_items")
+    assert tl.segments[2].fixed_estimates["first_context_minus_post_tokens"] == 29900.0  # the one not used
+
+
+def test_the_fixed_start_is_the_lower_estimate(tmp_path):
+    check_fixed_start(replay, tmp_path)
+    rich = Tx()
+    _rich(rich)
+    tl, _ = _built(replay, rich, tmp_path / "rich")
+    (seg,) = tl.segments
+    assert seg.fixed_source == "first_context_minus_the_modeled_opening_items"
+    assert seg.fixed_start == pytest.approx(90000 - len("the brief: build the fixture") / 2.9)
+
+
+def _eligible_brute(it, rules, r, age, superseded, stub, opening="group") -> float:
+    """The reach probe's oracle, written from the brief's rules, not from the probe: the gain of archiving one item."""
+    gain = it.size - (0.0 if it.kind == "thinking" else stub)
+    protected = ((it.typed and not it.handback) or it.first_user or (opening == "group" and it.start)
+                 or it.name == "skill_body" or it.attach_type == "invoked_skills")
+    if gain <= 0 or protected:
+        return 0.0
+    old = it.req < r - age
+    attachment = it.attach_type is not None and not it.handback and not it.typed
+    if (("R2" in rules and it.kind == "thinking")
+            or ("R3" in rules and it.kind == "tool_result" and it.size > stub and old)
+            or ("R4" in rules and it.kind == "tool_input" and it.size > 500 and old)
+            or ("R5" in rules and it.handback and it.size > stub and old)
+            or ("R6" in rules and attachment and it.size > stub and old)
+            or ("R1" in rules and it.key is not None and it.pos in superseded["R1"])
+            or ("R6" in rules and attachment and it.pos in superseded["R6"])):
+        return gain
+    return 0.0
+
+
+@pytest.mark.parametrize("opening", ["record", "group"])
+def test_the_reach_probe_equals_a_brute_force_sum(tmp_path, opening):
+    """ReachProbe (the reach guard's O(log n) answer) against a plain sum over the items at every request of a fixture
+    that holds every rule's items, for several rule sets, windows and ages, with items archived along the way."""
+    tx = Tx()
+    tx.boundary()  # an opening group: the two readings protect different items
+    tx.attach({"type": "nested_memory", "path": "/w/CLAUDE.md", "content": {"content": TOKENS_1000}})
+    _rich(tx)
+    tx.user(NOTIFICATION + TOKENS_1000, origin="task-notification")
+    tx.attach({"type": "edited_text_file", "filename": "/w/0.py", "snippet": TOKENS_1000})
+    step(tx, 410000)
+    tx.attach({"type": "edited_text_file", "filename": "/w/0.py", "snippet": TOKENS_1000})
+    tx.attach({"type": "invoked_skills", "skills": [{"name": "build-loop", "content": TOKENS_1000}]})
+    for j in range(5):
+        step(tx, 420000 + j, TOKENS_1000)
+    tl, idx = _built(replay, tx, tmp_path)
+    (seg,) = tl.segments
+    ix, items = idx[seg.index], seg.items
+    checked = nonzero = 0
+    for rules in (R1_TO_R6, ("R1", "R2", "R3", "R4"), ("R3",), ("R1", "R6"), ("R5", "R2")):
+        for k, age in ((0, 0), (3, 2), (10, 5)):
+            probe = replay.ReachProbe(items, ix, rules, 40, replay.protected_kind_of(
+                replay.Cell(1, 0, age, rules, "per-request", "request", k, "reach", 2, opening)))
+            superseded: dict = {"R1": set(), "R6": set()}
+            archived: set = set()
+            entered = 0
+            for request in seg.requests:
+                r = request.index
+                while entered < len(items) and items[entered].req <= r:
+                    for rule, older in (("R1", ix.supersedes[entered]), ("R6", ix.supersedes6[entered])):
+                        if older is not None and rule in rules:
+                            superseded[rule].add(older)
+                            if older not in archived:
+                                probe.supersede(older)
+                    entered += 1
+                protect_from = bisect.bisect_left(ix.req, r - k, 0, entered)
+                age_from = bisect.bisect_left(ix.req, r - age, 0, entered)
+                brute = sum(_eligible_brute(it, rules, r, age, superseded, 40, opening) for it in items[:protect_from]
+                            if it.pos not in archived)
+                assert probe.max_gain(protect_from, age_from) == pytest.approx(brute, abs=1e-6)
+                checked += 1
+                nonzero += brute > 0
+                for it in items[:protect_from:7]:  # archive some items as a trim would, and keep checking
+                    if it.pos not in archived and _eligible_brute(it, rules, r, age, superseded, 40, opening) > 0:
+                        archived.add(it.pos)
+                        probe.archive(it.pos)
+    assert checked > 500 and nonzero > 200  # the control: the sums were not all zero
+
+
+GOLDEN_ROUND_ONE = {  # captured from the committed round-1 code (aed7d82, replay.py sha256 ff35dbb8541818bd...)
+    "t.jsonl": "0a465650557e35c091b0430b59e7c925c0ebb647c8d554d8baf5cbbb510f2cb6",
+    "run-d.json": "234fdcb5f4c1567358e568eebab0b4abcd59c200c588df57ef9bc3ba4da5b1e6",
+    "SUMMARY.md": "c31ff84313887b019a70097d39f138a5a4cfbd65ce83973a14473131297dd812",
+}
+
+
+def test_round_one_outputs_stay_byte_identical(tmp_path):
+    """The brief's rule: round 1's outputs stay byte-identical. Round 1's command lines on the rich fixture write the
+    bytes the committed round-1 code wrote."""
+    tx = Tx()
+    _rich(tx)
+    path, size = tx.write(tmp_path / "t.jsonl")
+    out = tmp_path / "out"
+    for args in (["run", "--transcript", path, "--pin", str(size), "--label", "d", "--out", str(out)],
+                 ["summary", "--out", str(out), "--stamp", "fixed"]):
+        done = subprocess.run([sys.executable, str(REPLAY), *args], capture_output=True, text=True, timeout=300)
+        assert done.returncode == 0, done.stderr
+    got = {name: hashlib.sha256(p.read_bytes()).hexdigest()
+           for name, p in (("t.jsonl", Path(path)), ("run-d.json", out / "run-d.json"), ("SUMMARY.md", out / "SUMMARY.md"))}
+    assert got == GOLDEN_ROUND_ONE
+
+
+def test_round_two_grid_runs_and_writes_its_summary(tmp_path):
+    tx = Tx()
+    _rich(tx)
+    _r5_fixture(tx)
+    path, size = tx.write(tmp_path / "t.jsonl")
+    out = tmp_path / "out"
+    for args in (["run", "--grid", "r2", "--transcript", path, "--pin", str(size), "--label", "v2", "--out", str(out),
+                  "--modes", "per-request"],
+                 ["summary", "--out", str(out), "--stamp", "fixed"]):
+        done = subprocess.run([sys.executable, str(REPLAY), *args], capture_output=True, text=True, timeout=300)
+        assert done.returncode == 0, done.stderr
+    result = json.loads((out / "run-v2.json").read_text())
+    assert result["schema"] == 2 and len(result["cells"]) == len(replay.grid_r2(("per-request",))) == 288
+    assert result["params"]["opening"] == "record"  # the default: round 1's reading, as the brief keeps the kinds
+    assert {(c["K"], c["guard"], c["turn_unit"]) for c in result["cells"]} == {
+        (k, g, "request") for k in replay.R2_WINDOWS for g in replay.GUARDS}
+    assert all(c["composition_at_median"] is not None for c in result["cells"])
+    assert result["recognition"]["r5_items"] == 4
+    summary = (out / "SUMMARY.md").read_text()
+    assert "## Run `v2`" in summary and "### Best row per budget, by stated criterion" in summary
+    assert summary.count("| per-request |") >= 2 * 288  # the full grid and its composition table
+
+
+def test_a_directory_mixing_the_rounds_is_refused(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "run-a.json").write_text(json.dumps({"schema": 1, "label": "a"}))
+    (out / "run-b.json").write_text(json.dumps({"schema": 2, "label": "b"}))
+    with pytest.raises(ValueError, match="mixes round-1 and round-2 runs"):
+        replay.write_summary(out, "fixed")
+
+
+def test_the_opening_reading_is_named_in_the_outputs_and_refused_on_the_round_one_grid(tmp_path):
+    tx = Tx()
+    _rich(tx)
+    path, size = tx.write(tmp_path / "t.jsonl")
+    out = tmp_path / "out"
+    done = subprocess.run([sys.executable, str(REPLAY), "run", "--grid", "r2", "--opening", "group", "--modes",
+                           "per-request", "--transcript", path, "--pin", str(size), "--label", "g", "--out", str(out)],
+                          capture_output=True, text=True, timeout=300)
+    assert done.returncode == 0, done.stderr
+    result = json.loads((out / "run-g.json").read_text())
+    assert result["params"]["opening"] == "group" and {c["opening"] for c in result["cells"]} == {"group"}
+    refused = subprocess.run([sys.executable, str(REPLAY), "run", "--opening", "group", "--transcript", path,
+                              "--pin", str(size), "--label", "x", "--out", str(tmp_path / "x")],
+                             capture_output=True, text=True, timeout=120)
+    assert refused.returncode == 2 and "--opening belongs to the r2 grid" in refused.stderr
+
+
+def test_turn_units_are_refused_on_the_round_two_grid(tmp_path):
+    path, size = Tx().write(tmp_path / "t.jsonl")
+    done = subprocess.run([sys.executable, str(REPLAY), "run", "--grid", "r2", "--turn-units", "stop", "--transcript",
+                           path, "--pin", str(size), "--label", "x", "--out", str(tmp_path / "out")],
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 2 and "--turn-units belongs to the r1 grid" in done.stderr
+
+
 def test_segments_restart_at_a_compaction(tmp_path):
     tx = Tx()
     tx.user("go")
@@ -692,9 +1149,7 @@ def _secret() -> str:
     return "tok-" + "Q".join(secrets.token_hex(2) for _ in range(8))
 
 
-def test_no_piece_of_a_secret_reaches_any_output_or_print(tmp_path):
-    v = _secret()
-    tx = Tx()
+def _secret_fixture(tx: Tx, v: str) -> None:
     tx.user(f"my key is {v}")
     a = tx.tool_id()
     tx.request(100000, [{"type": "thinking", "thinking": f"thinking about {v}", "signature": "c2ln"},
@@ -716,6 +1171,12 @@ def test_no_piece_of_a_secret_reaches_any_output_or_print(tmp_path):
              blocks=(think(),), thinking=200, output=260)
         tx.reminder(j + 2, subject=f"rotate {v}")
         tx.hook("PreToolUse:Bash", f"hook saw {v} " * 20)
+
+
+def test_no_piece_of_a_secret_reaches_any_output_or_print(tmp_path):
+    v = _secret()
+    tx = Tx()
+    _secret_fixture(tx, v)
     path, size = tx.write(tmp_path / "t.jsonl")
     audit = tmp_path / "audit.md"
     audit.write_text("| 2026-09-26 | span | 6 | 115,000 | 123,000 | 123,000 | 100,000 | 1 |\n")
@@ -737,6 +1198,40 @@ def test_no_piece_of_a_secret_reaches_any_output_or_print(tmp_path):
     assert _hidden(v, blob)
     cells = json.loads((out / "run-s.json").read_text())["cells"]
     assert any(c["use_after_archive"]["archived_items"] for c in cells)  # the outputs did cover archived items
+
+
+def test_no_piece_of_a_secret_reaches_a_round_two_output_or_print(tmp_path):
+    """Round 2 reads more of each record (a hand-back's opening tag, an attachment's key field): none of it reaches
+    an output. The secret sits in hand-backs, in attachment key fields (file names, paths) and in their bodies."""
+    v = _secret()
+    tx = Tx()
+    _secret_fixture(tx, v)
+    for j in range(12):
+        tx.user(f"<task-notification> {v} " + TOKENS_1000, origin="task-notification")
+        tx.attach({"type": "queued_command", "commandMode": "prompt", "prompt": AGENT_MESSAGE + v + TOKENS_1000})
+        tx.user(f"a peer's report {v} " + TOKENS_1000, origin="peer", handback=True)
+        tx.attach({"type": "edited_text_file", "filename": f"/w/{v}/{j % 3}.py", "snippet": f"{v} " + TOKENS_1000})
+        tx.attach({"type": "nested_memory", "path": f"/w/{v}/CLAUDE.md", "content": {"content": f"{v} " + TOKENS_1000}})
+        step(tx, 220000 + 3000 * j, f"later {v} " + TOKENS_1000, command=f"grep {v} /work")
+    path, size = tx.write(tmp_path / "t.jsonl")
+    out = tmp_path / "out"
+    prints = []
+    for args in (["run", "--grid", "r2", "--transcript", path, "--pin", str(size), "--label", "s", "--out", str(out)],
+                 ["summary", "--out", str(out), "--stamp", "fixed"]):
+        done = subprocess.run([sys.executable, str(REPLAY), *args], capture_output=True, text=True, timeout=300)
+        assert done.returncode == 0, done.stderr
+        prints.append(done.stdout + done.stderr)
+    files = sorted(out.iterdir())
+    assert {f.name for f in files} == {"run-s.json", "SUMMARY.md"}
+    blob = "\n".join(prints + [f.read_text() for f in files])
+    assert v[:8] in (tmp_path / "t.jsonl").read_text()  # the control: the fixture does hold the value
+    assert _hidden(v, blob)
+    result = json.loads((out / "run-s.json").read_text())
+    rules = collections.Counter()
+    for c in result["cells"]:
+        rules.update(c["archived_items_by_rule"])
+    assert rules["R5"] and rules["R6"]  # the outputs did cover items R5 and R6 archived
+    assert result["recognition"]["r5_items"] >= 36
 
 
 def _timeline_tokens(tl) -> set:
@@ -804,6 +1299,35 @@ MUTANTS = {
     "thinking-before-the-current-turn-ignored": ("protect_from = bisect.bisect_left(turn, cur - cell.k, 0, entered)",
                                                  "protect_from = bisect.bisect_left(turn, cur + 1, 0, entered)",
                                                  check_r2_thinking),
+    # Round 2 (tasks/briefs/jev-trim/T0-REPLAY-R2-brief.md items 2-7).
+    "check-points-follow-the-protection-unit": ('check_unit = "stop" if v2 else cell.unit', "check_unit = cell.unit",
+                                                check_request_window_between_turn),
+    "window-one-request-short": ("protect_from = bisect.bisect_left(turn, cur - cell.k, 0, entered)",
+                                 "protect_from = bisect.bisect_left(turn, cur - cell.k + 1, 0, entered)",
+                                 check_request_window_between_turn),
+    "opening-group-not-protected": ("return item.start or _protected_kind_v2(item)", "return _protected_kind_v2(item)",
+                                    check_opening_group),
+    "record-reading-protects-the-group": (
+        'return _protected_kind_v2_group if cell.opening == "group" else _protected_kind_v2',
+        "return _protected_kind_v2_group", check_opening_record),
+    "r5-envelope-anywhere": ("text.lstrip().startswith(ENVELOPES)", "any(e in text for e in ENVELOPES)", check_r5),
+    "hand-back-protected-as-typed-text": ("((item.typed and not item.handback) or item.first_user",
+                                          "(item.typed or item.first_user", check_r5),
+    "r6-key-ignored": ("return (atype, value) if isinstance(value, str) else (atype,)", "return (atype,)", check_r6),
+    "skill-body-not-protected": ('or item.name == "skill_body" or item.attach_type in SKILL_BODY_TYPES)',
+                                 'or item.name == "skill_body")', check_r6),
+    "reach-guard-never-blocks": ("probe.max_gain(protect_from, age_from) > target",
+                                 'probe.max_gain(protect_from, age_from) > float("inf")', check_reach),
+    "reach-probe-ignores-the-window": ("probe.max_gain(protect_from, age_from)", "probe.max_gain(entered, age_from)",
+                                       check_reach),
+    "cooldown-off-by-one": ("r - last_trim < cooldown", "r - last_trim <= cooldown", check_cooldown),
+    "pessimistic-bound-uses-the-edit-point": ("sent - segment.fixed_start - request.write",
+                                              "sent - prefix - request.write", check_pessimistic),
+    "fixed-start-takes-the-larger-estimate": ("segment.fixed_start, segment.fixed_source = min(candidates)",
+                                              "segment.fixed_start, segment.fixed_source = max(candidates)",
+                                              check_fixed_start),
+    "composition-before-trimming": ("mark is not None and mark[2] <= r_star", "mark is not None and False",
+                                    check_composition),
 }
 
 

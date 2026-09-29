@@ -2,7 +2,7 @@
 """T0-REPLAY (task #346, D-105): replay plain, deterministic trimming rules over a Claude Code transcript.
 
     replay.py run --transcript FILE --pin BYTES --label NAME --out DIR [--start BYTES] [--sidechain]
-                  [--modes M ...] [--turn-units U ...]
+                  [--modes M ...] [--turn-units U ...] [--grid r1|r2]
     replay.py crosscheck --transcript FILE --pin BYTES --audit AUDIT.md --out DIR
     replay.py summary --out DIR
 
@@ -68,6 +68,28 @@ cannot change its answer (tests prove the equality). A visible-only variant drop
 earlier copy that is itself archived no longer hides a token. Thinking is never scored (its text is never read). The
 counts are a lower bound on need: a need that leaves no distinctive token or re-run in the record is not seen.
 
+ROUND 2 (`--grid r2`, tasks/briefs/jev-trim/T0-REPLAY-R2-brief.md; cells of version 2, round 1's cells unchanged).
+- Protection by a window of K requests (the `request` unit: the current request and the last K). Between-turn check
+  points are the stop-hook turn starts whatever the unit, so a trim there may take items of the finished turn outside
+  the window. The segment's first user message stays protected, read one of two ways (--opening, one per run):
+  `record`, round 1's reading (the segment's first user text record; the default, as the brief keeps the protected
+  kinds), or `group` (every item that entered before the segment's first request: the API sends that group as one
+  user message). A hand-back is not typed text; skill bodies (a Skill call's body, an invoked_skills attachment)
+  stay protected, every copy.
+- R5: a user-side item carrying a hand-back or a task notification, older than A requests, becomes a stub. It is
+  recognized by the record's structure (a task-notification origin, a peer origin flagged handback, a queued command in
+  task-notification mode) or by its text opening with a wrapper's tag (ENVELOPES); the text is compared, never printed.
+- R6: an attachment superseded by a newer one of the same type (and the same ATTACH_KEY_FIELDS value where the type has
+  one) is archived; any other attachment older than A requests becomes a stub; a skill body never.
+- Guards: `none`; `reach` (fire only when archiving every eligible item brings the context to L or below, else archive
+  nothing there: ReachProbe answers exactly, in O(log n)); `cooldown:C` (at most one trim per C requests per segment).
+- A second cache bound, pessimistic: every trim rewrites everything after the segment's fixed start (the system prompt
+  and tools), for the 20-block cache lookback. The fixed start is the lower of two estimates: the first context minus
+  the modeled opening items, and the first context minus the compaction's postTokens (the audit's §3.3, which notes
+  that postTokens leaves some start messages uncounted); the lower rewrites more. Each segment also records its
+  prompt_snapshot's characters as a cross-check. The composition at the median request after trimming shows each
+  cell's floor.
+
 Nothing here prints or stores session text: outputs carry counts, sizes, byte offsets, tool_use ids and tool, hook,
 attachment-type and rule names only (a name must match NAME_RE or becomes "<unnamed>").
 """
@@ -76,6 +98,7 @@ from __future__ import annotations
 import argparse
 import bisect
 import collections
+import dataclasses
 import datetime
 import heapq
 import json
@@ -114,6 +137,18 @@ TURN_UNITS = ("stop", "prompt", "request")
 THINKING_SIZES = ("exact", "model")
 AGE_BUCKETS = (("0-10", 0, 10), ("11-50", 11, 50), ("51-200", 51, 200), ("201+", 201, None))
 NAME_RE = re.compile(r"[A-Za-z0-9_:.\-]{1,80}")
+# Round 2 (tasks/briefs/jev-trim/T0-REPLAY-R2-brief.md): the grid, the guards and R5/R6's recognition.
+R2_BUDGETS = (100_000, 131_072, 200_000)
+R2_LOW_FRACTIONS = (0.75, 0.6)
+R2_AGES = (10, 20)
+R2_WINDOWS = (3, 10, 30)
+R2_RULE_SETS = (("R1", "R2", "R3", "R4"), ("R1", "R2", "R3", "R4", "R5", "R6"))
+GUARDS = ("none", "reach", "cooldown:10", "cooldown:30")
+OPENINGS = ("record", "group")  # readings of "the segment's first user message" (Cell.opening)
+ENVELOPES = ("<agent-message", "<task-notification")  # R5: the hand-back and notification wrappers' opening tags
+SKILL_BODY_TYPES = frozenset({"invoked_skills"})  # R6 never takes a skill body
+ATTACH_KEY_FIELDS = {"edited_text_file": "filename", "file": "filename", "compact_file_reference": "filename",
+                     "nested_memory": "path", "task_status": "taskId", "hook_additional_context": "hookName"}
 USER_SIDE = frozenset({"tool_result", "typed_user_text", "other_user_text", "task_reminder", "hook_context",
                        "other_attachment"})
 SKIP_ATTACHMENTS = frozenset({"hook_success", "prompt_snapshot"})
@@ -204,6 +239,10 @@ class Item:
     toks: frozenset = frozenset()
     stub_toks: frozenset = frozenset()
     prefix_real: float = 0.0  # context tokens before it (the cache model's edit point)
+    handback: str = ""  # R5: "structure" or "envelope" when the item carries a hand-back or a task notification
+    attach_type: str | None = None  # the attachment's type, for an item from an attachment record (R6)
+    attach_key: tuple | None = None  # R6's supersede key: the type, and its key field's value where it has one
+    start: bool = False  # entered before its segment's first request: that request's first user message
 
     def turn(self, unit: str) -> int:
         return self.req if unit == "request" else (self.turn_stop if unit == "stop" else self.turn_prompt)
@@ -215,6 +254,10 @@ class Segment:
     requests: list
     items: list
     fixed: frozenset
+    fixed_start: float = 0.0  # the system prompt and tools, in tokens (the pessimistic cache bound's floor)
+    fixed_source: str = ""
+    fixed_estimates: dict = field(default_factory=dict)  # every estimate of the fixed start, by name
+    snapshot_chars: int = 0  # the largest prompt_snapshot's characters (the system prompt and tools, as recorded)
 
 
 @dataclass
@@ -285,6 +328,34 @@ def _attachment(attachment: dict) -> tuple[str, str, str, int, tuple | None, boo
     return "other_attachment", safe_name(atype), text, len(text), None, False
 
 
+def _envelope(text: str) -> str:
+    """'envelope' when the text opens with a hand-back or task-notification wrapper's tag (compared, never printed)."""
+    return "envelope" if text.lstrip().startswith(ENVELOPES) else ""
+
+
+def _handback(origin: object, text: str) -> str:
+    """R5's recognition of a user record: its structure (a task-notification origin, or a peer origin flagged as a
+    hand-back), else its envelope's opening tag."""
+    if isinstance(origin, dict) and (origin.get("kind") == "task-notification"
+                                     or (origin.get("kind") == "peer" and origin.get("handback") is True)):
+        return "structure"
+    return _envelope(text)
+
+
+def _attachment_handback(attachment: dict, text: str) -> str:
+    """R5's recognition of an attachment: a queued command in task-notification mode, else its envelope."""
+    if attachment.get("type") == "queued_command" and attachment.get("commandMode") == "task-notification":
+        return "structure"
+    return _envelope(text)
+
+
+def _attach_key(attachment: dict) -> tuple:
+    """R6's supersede key: the type, and the value of its key field where the type has one (memory only)."""
+    atype = safe_name(attachment.get("type"))
+    value = attachment.get(ATTACH_KEY_FIELDS[atype]) if atype in ATTACH_KEY_FIELDS else None
+    return (atype, value) if isinstance(value, str) else (atype,)
+
+
 def build(path: str, limit: int, *, start: int = 0, sidechain: bool = False, user_cpt: float = USER_CPT,
           assistant_cpt: float = ASSISTANT_CPT, thinking_size: str = "exact", with_items: bool = True) -> Timeline:
     """One pass over the records before `limit` from `start`: requests, segments, turns and (with_items) the items."""
@@ -303,6 +374,8 @@ def build(path: str, limit: int, *, start: int = 0, sidechain: bool = False, use
     calls: dict[str, tuple] = {}
     skill_calls: dict[str, str] = {}
     fixed: dict[int, set] = collections.defaultdict(set)
+    post_tokens: dict[int, int] = {}
+    snapshot_chars: dict[int, int] = {}
     seg = raw_stop = raw_prompt = 0
     last_pid, first_user_open = None, True
     for offset, record in transcript.iter_records(path, limit, stats):
@@ -318,6 +391,10 @@ def build(path: str, limit: int, *, start: int = 0, sidechain: bool = False, use
                 seg, raw_stop, raw_prompt, first_user_open = seg + 1, raw_stop + 1, raw_prompt + 1, True
                 stamp = record.get("timestamp") if isinstance(record.get("timestamp"), str) else ""
                 boundaries.append((offset, stamp[:10] or "unknown"))
+                meta = record.get("compactMetadata")
+                post = meta.get("postTokens") if isinstance(meta, dict) else None
+                if type(post) is int and post >= 0:  # the messages the compaction left: context - this = system + tools
+                    post_tokens[seg] = post
             elif record.get("subtype") == "stop_hook_summary":
                 raw_stop += 1
                 stats["stop_hook_summaries"] += 1
@@ -364,7 +441,8 @@ def build(path: str, limit: int, *, start: int = 0, sidechain: bool = False, use
                     ukind, name, typed, skill = _user_kind(record, skill_calls)
                     items.append(Item(offset, len(blocks), seg, ukind, name, len(text), raw_stop, raw_prompt, text=text,
                                       typed=typed, first_user=first_user_open, skill=skill,
-                                      stub=stub_text(ukind, name, "", None, len(text), offset, False)))
+                                      stub=stub_text(ukind, name, "", None, len(text), offset, False),
+                                      handback=_handback(record.get("origin"), text)))
                     first_user_open = False
             continue
         if kind == "attachment":
@@ -374,13 +452,17 @@ def build(path: str, limit: int, *, start: int = 0, sidechain: bool = False, use
                 continue
             if attachment.get("type") == "prompt_snapshot":
                 if with_items:
-                    fixed[seg].update(accounting.tokens(flatten(attachment)))
+                    body = flatten(attachment)
+                    fixed[seg].update(accounting.tokens(body))
+                    snapshot_chars[seg] = max(snapshot_chars.get(seg, 0), len(body))
                 continue
             if attachment.get("type") in SKIP_ATTACHMENTS or not with_items:
                 continue
             akind, name, text, chars, key, typed = _attachment(attachment)
             items.append(Item(offset, 0, seg, akind, name, chars, raw_stop, raw_prompt, text=text, key=key, typed=typed,
-                              stub=stub_text(akind, name, "", None, chars, offset, False)))
+                              stub=stub_text(akind, name, "", None, chars, offset, False),
+                              handback=_attachment_handback(attachment, text),
+                              attach_type=safe_name(attachment.get("type")), attach_key=_attach_key(attachment)))
             continue
         stats["bookkeeping_records"] += 1
     for rid, request in by_rid.items():
@@ -418,7 +500,7 @@ def build(path: str, limit: int, *, start: int = 0, sidechain: bool = False, use
                 stats[f"thinking_sized_{how}"] += 1
             items.append(item)
     check["modeled_thinking_tokens"] = round(check["modeled_thinking_tokens"], 1)
-    segments = _segments(requests, items, fixed, stats)
+    segments = _segments(requests, items, fixed, stats, post_tokens, snapshot_chars)
     _turns(requests, segments)
     if with_items:
         for segment in segments:
@@ -475,7 +557,7 @@ def _result_item(block, offset, sub, seg, raw_stop, raw_prompt, calls, stats) ->
                                block.get("is_error") is True))
 
 
-def _segments(requests, items, fixed, stats) -> list[Segment]:
+def _segments(requests, items, fixed, stats, post_tokens, snapshot_chars) -> list[Segment]:
     by_req, by_items = collections.defaultdict(list), collections.defaultdict(list)
     for request in requests:
         by_req[request.seg].append(request)
@@ -491,9 +573,20 @@ def _segments(requests, items, fixed, stats) -> list[Segment]:
             if j == len(reqs):
                 stats["items_after_their_segments_last_request"] += 1
                 continue
-            item.req, item.pos = reqs[j].index, len(kept)
+            item.req, item.pos, item.start = reqs[j].index, len(kept), j == 0
             kept.append(item)
-        segments.append(Segment(seg, reqs, kept, frozenset(fixed.get(seg, ()))))
+        segment = Segment(seg, reqs, kept, frozenset(fixed.get(seg, ())), snapshot_chars=snapshot_chars.get(seg, 0))
+        # The fixed start (the system prompt and tools), estimated twice: the first context minus the modeled opening
+        # items, and (the audit's §3.3) the first context minus the compaction's postTokens, which the audit notes
+        # leaves some start messages uncounted. The pessimistic bound takes the lower: it rewrites more.
+        first = reqs[0].context
+        candidates = [(max(0.0, first - sum(it.size for it in kept if it.start)),
+                       "first_context_minus_the_modeled_opening_items")]
+        if seg in post_tokens:
+            candidates.append((max(0.0, float(first - post_tokens[seg])), "first_context_minus_post_tokens"))
+        segment.fixed_estimates = {name: round(value, 1) for value, name in candidates}
+        segment.fixed_start, segment.fixed_source = min(candidates)
+        segments.append(segment)
     stats["items_in_segments_without_a_request"] += sum(len(v) for s, v in by_items.items() if s not in by_req)
     return segments
 
@@ -550,6 +643,16 @@ class Index:
                 self.supersedes[it.pos] = newest.get(it.key)  # the copy this one supersedes: the previous newest
                 newest[it.key] = it.pos
         self.turns = {unit: [it.turn(unit) for it in items] for unit in TURN_UNITS}
+        # Round 2. R5: hand-backs and task notifications. R6: attachments that are neither a hand-back (R5's) nor typed
+        # text; a skill body is listed too but never archived: the protected kinds exclude it (_protected_kind_v2).
+        self.r5 = [it.pos for it in items if it.handback and it.size > stub_tokens]
+        r6_items = [it for it in items if it.attach_type is not None and not it.handback and not it.typed]
+        self.r6 = [it.pos for it in r6_items if it.size > stub_tokens]
+        self.supersedes6: list = [None] * len(items)
+        newest6: dict = {}
+        for it in r6_items:
+            self.supersedes6[it.pos] = newest6.get(it.attach_key)
+            newest6[it.attach_key] = it.pos
         look = [it for it in items if it.kind in ("tool_input", "assistant_text")]
         self.la_req = [it.req for it in look]
         call_items = [it for it in look if it.kind == "tool_input"]
@@ -606,6 +709,11 @@ class Fenwick:
 
 @dataclass(frozen=True)
 class Cell:
+    """One grid cell. version 1 is round 1's policy, unchanged. version 2 (round 2): between-turn check points are
+    stop-hook turn starts whatever the protection unit; a hand-back is not typed text; R5, R6, the guards, the
+    pessimistic cache bound and the composition apply. `opening` reads "the segment's first user message" (version 2
+    only): `record`, round 1's reading, the segment's first user text record; `group`, every item that entered before
+    the segment's first request (the API sends that group as one user message)."""
     budget: int
     low: int
     age: int
@@ -613,20 +721,95 @@ class Cell:
     mode: str
     unit: str = "stop"
     k: int = K_TURNS
+    guard: str = "none"
+    version: int = 1
+    opening: str = "record"
 
 
 def indexes(tl: Timeline, stub_tokens: float = STUB_TOKENS, large_input_tokens: float = LARGE_INPUT_TOKENS) -> dict:
     return {s.index: Index(s, stub_tokens, large_input_tokens) for s in tl.segments}
 
 
+class ReachProbe:
+    """The reach guard's question at one check point, in O(log n): what would archiving every eligible item save? The
+    eligible set is the one a trim pass with no target archives: not archived, not a protected kind, a positive gain,
+    before the window (position < protect_from), and one of: thinking under R2; older than A under an age rule (R3-R6;
+    items enter in position order, so older = position < age_from, the first position whose request is r - A or
+    later); superseded under R1 or R6. Four disjoint Fenwick trees: R2 items; age-rule items; superseded items no age
+    rule holds; superseded items an age rule also holds (counted only past age_from, where the age tree stops)."""
+
+    def __init__(self, items: list, ix: Index, rules: tuple, stub_tokens: float, protected_kind) -> None:
+        n = len(items)
+        self.gain = [0.0] * n
+        for it in items:
+            gain = it.size - (0.0 if it.kind == "thinking" else stub_tokens)
+            if gain > 0 and not protected_kind(it):
+                self.gain[it.pos] = gain
+        self.trees = [Fenwick(n) for _ in range(4)]  # now (R2), old (age rules), superseded, superseded and aged
+        self.member = [0] * n  # bit i: in trees[i]
+        self.aged = set()
+        for rule in ("R3", "R4", "R5", "R6"):
+            if rule in rules:
+                self.aged.update(getattr(ix, rule.lower()))
+        for tree, positions in ((0, ix.r2 if "R2" in rules else ()), (1, self.aged)):
+            for q in positions:
+                if self.gain[q] > 0:
+                    self.trees[tree].add(q, self.gain[q])
+                    self.member[q] |= 1 << tree
+        self.superseded = [False] * n
+        self.gone = [False] * n
+
+    def supersede(self, q: int) -> None:
+        if self.superseded[q] or self.gone[q] or self.gain[q] <= 0:
+            return
+        self.superseded[q] = True
+        tree = 3 if q in self.aged else 2
+        self.trees[tree].add(q, self.gain[q])
+        self.member[q] |= 1 << tree
+
+    def archive(self, q: int) -> None:
+        for tree in range(4):
+            if self.member[q] >> tree & 1:
+                self.trees[tree].add(q, -self.gain[q])
+        self.member[q], self.gone[q] = 0, True
+
+    def max_gain(self, protect_from: int, age_from: int) -> float:
+        cut = min(protect_from, age_from)
+        now, old, sup, sup_aged = self.trees
+        return (now.prefix(protect_from) + old.prefix(cut) + sup.prefix(protect_from)
+                + sup_aged.prefix(protect_from) - sup_aged.prefix(cut))
+
+
 def _protected_kind(item: Item) -> bool:
     return item.typed or item.first_user or item.skill is not None or item.name == "skill_body"
 
 
+def _protected_kind_v2(item: Item) -> bool:
+    """Round 2, the brief's "the other protected kinds stay": typed text that is not a hand-back, the segment's first
+    user message (round 1's reading: its first user text record), and skill bodies (a Skill call's body, or an
+    invoked_skills attachment)."""
+    return ((item.typed and not item.handback) or item.first_user or item.skill is not None
+            or item.name == "skill_body" or item.attach_type in SKILL_BODY_TYPES)
+
+
+def _protected_kind_v2_group(item: Item) -> bool:
+    """The wider reading of the segment's first user message: every item that entered before its first request."""
+    return item.start or _protected_kind_v2(item)
+
+
+def protected_kind_of(cell: Cell):
+    """The protected-kind test a cell applies."""
+    if cell.version < 2:
+        return _protected_kind
+    return _protected_kind_v2_group if cell.opening == "group" else _protected_kind_v2
+
+
 def simulate(tl: Timeline, cell: Cell, idx: dict, *, stub_tokens: float = STUB_TOKENS, keep_map: bool = False) -> dict:
     """The policy over every segment: per-request active context, the trims, the use-after-archive rows, the cache
-    terms and (keep_map) the archive map {(segment, position): (rule, trim number, request index, stub cost)}."""
-    out = {"active": [], "trims": [], "uaa": [], "archive": {}, "saved": []}
+    terms and (keep_map) the archive map {(segment, position): (rule, trim number, request index, stub cost)}.
+    A version-2 cell also keeps each segment's final archive state ("archived") and counts the trims its guard
+    blocked ("blocked")."""
+    out = {"active": [], "trims": [], "uaa": [], "archive": {}, "saved": [], "archived": {}, "blocked": 0}
     for segment in tl.segments:
         _simulate_segment(segment, idx[segment.index], cell, stub_tokens, out, keep_map)
     return out
@@ -636,15 +819,22 @@ def _simulate_segment(segment: Segment, ix: Index, cell: Cell, stub_tokens: floa
     items = segment.items
     n = len(items)
     turn = ix.turns[cell.unit]
+    v2 = cell.version >= 2
+    protected_kind = protected_kind_of(cell)
+    check_unit = "stop" if v2 else cell.unit  # round 2: between-turn trims fire at stop-hook turn starts only
+    cooldown = int(cell.guard.split(":", 1)[1]) if cell.guard.startswith("cooldown:") else 0
+    probe = ReachProbe(items, ix, cell.rules, stub_tokens, protected_kind) if cell.guard == "reach" else None
     archived: list = [None] * n
     bit = Fenwick(n)
     heap: list = []
-    lists = {"R2": ix.r2, "R3": ix.r3, "R4": ix.r4}
-    ptr = {"R2": 0, "R3": 0, "R4": 0}
+    heap6: list = []
+    lists = {"R2": ix.r2, "R3": ix.r3, "R4": ix.r4, "R5": ix.r5, "R6": ix.r6}
+    ptr = {"R2": 0, "R3": 0, "R4": 0, "R5": 0, "R6": 0}
     stubs: collections.Counter = collections.Counter()
     saved = 0.0
     entered = 0
     trims_here = 0
+    last_trim = None
     prev_turn = None
     for j, request in enumerate(segment.requests):
         r = request.index
@@ -652,10 +842,18 @@ def _simulate_segment(segment: Segment, ix: Index, cell: Cell, stub_tokens: floa
             older = ix.supersedes[entered]
             if older is not None and archived[older] is None:
                 heapq.heappush(heap, older)  # the older copy is superseded once the newer one entered
+                if probe is not None and "R1" in cell.rules:
+                    probe.supersede(older)
+            older6 = ix.supersedes6[entered]
+            if older6 is not None and archived[older6] is None:
+                heapq.heappush(heap6, older6)  # R6: an attachment superseded by a newer one of its type and key
+                if probe is not None and "R6" in cell.rules:
+                    probe.supersede(older6)
             entered += 1
         cur = request.turn(cell.unit)
-        turn_start = j == 0 or cur != prev_turn
-        prev_turn = cur
+        check = request.turn(check_unit)
+        turn_start = j == 0 or check != prev_turn
+        prev_turn = check
         protect_from = bisect.bisect_left(turn, cur - cell.k, 0, entered)  # the current turn and the last K turns
         active = request.context - saved
         newly: list[int] = []
@@ -665,7 +863,7 @@ def _simulate_segment(segment: Segment, ix: Index, cell: Cell, stub_tokens: floa
             item = items[q]
             stub = 0.0 if item.kind == "thinking" else stub_tokens  # thinking is dropped whole; the rest leave a stub
             gain = item.size - stub
-            if gain <= 0 or _protected_kind(item):
+            if gain <= 0 or protected_kind(item):
                 return 0.0
             archived[q] = (rule, trims_here, r, stub)
             bit.add(q, gain)
@@ -673,26 +871,43 @@ def _simulate_segment(segment: Segment, ix: Index, cell: Cell, stub_tokens: floa
             newly.append(q)
             if stub:
                 stubs.update(item.stub_toks)
+            if probe is not None:
+                probe.archive(q)
             return gain
 
+        def from_heap(pool: list, rule: str) -> None:
+            nonlocal active
+            while pool and active > target:
+                q = pool[0]
+                if q >= protect_from:
+                    break
+                heapq.heappop(pool)
+                if archived[q] is None:
+                    active -= archive(q, rule)
+
         target = cell.low  # hysteresis: once past B, archive down to L
-        if (cell.mode == "per-request" or turn_start) and active > cell.budget:
+        due = (cell.mode == "per-request" or turn_start) and active > cell.budget
+        if due and cooldown and last_trim is not None and r - last_trim < cooldown:
+            due = False  # the cooldown guard: at most one trim per C requests (per segment)
+            out["blocked"] += 1
+        if due and probe is not None:
+            age_from = bisect.bisect_left(ix.req, r - cell.age, 0, entered)
+            if active - probe.max_gain(protect_from, age_from) > target:
+                due = False  # the reach guard: every eligible item archived would still leave the context above L
+                out["blocked"] += 1
+        if due:
             for rule in cell.rules:
                 if rule == "R1":
-                    while heap and active > target:
-                        q = heap[0]
-                        if q >= protect_from:
-                            break
-                        heapq.heappop(heap)
-                        if archived[q] is None:
-                            active -= archive(q, "R1")
+                    from_heap(heap, "R1")
                     continue
+                if rule == "R6":
+                    from_heap(heap6, "R6")
                 lst = lists[rule]
                 while ptr[rule] < len(lst) and active > target:
                     q = lst[ptr[rule]]
                     if q >= protect_from:
                         break
-                    if rule != "R2" and not items[q].req < r - cell.age:  # R3/R4: older than A requests
+                    if rule != "R2" and not items[q].req < r - cell.age:  # R3-R6: older than A requests
                         break
                     ptr[rule] += 1
                     if archived[q] is None:
@@ -708,6 +923,9 @@ def _simulate_segment(segment: Segment, ix: Index, cell: Cell, stub_tokens: floa
                     "saved_tokens": sum(items[q].size - archived[q][3] for q in newly),
                     "edit_offset": items[edit].offset, "tail_tokens": tail,
                     "extra_write_tokens": max(0.0, tail - request.write - request.uncached),
+                    # the pessimistic bound: the trim rewrites everything after the system prompt and tools
+                    "extra_write_tokens_pessimistic": max(0.0, sent - segment.fixed_start - request.write
+                                                          - request.uncached),
                     "turn_start": turn_start}
             vis: dict = {}
             for q in newly:
@@ -715,9 +933,12 @@ def _simulate_segment(segment: Segment, ix: Index, cell: Cell, stub_tokens: floa
                 if keep_map:
                     out["archive"][(segment.index, q)] = archived[q]
             trims_here += 1
+            last_trim = r
             out["trims"].append(trim)
         out["active"].append((r, request.context - saved))
         out["saved"].append(saved)
+    if v2:
+        out["archived"][segment.index] = archived
 
 
 def active_list(segment: Segment, archive: dict, request_index: int) -> list[tuple[int, str]]:
@@ -756,7 +977,7 @@ def _uaa(ix: Index, items: list, q: int, r: int, archived: list, stubs, entered:
     item = items[q]
     rule = archived[q][0]
     row = {"rule": rule, "tool": item.name if item.kind in ("tool_result", "tool_input") else item.kind,
-           "age": r - item.req, "scored": item.kind != "thinking"}
+           "age": r - item.req, "scored": item.kind != "thinking", "attach": item.attach_type}
     if not row["scored"]:  # thinking: its text is never read, so it is never scored
         return row
     kept = frozenset(t for t in item.toks if t in fixed or _visible(t, ix, archived, stubs, entered, cache))
@@ -783,10 +1004,13 @@ def _uaa(ix: Index, items: list, q: int, r: int, archived: list, stubs, entered:
     return row
 
 
-def floors(tl: Timeline, idx: dict, unit: str, k: int = K_TURNS) -> list[tuple[int, float, float]]:
+def floors(tl: Timeline, idx: dict, unit: str, k: int = K_TURNS, version: int = 1,
+           opening: str = "record") -> list[tuple[int, float, float]]:
     """(request index, the protected set alone, the segment start alone) per request: the segment's first context plus
     the modeled size of every protected item that entered after it (typed text, the newest copy of each skill body,
-    the current turn and the last K turns)."""
+    the current turn and the last K turns). Version 2 counts its protected kinds (a hand-back is not typed text; every
+    copy of a skill body, as the simulation never archives one) and the window of K requests."""
+    kept_v2 = _protected_kind_v2_group if opening == "group" else _protected_kind_v2
     rows = []
     for segment in tl.segments:
         items = segment.items
@@ -795,13 +1019,14 @@ def floors(tl: Timeline, idx: dict, unit: str, k: int = K_TURNS) -> list[tuple[i
         size_all, size_typed = [0.0], [0.0]
         for it in items:
             late = it.req > first.index
+            kept = kept_v2(it) if version >= 2 else (it.typed or it.first_user)
             size_all.append(size_all[-1] + (it.size if late else 0.0))
-            size_typed.append(size_typed[-1] + (it.size if late and (it.typed or it.first_user) else 0.0))
+            size_typed.append(size_typed[-1] + (it.size if late and kept else 0.0))
         newest_skill: dict = {}
         entered = 0
         for request in segment.requests:
             while entered < len(items) and items[entered].req <= request.index:
-                if items[entered].skill is not None:
+                if items[entered].skill is not None and version < 2:
                     newest_skill[items[entered].skill] = entered
                 entered += 1
             protect_from = bisect.bisect_left(turn, request.turn(unit) - k, 0, entered)
@@ -822,6 +1047,116 @@ def grid(modes=MODES, units=("stop",)) -> list[Cell]:
                         for mode in modes:
                             cells.append(Cell(budget, round(budget * fraction), age, rules, mode, unit))
     return cells
+
+
+def grid_r2(modes=MODES, opening: str = "record") -> list[Cell]:
+    """Round 2's grid (the brief's item 8): protection by a request window of K requests, both rule sets, four guards;
+    one reading of the segment's first user message for the whole grid."""
+    if opening not in OPENINGS:
+        raise ValueError(f"opening must be one of {OPENINGS}")
+    cells = []
+    for budget in R2_BUDGETS:
+        for fraction in R2_LOW_FRACTIONS:
+            for age in R2_AGES:
+                for k in R2_WINDOWS:
+                    for rules in R2_RULE_SETS:
+                        for guard in GUARDS:
+                            for mode in modes:
+                                cells.append(Cell(budget, round(budget * fraction), age, rules, mode, "request", k,
+                                                  guard, 2, opening))
+    return cells
+
+
+COMPOSITION_KINDS = ("tool_result", "tool_input", "thinking", "assistant_text", "typed_user_text", "other_user_text",
+                     "handback", "task_reminder", "hook_context", "other_attachment")
+
+
+def composition(tl: Timeline, cell: Cell, sim: dict, idx: dict, stub_tokens: float = STUB_TOKENS) -> dict | None:
+    """What the active context holds at the median request after trimming (the lower middle by active size, ties by
+    request order): the fixed start (system prompt and tools), the kept items by kind, the stubs, and what the
+    modeled sizes leave unattributed. The kept items fall in three parts: protected (the window and the protected
+    kinds; the opening group, a part of it, shown too), outside every rule of the cell (no rule targets the item's
+    kind or size: assistant text, small tool inputs, meta text, attachments without R6), and the rest, which a rule
+    may still take once it is old enough or superseded. The floor at that request = fixed start + protected + outside
+    every rule + stubs."""
+    rows = sorted(sim["active"], key=lambda ra: (ra[1], ra[0]))
+    if not rows:
+        return None
+    r_star, active = rows[(len(rows) - 1) // 2]
+    request = tl.requests[r_star]
+    segment = next(s for s in tl.segments if s.index == request.seg)
+    archived = sim["archived"][segment.index]
+    ix = idx[segment.index]
+    entered = bisect.bisect_right(ix.req, r_star)
+    protect_from = bisect.bisect_left(ix.turns[cell.unit], request.turn(cell.unit) - cell.k, 0, entered)
+    targeted = set()
+    for rule in cell.rules:
+        if rule == "R1":
+            targeted.update(it.pos for it in segment.items if it.key is not None and it.size > stub_tokens)
+        else:
+            targeted.update(getattr(ix, rule.lower()))
+    protected_kind = protected_kind_of(cell)
+    kinds: collections.Counter = collections.Counter()
+    stubs = protected = opening = outside = 0.0
+    n_stubs = n_dropped = 0
+    for it in segment.items[:entered]:
+        mark = archived[it.pos]
+        if mark is not None and mark[2] <= r_star:  # archived at or before the median request: its stub, or nothing
+            stubs += mark[3]
+            n_stubs += mark[3] > 0
+            n_dropped += mark[3] == 0
+            continue
+        kinds["handback" if it.handback else it.kind] += it.size
+        if it.pos >= protect_from or protected_kind(it):
+            protected += it.size
+            opening += it.size if it.start else 0.0
+        elif it.pos not in targeted:
+            outside += it.size
+    kept = sum(kinds.values())
+    return {"request": r_star, "offset": request.offset, "segment": segment.index, "active": round(active, 1),
+            "fixed_start": round(segment.fixed_start, 1), "fixed_source": segment.fixed_source,
+            "by_kind": {k: round(kinds.get(k, 0.0), 1) for k in COMPOSITION_KINDS},
+            "stubs": round(stubs, 1), "stub_count": n_stubs, "dropped_thinking_count": n_dropped,
+            "kept_protected": round(protected, 1), "kept_protected_opening_group": round(opening, 1),
+            "kept_outside_every_rule": round(outside, 1),
+            "kept_a_rule_may_take_later": round(kept - protected - outside, 1),
+            "floor": round(segment.fixed_start + protected + outside + stubs, 1),
+            "unattributed": round(active - segment.fixed_start - kept - stubs, 1)}
+
+
+def recognition(tl: Timeline, stub_tokens: float = STUB_TOKENS) -> dict:
+    """R5's and R6's inputs. R5: the hand-back items by kind, name and route (structure or envelope), with their
+    modeled tokens and how many are larger than a stub. R6: every attachment type, with its items, modeled tokens,
+    how many sit in a segment's opening group (protected in version 2 as the first user message), how many carry a
+    key, how many a newer one of the same type and key supersedes, and whether it is a skill body (never archived).
+    An attachment that is a hand-back or typed text is R5's or protected, and is counted under r6_types too."""
+    handbacks: dict = collections.defaultdict(lambda: {"items": 0, "tokens": 0.0, "over_stub": 0})
+    types: dict = collections.defaultdict(lambda: {"items": 0, "tokens": 0.0, "in_opening": 0, "keyed": 0,
+                                                   "superseded": 0, "hand_back_or_typed": 0})
+    for segment in tl.segments:
+        newest: dict = {}
+        for it in segment.items:
+            if it.handback:
+                row = handbacks[f"{it.kind}:{it.name}:{it.handback}"]
+                row["items"] += 1
+                row["tokens"] += it.size
+                row["over_stub"] += it.size > stub_tokens
+            if it.attach_type is not None:
+                row = types[it.attach_type]
+                row["items"] += 1
+                row["tokens"] += it.size
+                row["in_opening"] += it.start
+                row["keyed"] += len(it.attach_key or ()) > 1
+                if it.handback or it.typed:
+                    row["hand_back_or_typed"] += 1
+                else:
+                    if it.attach_key in newest:
+                        types[newest[it.attach_key]]["superseded"] += 1
+                    newest[it.attach_key] = it.attach_type
+    return {"r5_items": sum(v["items"] for v in handbacks.values()),
+            "r5_by_kind_name_route": {k: {**v, "tokens": round(v["tokens"], 1)} for k, v in sorted(handbacks.items())},
+            "r6_types": {t: {**v, "tokens": round(v["tokens"], 1), "skill_body": t in SKILL_BODY_TYPES}
+                         for t, v in sorted(types.items(), key=lambda kv: (-kv[1]["tokens"], kv[0]))}}
 
 
 def _stat(values: list) -> dict:
@@ -855,18 +1190,22 @@ def uaa_summary(rows: list[dict]) -> dict:
     return out
 
 
-def cache_terms(tl: Timeline, sim: dict, read: float, extra_ratio: float) -> dict:
+def cache_terms(tl: Timeline, sim: dict, read: float, extra_ratio: float, key: str = "extra_write_tokens") -> dict:
     real = sum(read * q.read + CACHE_WRITE_5M * q.write_5m + CACHE_WRITE_1H * q.write_1h + q.uncached
                for q in tl.requests)
     saved_read = read * sum(sim["saved"])
-    extra = (extra_ratio - read) * sum(t["extra_write_tokens"] for t in sim["trims"])
+    extra = (extra_ratio - read) * sum(t[key] for t in sim["trims"])
     net = extra - saved_read
     return {"read_ratio": read, "extra_write_ratio": extra_ratio, "real_units": round(real, 1),
             "read_saving_units": round(saved_read, 1), "extra_write_units": round(extra, 1),
             "net_units": round(net, 1), "net_share_of_real": round(net / real, 6) if real else None}
 
 
-def summarize_cell(tl: Timeline, cell: Cell, sim: dict, floor_rows: list, extra_ratio: float) -> dict:
+AGE_RULES = frozenset({"R3", "R4", "R5", "R6"})
+
+
+def summarize_cell(tl: Timeline, cell: Cell, sim: dict, floor_rows: list, extra_ratio: float, idx: dict | None = None,
+                   stub_tokens: float = STUB_TOKENS) -> dict:
     active = [a for _, a in sim["active"]]
     trims = sim["trims"]
     gaps, last = [], {}
@@ -875,9 +1214,9 @@ def summarize_cell(tl: Timeline, cell: Cell, sim: dict, floor_rows: list, extra_
             gaps.append(t["request"] - last[t["segment"]])
         last[t["segment"]] = t["request"]
     archived_rules = collections.Counter(r["rule"] for r in sim["uaa"])
-    return {
+    row = {
         "B": cell.budget, "L": cell.low, "A": cell.age, "rules": "+".join(cell.rules), "mode": cell.mode,
-        "turn_unit": cell.unit, "K": cell.k, "a_invariant": not ({"R3", "R4"} & set(cell.rules)),
+        "turn_unit": cell.unit, "K": cell.k, "a_invariant": not (AGE_RULES & set(cell.rules)),
         "requests": len(active),
         "active": {**{k: v for k, v in _stat(active).items() if k in ("median", "p90", "max")},
                    "over_B": sum(1 for a in active if a > cell.budget)},
@@ -895,6 +1234,19 @@ def summarize_cell(tl: Timeline, cell: Cell, sim: dict, floor_rows: list, extra_
         "cache_at_read_0_1": cache_terms(tl, sim, CACHE_READ_ALT, extra_ratio),
         "use_after_archive": uaa_summary(sim["uaa"]),
     }
+    if cell.version >= 2:  # round 2's fields; a version-1 row stays as round 1 wrote it
+        row.update({
+            "version": cell.version, "opening": cell.opening, "guard": cell.guard,
+            "guard_blocked_checks": sim["blocked"],
+            "median_at_or_under_B": bool(active) and statistics.median(active) <= cell.budget,
+            "cache_pessimistic": cache_terms(tl, sim, CACHE_READ, extra_ratio, key="extra_write_tokens_pessimistic"),
+            "cache_pessimistic_at_read_0_1": cache_terms(tl, sim, CACHE_READ_ALT, extra_ratio,
+                                                         key="extra_write_tokens_pessimistic"),
+            "archived_attachments_by_rule_and_type": dict(sorted(collections.Counter(
+                f"{r['rule']}:{r['attach']}" for r in sim["uaa"] if r["attach"] is not None).items())),
+            "composition_at_median": composition(tl, cell, sim, idx, stub_tokens) if idx is not None else None,
+        })
+    return row
 
 
 FIT_GROUPS = (("tool_results", ("tool_result",)), ("hook_contexts_and_task_reminders", ("hook_context", "task_reminder")),
@@ -1006,13 +1358,13 @@ def run(tl: Timeline, cells: list[Cell], *, stub_tokens: float = STUB_TOKENS,
     done: dict = {}
     results = []
     for number, cell in enumerate(cells):
-        key = cell if {"R3", "R4"} & set(cell.rules) else Cell(cell.budget, cell.low, AGES[0], cell.rules, cell.mode,
-                                                                   cell.unit, cell.k)
+        key = cell if AGE_RULES & set(cell.rules) else dataclasses.replace(cell, age=AGES[0])  # A matters to no rule
         if key not in done:
-            if (cell.unit, cell.k) not in floor_cache:
-                floor_cache[(cell.unit, cell.k)] = floors(tl, idx, cell.unit, cell.k)
+            fkey = (cell.unit, cell.k, cell.version, cell.opening)
+            if fkey not in floor_cache:
+                floor_cache[fkey] = floors(tl, idx, cell.unit, cell.k, cell.version, cell.opening)
             sim = simulate(tl, key, idx, stub_tokens=stub_tokens)
-            done[key] = summarize_cell(tl, key, sim, floor_cache[(cell.unit, cell.k)], extra_ratio)
+            done[key] = summarize_cell(tl, key, sim, floor_cache[fkey], extra_ratio, idx, stub_tokens)
         row = dict(done[key])
         row["A"] = cell.age
         results.append(row)
@@ -1115,6 +1467,11 @@ def _cell_rows(cells: list[dict]) -> list[str]:
 def write_summary(out: Path, stamp: str) -> Path:
     runs = sorted((json.loads(p.read_text()) for p in out.glob("run-*.json")),
                   key=lambda r: (r["label"] != "main", r["label"]))
+    schemas = {r.get("schema") for r in runs}
+    if schemas == {2}:
+        return write_summary_r2(out, stamp, runs)
+    if 2 in schemas:
+        raise ValueError("this directory mixes round-1 and round-2 runs; write each round to its own directory")
     check = out / "crosscheck.json"
     lines = ["# T0-REPLAY results (task #346, D-105)", "",
              f"Written by `scripts/jev_trim/replay.py summary` at {stamp}. Counts, sizes, offsets and names only.",
@@ -1189,6 +1546,161 @@ def write_summary(out: Path, stamp: str) -> Path:
     return target
 
 
+def _rules(value: str) -> str:
+    return {"R1+R2+R3+R4": "R1-R4", "R1+R2+R3+R4+R5+R6": "R1-R6"}.get(value, value)
+
+
+def _r2_head(c: dict) -> list[str]:
+    return [_num(c["B"]), _num(c["L"]), str(c["A"]), str(c["K"]), _rules(c["rules"]), c["guard"], c["mode"]]
+
+
+R2_GRID_HEAD = ("| B | L | A | K | rules | guard | mode | median | p90 | max | >B | median<=B | protected>B | trims | "
+                "blocked | saved/trim med | req between med | net % real, edit point @0.05 | @0.1 | "
+                "net % real, pessimistic @0.05 | @0.1 | archived | UAA@20 | UAA@H |")
+
+
+def _r2_grid_rows(cells: list[dict]) -> list[str]:
+    lines = [R2_GRID_HEAD, "|" + "---|" * 24]
+    for c in cells:
+        u = c["use_after_archive"]
+        lines.append("| " + " | ".join(_r2_head(c) + [
+            _num(c["active"]["median"]), _num(c["active"]["p90"]), _num(c["active"]["max"]),
+            _num(c["active"]["over_B"]), "yes" if c["median_at_or_under_B"] else "no",
+            _pct(c["floor"]["protected_over_B_share"]), _num(c["trims"]["count"]), _num(c["guard_blocked_checks"]),
+            _num(c["trims"]["saved_tokens_per_trim"]["median"]), _num(c["trims"]["requests_between_trims"]["median"]),
+            _pct(c["cache"]["net_share_of_real"]), _pct(c["cache_at_read_0_1"]["net_share_of_real"]),
+            _pct(c["cache_pessimistic"]["net_share_of_real"]),
+            _pct(c["cache_pessimistic_at_read_0_1"]["net_share_of_real"]),
+            f"{u['archived_items']} ({u['scored_items']} scored)", str(u["at20"]["items"]),
+            str(u["at_horizon"]["items"])]) + " |")
+    return lines
+
+
+def _r2_composition_rows(cells: list[dict]) -> list[str]:
+    head = ("| B | L | A | K | rules | guard | mode | request | active | fixed start | protected (opening group) | "
+            "outside every rule | a rule may take later | stubs (count) | floor | unattributed | "
+            + " | ".join(COMPOSITION_KINDS) + " |")
+    lines = [head, "|" + "---|" * (16 + len(COMPOSITION_KINDS))]
+    for c in cells:
+        m = c["composition_at_median"]
+        if m is None:
+            lines.append("| " + " | ".join(_r2_head(c) + ["—"] * (9 + len(COMPOSITION_KINDS))) + " |")
+            continue
+        lines.append("| " + " | ".join(_r2_head(c) + [
+            str(m["request"]), _num(m["active"]), _num(m["fixed_start"]),
+            f"{_num(m['kept_protected'])} ({_num(m['kept_protected_opening_group'])})",
+            _num(m["kept_outside_every_rule"]), _num(m["kept_a_rule_may_take_later"]),
+            f"{_num(m['stubs'])} ({m['stub_count']})", _num(m["floor"]), _num(m["unattributed"])]
+            + [_num(m["by_kind"][k]) for k in COMPOSITION_KINDS]) + " |")
+    return lines
+
+
+def _uaa_h(c: dict) -> int:
+    return c["use_after_archive"]["at_horizon"]["items"]
+
+
+def _pess(c: dict) -> float:
+    share = c["cache_pessimistic"]["net_share_of_real"]
+    return share if share is not None else 0.0
+
+
+BEST_CRITERIA = (
+    ("the lowest median active context (ties: the lower pessimistic net at read 0.05, then fewer UAA@H)", False,
+     lambda c: (c["active"]["median"] if c["active"]["median"] is not None else float("inf"), _pess(c), _uaa_h(c))),
+    ("among rows holding the median at or under B: the lowest pessimistic net at read 0.05 (ties: the lower "
+     "median, then fewer UAA@H)", True,
+     lambda c: (_pess(c), c["active"]["median"], _uaa_h(c))),
+    ("among rows holding the median at or under B: the fewest UAA@H (ties: the lower pessimistic net at read 0.05, "
+     "then the lower median)", True,
+     lambda c: (_uaa_h(c), _pess(c), c["active"]["median"])),
+)
+
+
+def best_rows(cells: list[dict]) -> list[tuple[int, str, dict | None]]:
+    """Per budget, one row per stated criterion (the grid order breaks a full tie: the first row wins)."""
+    out = []
+    for budget in sorted({c["B"] for c in cells}):
+        rows = [c for c in cells if c["B"] == budget]
+        for label, needs_hold, key in BEST_CRITERIA:
+            pool = [c for c in rows if c["median_at_or_under_B"]] if needs_hold else rows
+            out.append((budget, label, min(pool, key=key) if pool else None))
+    return out
+
+
+def write_summary_r2(out: Path, stamp: str, runs: list[dict]) -> Path:
+    """Round 2's SUMMARY.md: per run, the recognition, the rows holding the median at or under B, the best row per
+    budget under each stated criterion, the full grid and the composition at the median of every cell."""
+    lines = ["# T0-REPLAY round 2 results (task #346, D-105)", "",
+             f"Written by `scripts/jev_trim/replay.py summary` at {stamp}. Counts, sizes, offsets and names only.",
+             "Advisory: no design recommendation. The brief is `tasks/briefs/jev-trim/T0-REPLAY-R2-brief.md`; round 1's "
+             "results are in `../replay-2026-09-28/` (same pins).", "",
+             "- Version 2 cells: the current request and the last K requests are protected; a between-turn trim fires "
+             "at a stop-hook turn start only and may take items of the finished turn outside the window; the segment's "
+             "first user message stays protected, read one of two ways (each run names its reading): `record`, round "
+             "1's reading (its first user text record), or `group` (every item that entered before the segment's "
+             "first request); typed text (a hand-back is not typed text) and skill bodies stay protected. R5: a hand-back or task "
+             "notification older than A requests becomes a stub (recognized by the record's structure or its "
+             "envelope's opening tag). R6: an attachment superseded by a newer one of the same type (and key, where "
+             "the type has one) is archived; any other older than A becomes a stub; a skill body never. Guards: "
+             "`none`; `reach` (a trim fires only when archiving every eligible item brings the context to L or "
+             "below); `cooldown:C` (at most one trim per C requests in a segment). `blocked` = check points past B "
+             "that the guard stopped, whether or not an item was eligible there.",
+             "- Sizes as round 1: exact contexts and cache splits; modeled items (user side at the run's user_cpt).",
+             "- Cache, two bounds. Edit point: round 1's model (a trim rewrites the tail after its oldest archived "
+             "item). Pessimistic: every trim rewrites everything after the fixed start (the system prompt and tools), "
+             "for the 20-block lookback; the fixed start is the lower of the first context minus the modeled opening "
+             "items and the first context minus the compaction's postTokens (the audit's §3.3), so the bound rewrites "
+             "more. `net % real` = (extra writes - saved reads) / the real session's cost; below zero is a saving.",
+             "- UAA counts are a LOWER bound on need (round 1's definition); thinking is never scored.",
+             "- Composition: the lower median request by active tokens after trimming. Floor = fixed start + "
+             "protected + outside every rule + stubs; `unattributed` = the exact context minus the modeled parts.",
+             f"- Cache ratios: {CACHE_SOURCE}", ""]
+    for run_ in runs:
+        t = run_["timeline"]
+        cells = run_["cells"]
+        lines += [f"## Run `{run_['label']}`: {run_['transcript']} pinned at {run_['pin']:,} bytes "
+                  f"(from offset {run_['start']:,}; thread {'sidechain' if run_['sidechain'] else 'main'})", "",
+                  f"- Requests {t['requests']:,} in {t['segments']} segments; context median "
+                  f"{_num(t['context']['median'])}, p90 {_num(t['context']['p90'])}, max {_num(t['context']['max'])}; "
+                  f"real requests over B {run_['baseline']['over_B']}.",
+                  f"- Reading of the segment's first user message: `{run_['params']['opening']}`.",
+                  f"- Cells {len(cells)}: modes {sorted({c['mode'] for c in cells})}; extra writes priced at "
+                  f"{run_['cache_terms']['extra_write_ratio']}x; parameters {run_['params']}.",
+                  "", "| segment | first context | fixed start used | source | first context - modeled opening | "
+                  "first context - postTokens | prompt_snapshot characters |", "|---|---|---|---|---|---|---|"]
+        lines += [f"| {f['segment']} | {_num(f['first_context'])} | {_num(f['fixed_start'])} | {f['source']} | "
+                  f"{_num(f['estimates'].get('first_context_minus_the_modeled_opening_items'))} | "
+                  f"{_num(f['estimates'].get('first_context_minus_post_tokens'))} | {_num(f['snapshot_chars'])} |"
+                  for f in run_["fixed_start"]]
+        lines += [""]
+        rec = run_["recognition"]
+        lines += [f"### R5 recognition: {rec['r5_items']} items", "",
+                  "| kind:name:route | items | tokens | larger than a stub |", "|---|---|---|---|"]
+        lines += [f"| {k} | {v['items']} | {_num(v['tokens'])} | {v['over_stub']} |"
+                  for k, v in rec["r5_by_kind_name_route"].items()]
+        lines += ["", "### R6: attachment types", "",
+                  "| type | items | tokens | in an opening group | keyed | superseded | hand-back or typed | skill body |",
+                  "|---|---|---|---|---|---|---|---|"]
+        lines += [f"| {k} | {v['items']} | {_num(v['tokens'])} | {v['in_opening']} | {v['keyed']} | {v['superseded']} | "
+                  f"{v['hand_back_or_typed']} | {'yes' if v['skill_body'] else 'no'} |"
+                  for k, v in rec["r6_types"].items()]
+        hold = [c for c in cells if c["median_at_or_under_B"]]
+        lines += ["", f"### Rows holding the median at or under B: {len(hold)} of {len(cells)}", ""]
+        lines += _r2_grid_rows(hold) if hold else ["None."]
+        lines += ["", "### Best row per budget, by stated criterion", "",
+                  "| criterion | " + R2_GRID_HEAD[2:], "|" + "---|" * 25]
+        for budget, label, c in best_rows(cells):
+            if c is None:
+                lines.append(f"| {label} | {_num(budget)} | none | " + " | ".join([""] * 22) + " |")
+            else:
+                lines.append(f"| {label} " + _r2_grid_rows([c])[2])
+        lines += ["", "### Full grid", ""] + _r2_grid_rows(cells)
+        lines += ["", "### Composition at the median request, full grid", ""] + _r2_composition_rows(cells) + [""]
+    target = out / "SUMMARY.md"
+    target.write_text("\n".join(lines) + "\n")
+    return target
+
+
 # ---------------------------------------------------------------- the command line
 
 def main(argv: list[str] | None = None) -> int:
@@ -1202,7 +1714,12 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--start", type=int, default=0, help="byte offset of the first record to read (a compact_boundary)")
     r.add_argument("--sidechain", action="store_true", help="the thread is isSidechain true (a subagent file)")
     r.add_argument("--modes", nargs="+", choices=MODES, default=list(MODES))
-    r.add_argument("--turn-units", nargs="+", choices=TURN_UNITS, default=["stop"])
+    r.add_argument("--grid", choices=("r1", "r2"), default="r1",
+                   help="r1: round 1's grid (turn units, K = 2 turns); r2: round 2's (tasks/briefs/jev-trim/"
+                        "T0-REPLAY-R2-brief.md item 8: a window of K requests, R5 and R6, the guards, version 2)")
+    r.add_argument("--turn-units", nargs="+", choices=TURN_UNITS, default=None, help="r1 only (default: stop)")
+    r.add_argument("--opening", choices=OPENINGS, default=None,
+                   help="r2 only: the reading of the segment's first user message (default: record, round 1's)")
     r.add_argument("--stub-tokens", type=float, default=STUB_TOKENS)
     r.add_argument("--large-input", type=float, default=LARGE_INPUT_TOKENS)
     r.add_argument("--thinking-size", choices=THINKING_SIZES, default="exact",
@@ -1237,12 +1754,19 @@ def main(argv: list[str] | None = None) -> int:
                     verdict += " (the median is equal once truncated to the audit's integer)"
             print(day, "requests", row["mine"]["requests"], "median", row["mine"]["median"], verdict)
         return 0
+    if args.grid == "r2" and args.turn_units is not None:
+        ap.error("--turn-units belongs to the r1 grid; the r2 grid protects a window of K requests")
+    if args.grid == "r1" and args.opening is not None:
+        ap.error("--opening belongs to the r2 grid; the r1 grid keeps round 1's protected kinds")
     began = time.monotonic()
     tl = build(args.transcript, args.pin, start=args.start, sidechain=args.sidechain, user_cpt=args.user_cpt,
                thinking_size=args.thinking_size)
     print(f"timeline: {len(tl.requests)} requests, {len(tl.segments)} segments, "
           f"{sum(len(s.items) for s in tl.segments)} items, {time.monotonic() - began:.1f}s")
-    cells = grid(tuple(args.modes), tuple(args.turn_units))
+    if args.grid == "r2":
+        cells = grid_r2(tuple(args.modes), args.opening or "record")
+    else:
+        cells = grid(tuple(args.modes), tuple(args.turn_units or ["stop"]))
     step = max(1, len(cells) // 8)
     cell_results, cache_info = run(tl, cells, stub_tokens=args.stub_tokens, large_input_tokens=args.large_input,
                                    progress=lambda i, n: print(f"cells {i}/{n} {time.monotonic() - began:.1f}s")
@@ -1256,6 +1780,15 @@ def main(argv: list[str] | None = None) -> int:
                          "cache_write_5m": CACHE_WRITE_5M},
               "cache_source": CACHE_SOURCE, "cache_terms": cache_info, "baseline": baseline(tl),
               "timeline": timeline_summary(tl), "cells": cell_results}
+    if args.grid == "r2":  # round 2's run-level fields; a round-1 run writes exactly round 1's keys
+        result["schema"] = 2
+        result["params"].update({"K": list(R2_WINDOWS), "K_unit": "request", "guards": list(GUARDS),
+                                 "version": 2, "opening": args.opening or "record"})
+        result["recognition"] = recognition(tl, args.stub_tokens)
+        result["fixed_start"] = [{"segment": s.index, "first_offset": s.requests[0].offset,
+                                  "first_context": s.requests[0].context, "fixed_start": round(s.fixed_start, 1),
+                                  "source": s.fixed_source, "estimates": s.fixed_estimates,
+                                  "snapshot_chars": s.snapshot_chars} for s in tl.segments]
     target = args.out / f"run-{args.label}.json"
     target.write_text(json.dumps(result, indent=1, sort_keys=True) + "\n")
     print(f"wrote {target} ({len(cell_results)} cells) {time.monotonic() - began:.1f}s")
