@@ -22,6 +22,7 @@ last_compiled: 2026-09-03
 - **RETRO 02:2xZ:** `session-continuity` gains the newest-block rule for live-state edits; task #355 registered (backlog: `ci_gate.py` once read a runs list without the newest run).
 - **RETRO 03:0xZ:** task #356 registered (backlog: a gate that runs a test set under CI's Python).
 - **RETRO 04:3xZ:** AF-AP-240 (a measure keyed on the tool named for an action sees a fraction of it; VERIFY-K1's F3) with its bug-echo (task #360, backlog); `deep-work` Phase 2 and `orchestration` 0p baked; task #361 registered (backlog: the gate stack flags a mention that only names a path inside a temporary fixture tree). Not greppable as a screen rule: the Read-only detectors it names are legitimate in other code.
+- **RETRO 10:2xZ:** the owner signed the twelve (D-107) and their tag objects are committed; `STATUS.md` no longer says the anchors are pending; task #306 (the tag-import script) holds the three-step recipe that worked.
 
 **2026-09-29 00:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin 0e6d4a1, plus local commits; the main tree is the primary.**
