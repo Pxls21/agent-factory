@@ -30,7 +30,7 @@ The chat form is built and gated: `scripts/ls_req.py` and `tests/test_ls_req.py`
 ## PREMISE RE-RUN
 `bash scripts/premise_block.sh` from the main tree at 11:07Z. The output is IDENTICAL to the brief's block: `diff premise_expected.txt premise_out.txt` is empty (39 lines).
 - It includes 334 passed for set bc6d12c0785b, and the hashes `c69a8191…` stack.py through `3932dc63…` turn-retro-gate.sh.
-- HEAD has since moved to d6caa37. `git log bef1e9e..HEAD` over the four registration files is empty, so the patch applies at both commits (proven below).
+- HEAD has since moved to 164bf49 [coordinator: the origin id; the lane cited its pre-push local id]. `git log bef1e9e..HEAD` over the four registration files is empty, so the patch applies at both commits (proven below).
 
 ## FILES (shared tree, untracked, created by this lane)
 
@@ -181,7 +181,7 @@ Ledger fields: `v, ts, session, nonce, id, label, kind, status, reason, uuid, li
 
 ## REGISTRATION PATCH PROOF
 The patch is `git diff` output at the PIN, holding the four files the brief names.
-- `git apply --check` passes in fresh clones at bef1e9e AND at d6caa37 (the current HEAD). After applying, each of the four files is byte-identical (`cmp`) to the gated clone's.
+- `git apply --check` passes in fresh clones at bef1e9e AND at 164bf49 [coordinator: the origin id; the lane cited its pre-push local id] (the current HEAD). After applying, each of the four files is byte-identical (`cmp`) to the gated clone's.
 - `.claude/settings.json` gains three entries, each LAST in its list, each with `timeout`, no matcher, in the `$CLAUDE_PROJECT_DIR` spelling:
   - UserPromptSubmit: `… ls_req.py prompt`, 30;
   - Stop: `… ls_req.py stop`, 300;
