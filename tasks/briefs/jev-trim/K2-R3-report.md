@@ -3,7 +3,8 @@
 > are in the landing commit). NOT done 1 (uncommitted text in a TRACKED caller or test file) stays the follow-up class
 > VERIFY-K2 round 2 rated it; the round-3 verify re-checks it. The hook stays unregistered. The builder's `logs/` and
 > `vk/` paths are its sandbox scratch (`scratchpad/k2-lane-353/r3/`), not repo paths; its line refs are to the
-> patched files.
+> patched files. The builder cited the coordinator's then-local commit by its local id; each citation is written
+> here as its origin id, 99a273e ("pc_egress_watch.sh: watch a PC lane's network peers from outside the lane").
 
 # K2 round 3 report (task #353, D-111): B1, B2, B3, the seven checks, the stale documents, the patches
 
@@ -278,8 +279,8 @@ Each item is either a deviation from the brief's letter, or a fact the brief did
   - The patched hook's sha256 is fce110fe82d8b183, the same as in the verifier's wtreg.
 - `git apply --cached --check` of `K2-R3.patch` [V]:
   - rc 0 on a pristine index of the PIN.
-  - rc 0 on the current shared HEAD 3a3d45a. Its boundary files equal the PIN's: `git diff --stat 99583a2 3a3d45a` over them is empty.
-- Both older patches also give rc 0 on 3a3d45a.
+  - rc 0 on the current shared HEAD 99a273e. Its boundary files equal the PIN's: `git diff --stat 99583a2 99a273e` over them is empty.
+- Both older patches also give rc 0 on 99a273e.
 - `git diff --check` is clean.
 
 ## 5. Gates
@@ -406,4 +407,4 @@ The AP screen over the three code files, compared with the PIN. All the new hits
   - No process of mine remains, and no `graft _update-check` child.
   - Each real-instrument test ends by killing its fixture's processes by pid.
   - Every probe log ends with `processes left in the fixture and stopped: 0`.
-  - The post-commit jobs running in the shared tree at 20:0xZ are not mine. They belong to the coordinator's commit 3a3d45a ("pc_egress_watch.sh: watch a PC lane's network peers from outside the lane").
+  - The post-commit jobs running in the shared tree at 20:0xZ are not mine. They belong to the coordinator's commit 99a273e ("pc_egress_watch.sh: watch a PC lane's network peers from outside the lane").
