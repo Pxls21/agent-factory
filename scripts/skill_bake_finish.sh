@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # skill_bake_finish.sh — the mechanical tail of a skill bake. Edit .claude/skills/<skill>/SKILL.md (and, for a hand-ported
-# skill, its port .agents/skills/<skill>/SKILL.md) first; then this script syncs the lane copies, records the hand-port base
-# hashes, and regenerates sandbox-kit/VENDORED-MANIFEST.md in a CLEAN detached worktree that holds only the changed files: a
+# skill, its port .agents/skills/<skill>/SKILL.md) first; then this script mirrors a skill that is not hand-ported into
+# .agents/skills, syncs the lane copies, records the hand-port base hashes, and regenerates sandbox-kit/VENDORED-MANIFEST.md
+# in a CLEAN detached worktree that holds only the changed files: a
 # live lane's untracked file under a vendored root would shift the manifest in the shared tree (AF-AP-188; done by hand twice
 # on 2026-09-24). It prints the paths to commit and commits nothing; commit them with SKIP_MANIFEST_CHECK=1.
 #   usage: scripts/skill_bake_finish.sh <skill> [<skill>...]      exit: 0 ready · 1 nothing changed · 64 usage/refused · 66 disk
@@ -30,6 +31,9 @@ only_named() {                          # another lane's skill edit must never r
 SKILLS=("$@")
 mapfile -t before < <(changed_now)
 only_named "${before[@]}"
+# Order matters (task #369): the plain run mirrors a skill that is not hand-ported into .agents/skills (a hand-ported one is
+# never overwritten), and the lane copies are filled FROM .agents/skills, so they come second; --record only hashes.
+bash harness-ports/bin/sync-skills.sh >/dev/null
 bash harness-ports/bin/sync-lane-skills.sh >/dev/null
 bash harness-ports/bin/sync-skills.sh --record >/dev/null
 mapfile -t changed < <(changed_now)

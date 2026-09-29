@@ -1,9 +1,11 @@
-"""scripts/skill_bake_finish.sh: the refusals that happen before it touches anything (usage, a bad or unknown skill name).
+"""scripts/skill_bake_finish.sh: the refusals that happen before it touches anything (usage, a bad or unknown skill name),
+and the ready path for a skill that is not hand-ported, run in a detached worktree of HEAD (task #369).
 
-The ride-along refusal (another skill's edit present) and the ready path (a clean-worktree manifest) were proven live on
-2026-09-24 against the shared tree (the commit that adds the script pastes both); they need a mutable tree, so they are not
-repeated here. Each case below asserts the exit code and the message, and that no tracked file changed.
+The ride-along refusal (another skill's edit present) was proven live on 2026-09-24 against the shared tree (the commit that
+adds the script pastes it); it is not repeated here. Each refusal case asserts the exit code and the message, and that no
+tracked file changed.
 """
+import os
 import pathlib
 import subprocess
 
@@ -40,3 +42,30 @@ def test_an_unknown_skill_is_refused():
     r = _run("no-such-skill-qz8")
     assert r.returncode == 64 and "no .claude/skills/no-such-skill-qz8/SKILL.md" in r.stderr
     assert _status() == before
+
+
+def test_a_plain_skill_edit_reaches_its_agents_and_lane_copies(tmp_path):
+    # Task #369: the bake mirrored only the hand-ported lane copies, so an edit to a skill that is not hand-ported left
+    # .agents/skills/<skill> stale and the pre-commit hook blocked (2026-09-29, env-tool-quirks). vendor-first is not
+    # hand-ported and is a lane skill: .agents/lane-skills is filled from .agents/skills, so its copy is right only when
+    # the .agents/skills copy is made first.
+    wt = tmp_path / "wt"
+    subprocess.run(["git", "-C", str(ROOT), "-c", "core.hooksPath=/dev/null", "worktree", "add", "-q", "--detach",
+                    str(wt), "HEAD"], check=True, capture_output=True)
+    try:
+        skill = "vendor-first"
+        src = wt / ".claude" / "skills" / skill / "SKILL.md"
+        with open(src, "a", encoding="utf-8") as f:
+            f.write("\nA line the bake test adds (task #369).\n")
+        env = dict(os.environ, TMPDIR=str(tmp_path))
+        r = subprocess.run(["bash", str(SCRIPT), skill], capture_output=True, text=True, cwd=wt, env=env, timeout=600)
+        assert r.returncode == 0, r.stderr
+        want = src.read_bytes()
+        for copy in (".agents/skills", ".agents/lane-skills"):
+            assert (wt / copy / skill / "SKILL.md").read_bytes() == want, copy
+        listed = r.stdout.splitlines()
+        for rel in (".claude/skills/%s/SKILL.md" % skill, ".agents/skills/%s/SKILL.md" % skill,
+                    ".agents/lane-skills/%s/SKILL.md" % skill, "sandbox-kit/VENDORED-MANIFEST.md"):
+            assert rel in listed, (rel, r.stdout)
+    finally:
+        subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(wt)], capture_output=True)
