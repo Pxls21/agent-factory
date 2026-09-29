@@ -1,6 +1,8 @@
 """Tests for the stack runner (scripts/stack.py), its registry (scripts/stacks.toml) and its helpers
 (scripts/gate_files.py, scripts/handback_extract.py, scripts/gate_union.py, scripts/lint_files.py): task #339, D-103,
-brief tasks/briefs/labeling/LS-B9-brief.md; round 2 (ripwire and sentrux active, D-104) in the same report.
+brief tasks/briefs/labeling/LS-B9-brief.md; round 2 (ripwire and sentrux active, D-104) in the same report; round 4
+(tasks/briefs/labeling/LS-B9-R4-brief.md: R3-F1, R3-F3, R3-F4, R3-F5, the catalog notes, local ids in a hand-back,
+the SessionStart catalog) at the end.
 
 The runner's rules run against temporary registries of tiny real programs (sys.executable on small scripts written
 into a temporary git tree), never a stub of an instrument. The stacks: `explain` of each is pinned (it runs anywhere,
@@ -25,6 +27,7 @@ import signal
 import subprocess
 import sys
 import time
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -835,6 +838,7 @@ def test_a_bad_key_is_refused_with_exit_2_naming_the_known_keys(tmp_path, tokens
 
 
 GOOD_STACK = stack_toml("st", None, [{"id": "hello", "argv": ["true"]}])
+NOTES_BAD = "notes: a list of notes of 1 to 300 characters, each one line with no control character"
 
 
 @pytest.mark.parametrize("text, message", [
@@ -879,15 +883,20 @@ GOOD_STACK = stack_toml("st", None, [{"id": "hello", "argv": ["true"]}])
      "only a step with a chained input"),
     ("version = 1\n" + stack_toml("st", None, [{"id": "a", "argv": ["true"], "needs": "b"}]),
      "needs: a list of distinct step ids"),
+    ("version = 1\n" + GOOD_STACK.replace("outward = false\n", 'outward = false\nnotes = "one"\n'), NOTES_BAD),
+    ("version = 1\n" + GOOD_STACK.replace("outward = false\n", 'outward = false\nnotes = ["a\\rb"]\n'), NOTES_BAD),
+    ("version = 1\n" + GOOD_STACK.replace("outward = false\n", 'outward = false\nnotes = [""]\n'), NOTES_BAD),
+    ("version = 1\n" + GOOD_STACK.replace("outward = false\n", 'outward = false\nnotes = ["%s"]\n' % ("n" * 301)),
+     NOTES_BAD),
 ], ids=["version-2", "version-string", "outward-true", "outward-missing", "unknown-placeholder", "program-placeholder",
         "splice-in-element", "chain-to-later-group", "optional-scalar-unguarded", "repeated-id", "bad-default",
         "timeout-0", "join-of-a-scalar", "join-unguarded", "tool-alone", "unmapped-if-two-lines", "save-cap-0",
         "rated-string", "timeout-3601", "label-uppercase", "needs-later-step", "foreach-later-step",
-        "empty-ok-unchained", "needs-not-a-list"])
+        "empty-ok-unchained", "needs-not-a-list", "notes-string", "note-cr", "note-empty", "note-301"])
 def test_a_bad_registry_exits_3_before_anything_runs(tmp_path, text, message):
     """Mutants: the version check removed; the outward check removed; a join of a scalar or of an unset list let
-    through; the timeout bound widened (V4); the label regex loosened (V5); a needs or foreach source not checked —
-    each lets `list` and the stack exit 0."""
+    through; the timeout bound widened (V4); the label regex loosened (V5); a needs or foreach source not checked; the
+    notes check removed (a CR note printed raw by list and the catalog) — each lets `list` and the stack exit 0."""
     tree = make_tree(tmp_path / "t")
     path = tmp_path / "stacks.toml"
     path.write_text(text)
@@ -1030,14 +1039,40 @@ def real(tmp_path, *args, timeout=300):
                           cwd=str(ROOT), capture_output=True, text=True, timeout=timeout)
 
 
-def test_list_prints_one_line_per_wave1_stack(tmp_path):
+NOTES = {   # issue #80's pre-wiring list (VERIFY-LS-B9 round 3), each under its stack, and the round-4 brief's eighth;
+            # the gate's second and harvest's first are amended for round 4's R3-F1 and R3-F3 fixes (the report says how)
+    "harvest": ["On a resumed lane, check the `report:` line: the report window opens at the resume message, so no "
+                "earlier round's text is this round's report (R3-F3).",
+                "`report=` names an existing file to lint and hash; the hand-back itself is saved under the run "
+                "directory as `handback.md`."],
+    "gate": ["`runs=2` re-runs the pytest files only; `setid` covers the pytest files only.",
+             "Read the counts line; `mode=run` refuses more than `max_files` (40).",
+             "Pass `graph=no` where ripwire is missing and for a deleted path (F-18)."],
+    "ctx": ["`ctx` does not show a missing ripwire as unmapped (F-6)."],
+    "review": ["`review mode=save` overwrites the shared sentrux baseline (F-5).",
+               "`review`'s sentrux section is advisory; `tool exit N` is the only sign of a failed run."],
+}
+
+
+def test_list_prints_one_line_per_wave1_stack_and_its_notes_under_it(tmp_path):
+    """Round 4 item 6: each note under the stack it concerns. Mutants: the notes not printed; a stack's notes printed
+    before its own line (under the stack above)."""
     r = real(tmp_path, "list")
     assert r.returncode == 0, r.stderr
-    assert [line.split()[0] for line in r.stdout.splitlines()] == [
+    lines = r.stdout.splitlines()
+    assert [line.split()[0] for line in lines if not line.startswith(" ")] == [
         "harvest", "gate", "ctx", "impact", "find", "premise", "echo", "review", "ci"]
     assert "gate  paths=<paths> [mode=plan|run] [runs=1|2] [graph=yes|no] [max_files=<int>]  — " in r.stdout
-    assert sorted(line.split()[0] for line in r.stdout.splitlines() if line.endswith(" · rated")) == [
+    assert sorted(line.split()[0] for line in lines if line.endswith(" · rated")) == [
         "ctx", "echo", "find", "impact", "review"]
+    under, label = {}, None
+    for line in lines:
+        if line.startswith(" "):
+            assert line.startswith("  note: "), line
+            under.setdefault(label, []).append(line[len("  note: "):])
+        else:
+            label = line.split()[0]
+    assert under == NOTES
 
 
 EXPLAIN = {
@@ -1053,6 +1088,7 @@ group 2
   agent_row: grep -F '| a0123456789abcdef |' '<run>/hiccup.md' (timeout 30 s, ok_rc 0,1)
   lint: not selected (when report=*)
   lint_handback: python3 scripts/report_lint.py --root {TREEQ} <lines of handback> (timeout 120 s, optional)
+  local_ids: python3 scripts/handback_extract.py --local-ids '<run>/handback.md' <lines of handback> (optional)
   sha: not selected (when report=*)
 """),
     "harvest-report": (["agent=" + AGENT, "report=tasks/briefs/labeling/LS-B9-brief.md"], """\
@@ -1067,6 +1103,7 @@ group 2
   agent_row: grep -F '| a0123456789abcdef |' '<run>/hiccup.md' (timeout 30 s, ok_rc 0,1)
   lint: python3 scripts/report_lint.py --root {TREEQ} tasks/briefs/labeling/LS-B9-brief.md (timeout 120 s, optional)
   lint_handback: not selected (when report='')
+  local_ids: python3 scripts/handback_extract.py --local-ids '<run>/handback.md' <lines of handback> (optional)
   sha: sha256sum -- tasks/briefs/labeling/LS-B9-brief.md
 """),
     "gate": (["paths=scripts/report_lint.py,tests/test_report_lint.py", "mode=run"], """\
@@ -1252,9 +1289,25 @@ def text_block(text):
     return {"type": "text", "text": text}
 
 
+def user_record(content, **fields):
+    """A user record among build_transcript's blocks (written as a record of its own, with these top-level fields)."""
+    return ("user", content, fields)
+
+
+# the user records a real transcript holds around a hand-back call, as measured in the LS-B9 lane's (2026-09-29): the
+# call's own tool result right after it, the coordinator's resume message, a compaction summary
+RESULT = user_record([{"type": "tool_result", "tool_use_id": "toolu_x",
+                       "content": '{"success":true,"message":"Report delivered to your caller."}'}])
+RESUME = user_record("The coordinator sent a message while you were working:\nround 2: fix the rest",
+                     isMeta=True, origin={"kind": "coordinator"})
+COMPACTED = user_record("This session is being continued from a previous conversation that ran out of context.",
+                        isCompactSummary=True, isVisibleInTranscriptOnly=True)
+
+
 def build_transcript(root, messages=(), decoys=True, blocks=None):
     """A subagent transcript: assistant records with a model and one content block each (as measured): a thinking
-    decoy, then `blocks` (default: one SubagentHandback call per message); after them, decoys of other record types."""
+    decoy, then `blocks` (default: one SubagentHandback call per message; a user_record() is a user record); after
+    them, decoys of other record types."""
     path = root / "proj" / "sess" / "subagents" / ("agent-%s.jsonl" % AGENT)
     path.parent.mkdir(parents=True)
     recs = [{"type": "user", "agentId": AGENT, "timestamp": "2026-09-28T10:00:00.000Z",
@@ -1264,6 +1317,10 @@ def build_transcript(root, messages=(), decoys=True, blocks=None):
         content.append({"type": "thinking", "thinking": 'DECOY-THINKING "SubagentHandback" <system-reminder>'})
     content += [call(m) for m in messages] if blocks is None else blocks
     for i, block in enumerate(content):
+        if isinstance(block, tuple):
+            recs.append({"type": "user", "agentId": AGENT, "timestamp": "2026-09-28T10:00:%02d.000Z" % (i + 1),
+                         "message": {"role": "user", "content": block[1]}, **block[2]})
+            continue
         recs.append({"type": "assistant", "agentId": AGENT, "requestId": "req_%d" % i,
                      "timestamp": "2026-09-28T10:00:%02d.000Z" % (i + 1),
                      "message": {"model": "claude-opus-5-5", "id": "msg_%d" % i, "role": "assistant",
@@ -1312,7 +1369,7 @@ def test_harvest_on_a_built_subagent_transcript(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     rec = records(tmp_path / "log")[-1]
     steps = {s["id"]: s for s in rec["steps"]}
-    assert sorted(steps) == ["agent_row", "handback", "lint_handback", "models"]
+    assert sorted(steps) == ["agent_row", "handback", "lint_handback", "local_ids", "models"]
     handback = tmp_path / "log" / rec["run"] / "handback.md"
     assert handback.read_text() == neutralized_by_hand(message)
     data = handback.read_bytes()
@@ -1424,17 +1481,18 @@ def test_handback_extract_saves_the_lanes_longer_text_report(tmp_path):
 
 def test_handback_extract_takes_the_report_only_from_the_last_round(tmp_path):
     """F-11: a resumed lane wrote its round-1 report as text before its first hand-back and only a short summary at
-    its second: the round-1 text is not this round's report; a long text between the two calls is. Mutant: the search
-    not bounded by the previous call (the round-1 text is saved, and linted, as this round's report)."""
+    its second: the round-1 text is not this round's report; a long text between the resume and the second call is.
+    Mutant: the search not bounded by the previous call (the round-1 text is saved, and linted, as this round's
+    report)."""
     round1 = "ROUND1-REPORT " * 400
     r, out, rep = extract(tmp_path / "a", build_transcript(tmp_path / "a", blocks=[
-        text_block(round1), call("R1 SUMMARY"), text_block("short"), call("R2 SUMMARY " * 8)]))
+        text_block(round1), call("R1 SUMMARY"), RESULT, RESUME, text_block("short"), call("R2 SUMMARY " * 8)]))
     assert r.returncode == 0, r.stderr
     assert (r.stdout, rep.exists()) == ("%s\n" % out, False)
     assert r.stderr.splitlines()[1] == NO_LONG.rstrip("\n")
     round2 = "ROUND2-REPORT " * 200
     r, out, rep = extract(tmp_path / "b", build_transcript(tmp_path / "b", blocks=[
-        text_block(round1), call("R1 SUMMARY"), text_block(round2), call("R2 SUMMARY")]))
+        text_block(round1), call("R1 SUMMARY"), RESULT, RESUME, text_block(round2), call("R2 SUMMARY")]))
     assert r.returncode == 0, r.stderr
     assert r.stdout == "%s\n" % rep and rep.read_text() == round2
 
@@ -2019,3 +2077,298 @@ def test_echo_runs_on_this_tree_and_its_output_is_reproducible(tmp_path):
     roots = ["scripts", "harness-ports", "src", "proofs", ".claude/hooks", ".github"]
     assert files == sorted(files, key=lambda f: ([f.startswith(r + "/") for r in roots].index(True), f.split("/")))
     assert "scripts/stack.py" in files
+
+
+# ---------- round 4: R3-F3, R3-F1, R3-F4 (X1, X2, X3, X6), R3-F5, local ids (6b), the catalog (7) ----------
+
+def test_handback_extract_never_takes_the_previous_rounds_epilogue(tmp_path):
+    """R3-F3 (VERIFY-LS-B9 round 3), the verifier's shape with the records a real transcript holds around a call: round
+    1's report, call 1 (its tool result), a 4,000-character round-1 epilogue, the resume, a short text, a 160-character
+    call 2 gives no report; with a compaction between call 1 and the resume (the LS-B9 lane's own shape from round 3 to
+    round 4), the text after the compaction gives none either; the control, where round 2 writes its own long text,
+    picks it. Mutants: the window opened at the previous call (round 3's rule: the epilogue saved); at the first user
+    record after it (the call's own tool result: the epilogue saved); at a compaction summary (the text after the
+    compaction saved)."""
+    round1, epilogue = "ROUND1-REPORT " * 300, "ROUND1-EPILOGUE " * 250
+    assert len(epilogue) == 4000
+    shapes = {"epilogue": [RESULT, text_block(epilogue), RESUME],
+              "compacted": [RESULT, COMPACTED, text_block(epilogue), RESUME]}
+    for name, between in shapes.items():
+        blocks = [text_block(round1), call("R1 SUMMARY")] + between + [text_block("short"), call("M" * 160)]
+        r, out, rep = extract(tmp_path / name, build_transcript(tmp_path / name, blocks=blocks))
+        assert r.returncode == 0, (name, r.stderr)
+        assert (r.stdout, rep.exists()) == ("%s\n" % out, False), name
+        assert r.stderr.splitlines()[1] == NO_LONG.rstrip("\n"), name
+    round2 = "ROUND2-REPORT " * 200
+    r, out, rep = extract(tmp_path / "control", build_transcript(tmp_path / "control", blocks=[
+        text_block(round1), call("R1 SUMMARY"), RESULT, text_block(epilogue), RESUME, text_block(round2),
+        call("M" * 160)]))
+    assert r.returncode == 0 and r.stdout == "%s\n" % rep and rep.read_text() == round2, r.stderr
+
+
+def test_the_gates_counts_line_stays_in_the_print_past_a_9562_character_paths_value(tmp_path):
+    """R3-F1 (VERIFY-LS-B9 round 3): with a paths value of 9,562 characters or more the header alone passes the print
+    cap, which cuts the print from its end; the headline line now comes right after the tree line, before params:, so
+    the counts stay. Mutant: the headline lines after params: again (round 3's order: the counts line is cut)."""
+    tree = gate_tree(tmp_path, {"tests/test_other.py": PASSING_TEST})
+    value = ",".join(["scripts/thing.py"] + ["scripts/padding_%03d_%s.py" % (i, "p" * 30) for i in range(200)])
+    assert len(value) >= 9562
+    reg = tmp_path / "stacks.toml"
+    reg.write_text((ROOT / "scripts" / "stacks.toml").read_text())
+    r = run(tmp_path, tree, reg, "gate", "paths=" + value, "graph=no", timeout=300, log_dir=tree / ".jev" / "stacks")
+    assert r.returncode == 0, r.stdout[:3000] + r.stderr
+    assert len(r.stdout) <= 9000 and "… the print is cut at 9,000 characters" in r.stdout
+    assert r.stdout.splitlines()[2] == "sources · run list 1 of union 1: pytest 1 · python3 0 · bash 0 · not run 0"
+
+
+DEAF_CHILD = ('import os, signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+              'open("child.tmp", "w").write(str(os.getpid()))\nos.replace("child.tmp", "child")\n'
+              'while True:\n    time.sleep(0.05)\n')
+DEAF_LEAVER = ('import os, subprocess, sys, time\nsubprocess.Popen([sys.executable, "deafchild.py"])\n'
+               'while not os.path.exists("child"):     # the child ignores SIGTERM before the leader exits\n'
+               '    time.sleep(0.01)\n')
+
+
+def test_a_stray_that_ignores_sigterm_is_killed_all_the_same(tmp_path):
+    """R3-F4 X1: the stray kill after a leader exits is a SIGKILL, so a child that ignores SIGTERM dies too. Mutant X1:
+    the stray kill sends SIGTERM (the child lives on after the run)."""
+    tree = make_tree(tmp_path / "t")
+    (tree / "deafchild.py").write_text(DEAF_CHILD)
+    (tree / "deafleaver.py").write_text(DEAF_LEAVER)
+    reg = registry(tmp_path, stack_toml("st", None, [{"id": "leave", "argv": [PY, "deafleaver.py"]}]))
+    r = run(tmp_path, tree, reg, "st")
+    pid = int((tree / "child").read_text())
+    try:
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert wait_dead([pid]) == []
+        [s] = records(tmp_path / "log")[-1]["steps"]
+        assert (s["status"], s["strays_killed"]) == ("ok", True)
+    finally:
+        if alive(pid):
+            os.kill(pid, signal.SIGKILL)
+
+
+def test_a_headline_longer_than_headline_max_is_cut_with_an_ellipsis(tmp_path):
+    """R3-F4 X2: the header keeps 500 characters of a headline and marks the cut. Mutant X2: no cut at HEADLINE_MAX
+    (all 600 characters in the header)."""
+    tree = make_tree(tmp_path / "t")
+    reg = registry(tmp_path, stack_toml("st", None, [{"id": "hl", "argv": [PY, "-c", "print('H' * 600)"],
+                                                      "headline": True}]))
+    r = run(tmp_path, tree, reg, "st")
+    assert r.returncode == 0, r.stderr
+    assert "hl · " + "H" * 500 + "…" in header_of(r.stdout)
+
+
+# chr(), never a typed escape: the tools turn a typed backslash-u escape into the character itself (env-tool-quirks)
+HEADCTL = ("import sys\nline = 'COUNTS ok' + chr(13) + 'FORGED exit 0' + chr(27) + '[2K' + chr(0x85) + chr(0x7f) + "
+           "chr(0x2028) + chr(9) + '|'\nsys.stdout.buffer.write(line.encode('utf-8') + b'\\n')\n")
+
+
+def test_a_headlines_control_characters_are_escaped_in_the_header(tmp_path):
+    """R3-F5: a CR, an ESC, a C1 NEL, DEL, U+2028 and a TAB in a headline's first line reach the header as escapes,
+    never raw (a raw CR lets the text after it overwrite the header line in a terminal). The print is read as bytes:
+    text mode would turn a raw CR into a newline. Mutant: the first line copied raw."""
+    tree = make_tree(tmp_path / "t")
+    (tree / "hl.py").write_text(HEADCTL)
+    reg = registry(tmp_path, stack_toml("st", None, [{"id": "hl", "argv": [PY, "hl.py"], "headline": True}]))
+    r = subprocess.run([PY, str(STACK), "--tree", str(tree), "--registry", str(reg), "--log-dir", str(tmp_path / "log"),
+                        "st"], cwd=str(tree), capture_output=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    header = r.stdout.decode("utf-8").split("\n\n")[0]
+    assert "\nhl · COUNTS ok\\rFORGED exit 0\\x1b[2K\\x85\\x7f\\" + "u2028\\t|\n" in header
+    assert not any(c in header for c in (chr(13), chr(27), chr(0x85), chr(0x7f), chr(0x2028), chr(9)))
+
+
+RUN_ALL = ('#!/usr/bin/env bash\n# the harness suite runner; it checks scripts/thing.py\n'
+           'python3 scripts/thing.py && echo "run-all: ALL SUITES PASSED" && echo x >> RAN_ALL\n')
+
+
+def test_a_gate_on_a_path_only_run_all_names_runs_run_all_with_bash(tmp_path):
+    """R3-F4 X3: a path only run-all.sh names (as harness-ports/bin/build-roles.py is named at run-all.sh:72) gets
+    run-all.sh, run with bash as CI runs it, never NOTHING TO RUN. Mutant X3: run-all.sh no longer routed to bash (the
+    gate reads NOTHING TO RUN, a false red)."""
+    tree = gate_tree(tmp_path, {"harness-ports/tests/run-all.sh": RUN_ALL})
+    r = run_gate(tmp_path, tree, "mode=run", "runs=1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "sources · run list 1 of union 1: pytest 0 · python3 0 · bash 1 · not run 0" in header_of(r.stdout)
+    steps = {(s["id"], s.get("n")): s for s in records(tree / ".jev" / "stacks")[-1]["steps"]}
+    assert steps[("shells", 1)]["argv"] == ["bash", str(tree / "harness-ports/tests/run-all.sh")]
+    assert steps[("shells", 1)]["status"] == "ok" and (tree / "RAN_ALL").read_text() == "x\n"
+
+
+MARKS_SH = '# a harness shell test that names scripts/thing.py and marks that it ran\necho x >> RAN_SH\n'
+
+
+def test_a_refused_run_runs_no_shell_test(tmp_path):
+    """R3-F4 X6: a REFUSED run list (wider than max_files) that holds a shell test runs none of it; with the bound
+    lifted it runs. Mutant X6: the shells step without needs (it runs the shell test despite the refusal)."""
+    tree = gate_tree(tmp_path, {"tests/test_other.py": PASSING_TEST, "harness-ports/tests/test_marks.sh": MARKS_SH})
+    r = run_gate(tmp_path, tree, "mode=run", "runs=1", "max_files=1")
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert ("sources · run list 2 of union 2: pytest 1 · python3 0 · bash 1 · not run 0 · REFUSED: mode=run runs at "
+            "most max_files=1 files; pass max_files=2 to run these 2") in header_of(r.stdout)
+    shells = [(s.get("n"), s["status"]) for s in records(tree / ".jev" / "stacks")[-1]["steps"] if s["id"] == "shells"]
+    assert shells == [(None, "skipped")], shells
+    assert "## shells · SKIPPED — its prerequisite step sources failed (rc 1)" in r.stdout
+    assert not (tree / "RAN_SH").exists()
+    r = run_gate(tmp_path, tree, "mode=run", "runs=1", "max_files=2")
+    assert r.returncode == 0 and (tree / "RAN_SH").read_text() == "x\n", r.stdout + r.stderr
+
+
+def origin_tree(tmp_path):
+    """A repository with an origin (a bare repository beside it): its first commit pushed, a second one local."""
+    bare = tmp_path / "origin.git"
+    git(tmp_path, "init", "-q", "--bare", str(bare))
+    tree = make_tree(tmp_path / "t")
+    git(tree, "remote", "add", "origin", str(bare))
+    git(tree, "push", "-q", "origin", "main")
+    (tree / "c.txt").write_text("c\n")
+    git(tree, "add", "c.txt")
+    git(tree, "commit", "-q", "--no-verify", "-m", "the local one")
+    return tree, git(tree, "rev-parse", "origin/main"), git(tree, "rev-parse", "HEAD")
+
+
+def local_ids(tree, *files):
+    return subprocess.run([PY, str(HANDBACK), "--local-ids", *map(str, files)], cwd=str(tree), capture_output=True,
+                          text=True, timeout=60)
+
+
+def test_local_ids_lists_a_cited_local_commit_with_its_line(tmp_path):
+    """Round 4 item 6b: push_clean.sh rewrites every commit of origin/<branch>..HEAD, so an id the hand-back cites from
+    that range is listed with its line (a path given twice is read once); a control that cites only an origin id lists
+    nothing. Mutants: the range read as every commit of HEAD (the control's origin id listed); a match on the full id
+    only (the 7-character citation missed)."""
+    tree, pushed, local = origin_tree(tmp_path)
+    hb = tmp_path / "handback.md"
+    hb.write_text("# report\nthe fix is %s, on top of %s.\nthe end\n" % (local[:7], pushed[:9]))
+    r = local_ids(tree, hb, hb)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert r.stdout.splitlines() == [
+        "local ids: 1 cited — origin/main..HEAD holds 1 local commit; push_clean.sh rewrites them, so cite each by its "
+        "subject (or by its origin id after the push)",
+        '%s:2: %s is local %s "the local one" · the fix is %s, on top of %s.' % (hb, local[:7], local[:12], local[:7],
+                                                                                pushed[:9])]
+    control = tmp_path / "control.md"
+    control.write_text("on top of %s and %s\n" % (pushed[:7], pushed))
+    r = local_ids(tree, control)
+    assert (r.returncode, r.stdout) == (0, "local ids: none cited (origin/main..HEAD holds 1 local commit)\n")
+
+
+def test_local_ids_says_why_when_it_cannot_check(tmp_path):
+    """Not checked is never read as none cited: a detached HEAD, and a branch origin does not hold, exit 2 with the
+    reason. Mutant: a git failure read as an empty range (exit 0, "none cited")."""
+    tree, pushed, local = origin_tree(tmp_path)
+    hb = tmp_path / "handback.md"
+    hb.write_text("the fix is %s\n" % local[:7])
+    git(tree, "checkout", "-q", "--detach")
+    r = local_ids(tree, hb)
+    assert (r.returncode, r.stdout) == (2, "local ids: not checked — HEAD is detached: there is no "
+                                           "origin/<branch>..HEAD\n")
+    git(tree, "checkout", "-q", "-b", "unpushed")
+    r = local_ids(tree, hb)
+    assert r.returncode == 2 and r.stdout.startswith(
+        "local ids: not checked — git log --format=%H%x00%s origin/unpushed..HEAD -- failed: "), r.stdout
+
+
+def test_harvest_lists_the_local_ids_its_handback_cites(tmp_path):
+    """6b through the real registry's handback and local_ids steps (their definitions read from scripts/stacks.toml) in
+    a repository with an origin: the step runs on the hand-back the extractor saved and lists the planted id, and it is
+    advisory like lint_handback (the harvest exits 0 with an id listed). Mutant: the step required (the harvest exits
+    1)."""
+    tree, pushed, local = origin_tree(tmp_path)
+    (tree / "scripts").mkdir()
+    for name in ("handback_extract.py", "stale_ids.py"):
+        shutil.copy2(ROOT / "scripts" / name, tree / "scripts" / name)
+    harvest = tomllib.loads((ROOT / "scripts" / "stacks.toml").read_text())["stacks"]["harvest"]
+    steps = [s for s in harvest["steps"] if s["id"] in ("handback", "local_ids")]
+    assert [s["id"] for s in steps] == ["handback", "local_ids"]
+    reg = registry(tmp_path, stack_toml("harvest", harvest["params"], steps))
+    build_transcript(tmp_path / "tr", ["REPORT: the fix is %s\n" % local[:7]])
+    r = run(tmp_path, tree, reg, "--transcript-root", tmp_path / "tr", "harvest", "agent=" + AGENT)
+    assert r.returncode == 0, r.stdout + r.stderr
+    rec = records(tmp_path / "log")[-1]
+    s = {x["id"]: x for x in rec["steps"]}["local_ids"]
+    handback = tmp_path / "log" / rec["run"] / "handback.md"
+    assert (s["status"], s["rc"]) == ("failed", 1)
+    assert s["argv"] == ["python3", "scripts/handback_extract.py", "--local-ids", str(handback), str(handback)]
+    assert '%s:1: %s is local %s "the local one"' % (handback, local[:7], local[:12]) in Path(s["out"]).read_text()
+    assert "## local_ids · FAILED · rc 1 · " in r.stdout
+
+
+CATALOG_HEAD = ("Stacks (scripts/stacks.toml): `python3 scripts/stack.py <label> key=value ...` runs one in one call; "
+                "`python3 scripts/stack.py explain <label> ...` prints its plan and runs nothing.")
+CATALOG_RATE = ("Ratings, the content stacks only (%s): `--rate <run id>=<rel>/<use>` on the next stack call, or "
+                "`python3 scripts/stack.py rate <run id>=<rel>/<use>`; rel and use are 0 to 3.")
+
+
+def test_catalog_is_a_heading_the_list_and_one_line_on_ratings_under_4000_characters(tmp_path):
+    """Round 4 item 7's text from the real registry: one heading line, `list`'s output as it is, one line on ratings
+    that names the rated (content) stacks; under 4,000 characters (AF-AP-183); it writes no record. Mutants: the
+    ratings line naming every stack (an unrated stack's run is refused a rating); the list left out."""
+    r = real(tmp_path, "catalog")
+    listed = real(tmp_path, "list")
+    assert (r.returncode, r.stderr, listed.returncode) == (0, "", 0)
+    lines = r.stdout.split("\n")
+    assert lines[0] == CATALOG_HEAD
+    assert "\n".join(lines[1:-2]) + "\n" == listed.stdout
+    assert lines[-2] == CATALOG_RATE % "ctx, impact, find, echo, review"
+    assert lines[-1] == "" and len(r.stdout) < 4000
+    assert not (tmp_path / "log").exists()
+
+
+def test_catalog_drops_whole_stacks_to_stay_under_4000_characters(tmp_path):
+    """The cap holds for any registry: sixty stacks with a 200-character note each are cut to whole stacks, a line
+    naming how many are not shown, and the ratings line. Mutant: no cap (all sixty, about 15,000 characters)."""
+    note = 'outward = false\nnotes = ["%s"]\n' % ("n" * 200)
+    reg = registry(tmp_path, *[stack_toml("s%02d" % i, None, [{"id": "a", "argv": ["true"]}]).replace(
+        "outward = false\n", note) for i in range(60)])
+    r = subprocess.run([PY, str(STACK), "--registry", str(reg), "catalog"], capture_output=True, text=True, timeout=60)
+    assert (r.returncode, r.stderr) == (0, "")
+    assert len(r.stdout) < 4000
+    lines = r.stdout.splitlines()
+    shown = [ln for ln in lines if re.fullmatch(r"s\d\d  \(no parameters\)  — a test stack", ln)]
+    assert len(shown) == sum(ln == "  note: " + "n" * 200 for ln in lines) > 0
+    m = re.fullmatch(r"… (\d+) of 60 stacks not shown \(this catalog stays under 4,000 characters\): "
+                     r"python3 scripts/stack\.py list", lines[-2])
+    assert m and int(m.group(1)) + len(shown) == 60, lines[-2]
+    assert lines[0] == CATALOG_HEAD and lines[-1] == CATALOG_RATE % "none"
+
+
+def test_catalog_cuts_even_its_ratings_line_to_stay_under_4000_characters(tmp_path):
+    """The last resort: 200 rated stacks make the ratings line alone pass 4,000 characters, so with every stack dropped
+    the text is still over; it is cut to 3,999 characters, ending in an ellipsis. Mutant: no last-resort cut (4,000
+    characters or more)."""
+    (tmp_path / "r").mkdir()
+    reg = registry(tmp_path / "r", *[stack_toml("r%03d-%s" % (i, "x" * 19), None, [{"id": "a", "argv": ["true"]}],
+                                                rated=True) for i in range(200)])
+    r = subprocess.run([PY, str(STACK), "--registry", str(reg), "catalog"], capture_output=True, text=True, timeout=60)
+    assert (r.returncode, r.stderr) == (0, "")
+    assert len(r.stdout) == 3999 and r.stdout.startswith(CATALOG_HEAD + "\n… 200 of 200 stacks not shown")
+    assert r.stdout.endswith("…\n")
+
+
+@pytest.mark.parametrize("args, text, line", [
+    ([], "version = 2\n" + GOOD_STACK, "stacks: no catalog (registry: version: must be 1 (found 2))\n"),
+    ([], None, "stacks: no catalog (registry {REG}: No such file or directory)\n"),
+    (["x"], "version = 1\n" + GOOD_STACK, "stacks: no catalog (catalog takes no argument)\n"),
+], ids=["bad-registry", "no-registry", "an-argument"])
+def test_catalog_that_cannot_be_built_prints_one_line_naming_why_and_exits_0(tmp_path, args, text, line):
+    """Fail loud, never silent, and never a failing exit: the SessionStart hook's reader gets ONE line naming why.
+    Mutant: the registry refusal left to main's handler (stderr and exit 3: the hook's reader sees nothing)."""
+    reg = tmp_path / "stacks.toml"
+    if text is not None:
+        reg.write_text(text)
+    r = subprocess.run([PY, str(STACK), "--registry", str(reg), "catalog", *args], capture_output=True, text=True,
+                       timeout=60)
+    assert (r.returncode, r.stdout, r.stderr) == (0, line.replace("{REG}", str(reg)), "")
+
+
+def test_catalog_turns_an_unexpected_error_into_one_line(tmp_path, monkeypatch):
+    """A defect inside the catalog's own code is one line too, never a traceback. Mutant: only a Refusal caught."""
+    mod = load_stack("stack_catalog_fault")
+
+    def boom(stack):
+        raise RuntimeError("boom\nsecond line")
+
+    monkeypatch.setattr(mod, "list_lines", boom)
+    assert mod.catalog(str(ROOT / "scripts" / "stacks.toml")) == "stacks: no catalog (RuntimeError: boom second line)\n"

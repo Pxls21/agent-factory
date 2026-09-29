@@ -353,6 +353,11 @@ command.
 **Document quirks on contact, in the quirk skill** (shell, git, tool, test gate: `env-tool-quirks`; PC:
 `pc-bridge-lanes`; Ouroboros: `ouroboros-stdio`), never here.
 
+**Stacks (D-103):** run a named sequence of instrument calls in one tool call with `python3 scripts/stack.py <label>
+key=value ...` (the registry is `scripts/stacks.toml`; `explain <label> ...` prints the plan and runs nothing); the
+SessionStart hook that `scripts/install_session_hooks.py` installs prints the catalog with each stack's notes, and a
+content stack's run takes a rating with `--rate <run id>=<rel>/<use>`.
+
 **Pipeline order is load-bearing: interview → SEED → task-breakdown → build.** To-dos come FROM
 the seed.
 

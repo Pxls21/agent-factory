@@ -11,8 +11,12 @@
 # is absent (task #345), and that output reads `unmapped — <tool> unavailable`, never ok. Only a stack with
 # rated = true takes ratings (the content stacks: find, ctx, impact, echo, review). Other step fields: foreach =
 # "@<step>" (one call per stdout line of an earlier step, as {each}), empty_ok (an empty chained input is nothing to
-# do, never a failure), needs (run only when the named earlier steps ended ok), headline (the step's first stdout line
-# goes into the print's header, which the print cap never cuts).
+# do, never a failure), needs (run only when the named earlier steps ended ok), headline (the step's first stdout line,
+# control characters escaped, goes into the print's header before params:, where the print cap reaches it last). A stack
+# may carry notes: one-line cautions that `stack.py list` and the SessionStart catalog (`stack.py catalog`) print
+# under its line. The notes are issue #80's pre-wiring list (VERIFY-LS-B9 round 3), each under its stack, two of them
+# amended for round 4's fixes (R3-F1: the counts line stays in the print; R3-F3: the report window), and harvest's
+# second, on report=, from the round-4 brief.
 # No stack calls a model (KC-J1: no Laya or Jev in a gate) or takes an outward action (outward = true is refused at
 # load). Every step's interface was verified on 2026-09-28; the forms are in tasks/briefs/labeling/LS-B9-report.md.
 
@@ -26,6 +30,10 @@ code-review-graph = ["~/venv-crg/bin/code-review-graph", "/root/venv-crg/bin/cod
 summary = "a finished lane: its served models and refusal stops, its SubagentHandback message (tags neutralized), the report linted and hashed"
 replaces = "hiccup_scan.py, a hand extraction of the handback, report_lint.py and sha256sum at every lane harvest (4 to 6 calls)"
 outward = false
+notes = [
+  "On a resumed lane, check the `report:` line: the report window opens at the resume message, so no earlier round's text is this round's report (R3-F3).",
+  "`report=` names an existing file to lint and hash; the hand-back itself is saved under the run directory as `handback.md`.",
+]
 
 [stacks.harvest.params.agent]
 type = "agent"
@@ -76,6 +84,18 @@ timeout = 120
 required = false
 when = { report = "" }
 
+# Advisory too: each commit id the hand-back (and the longer text report, when the extractor chose it) cites that
+# `git log origin/<branch>..HEAD` shows as local. push_clean.sh rewrites that range, so such an id points at nothing on
+# origin, and stale_ids.py refuses the push of a committed text that cites it (T1-LCM-AUDIT's report cited two on
+# 2026-09-29). Chained like the lint: with no hand-back it is SKIPPED.
+[[stacks.harvest.steps]]
+id = "local_ids"
+argv = ["python3", "scripts/handback_extract.py", "--local-ids", "{run}/handback.md", "{@handback*}"]
+group = 2
+timeout = 60
+cap_lines = 20
+required = false
+
 [[stacks.harvest.steps]]
 id = "sha"
 argv = ["sha256sum", "--", "{report}"]
@@ -89,6 +109,11 @@ when = { report = "*" }
 summary = "every test that names each path, united with the tests ripwire's call graph links to the change (graph=yes); mode=run runs each file with its own runner: pytest, python3 or bash"
 replaces = "the rule 'a changed file's gate includes every test that names its path', done by hand: grep -l, ripwire test-gate, pc_suite.sh set-id, test_summary.sh twice, run-all.sh's python3 and bash runs"
 outward = false
+notes = [
+  "`runs=2` re-runs the pytest files only; `setid` covers the pytest files only.",
+  "Read the counts line; `mode=run` refuses more than `max_files` (40).",
+  "Pass `graph=no` where ripwire is missing and for a deleted path (F-18).",
+]
 
 [stacks.gate.params.paths]
 type = "paths"
@@ -227,6 +252,7 @@ summary = "the code-intel pack of files: graft skeletons and ask, GitNexus impac
 replaces = "scripts/lane_context.sh run by hand (it exists; the stack gives it a label and a record)"
 outward = false
 rated = true
+notes = ["`ctx` does not show a missing ripwire as unmapped (F-6)."]
 
 [stacks.ctx.params.files]
 type = "paths"
@@ -430,6 +456,10 @@ summary = "a change's review: sentrux architecture health (check, save a baselin
 replaces = "the hand review around a build lane: sentrux_review.sh save and compare, ripwire test-gate, lint_delta.py, ap_screen.py"
 outward = false
 rated = true
+notes = [
+  "`review mode=save` overwrites the shared sentrux baseline (F-5).",
+  "`review`'s sentrux section is advisory; `tool exit N` is the only sign of a failed run.",
+]
 
 [stacks.review.params.files]
 type = "paths"

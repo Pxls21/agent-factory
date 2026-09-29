@@ -1,8 +1,9 @@
 """scripts/hook_context.py and scripts/install_session_hooks.py (task #214, AF-AP-172).
 
 hook_context turns a hook's plain stdout into additionalContext (the only PreToolUse/PostToolUse output the model reads,
-measured live 2026-09-24); install_session_hooks registers the seven project hooks for a session rooted above the repo
-(task_sync.py, LS-B7, on Stop and SessionStart with a 30-second timeout; its own behavior is tests/test_task_sync.py's).
+measured live 2026-09-24); install_session_hooks registers the eight project hooks for a session rooted above the repo
+(task_sync.py, LS-B7, on Stop and SessionStart with a 30-second timeout; its own behavior is tests/test_task_sync.py's;
+the stack catalog, LS-B9 round 4, on SessionStart for start, resume and compact; its text is tests/test_stack.py's).
 The end-to-end tests run the INSTALLED command strings through a shell, so a quoting or path defect fails here.
 Since S1-RATE (task #295) the wrapper stamps what it hands the model: a first line `[S1 <id> <source>]` and a last line
 that asks for the score. `unstamp` checks both against literals (tests/test_s1_rate.py holds the stamp's own tests), and
@@ -23,6 +24,7 @@ WRAP = ROOT / "scripts" / "hook_context.py"
 INSTALL = ROOT / "scripts" / "install_session_hooks.py"
 MARKER = f"{ROOT}/.claude/hooks/"
 SYNC = f"{ROOT}/scripts/task_sync.py"
+CATALOG = f"{ROOT}/scripts/stack.py catalog"
 STAMP = re.compile(r"\[S1 (s1-[0-9a-f]{8}) ([A-Za-z0-9_.-]+)\]")
 REQUEST = ('Begin your next text with "S1-RATE {id} rel=R use=U" (+ a note <=120 chars: why, if a 0), one line per '
            'unscored injection. rel 0 unrelated,1 same area not this step,2 relevant to this step,3 governs it; '
@@ -112,17 +114,18 @@ def test_real_edit_snapshot_screen_reaches_the_model_form():
 
 # ---- install_session_hooks.py ----
 
-def test_fresh_install_registers_the_seven_hooks(tmp_path):
+def test_fresh_install_registers_the_eight_hooks(tmp_path):
     target = tmp_path / ".claude" / "settings.json"
     r = install(target)
-    assert r.returncode == 0 and "installed 7" in r.stdout
+    assert r.returncode == 0 and "installed 8" in r.stdout
     hooks = json.loads(target.read_text())["hooks"]
     assert sorted(hooks) == ["PostToolUse", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"]
     cmds = {ev: [h["command"] for e in v for h in e["hooks"]] for ev, v in hooks.items()}
-    assert {ev: len(c) for ev, c in cmds.items()} == {"PostToolUse": 1, "PreToolUse": 2, "SessionStart": 2, "Stop": 2,
+    assert {ev: len(c) for ev, c in cmds.items()} == {"PostToolUse": 1, "PreToolUse": 2, "SessionStart": 3, "Stop": 2,
                                                       "UserPromptSubmit": 2}
-    assert all(MARKER in c or SYNC in c for cs in cmds.values() for c in cs)
+    assert all(MARKER in c or SYNC in c or CATALOG in c for cs in cmds.values() for c in cs)
     assert cmds["SessionStart"][1].endswith(f"python3 {SYNC} --hook session-start")       # LS-B7: after the others
+    assert CATALOG in cmds["SessionStart"][2]                                              # LS-B9 round 4: after it
     assert cmds["Stop"][1].endswith(f"python3 {SYNC} --hook stop")
     assert "hook_context.py PostToolUse --" in cmds["PostToolUse"][0]
     assert "hook_context.py PreToolUse --" in cmds["PreToolUse"][0]
@@ -224,7 +227,7 @@ def _sh(cmd, stdin="{}", cwd="/", env=None):
 
 def test_every_installed_command_fails_open_when_the_repo_is_absent(tmp_path):
     cmds = _all_commands(tmp_path / "no-such-repo")
-    assert len(cmds) == 9
+    assert len(cmds) == 10
     for ev, cmd in cmds:
         r = _sh(cmd)
         assert (r.returncode, r.stdout) == (0, ""), (ev, r.returncode, r.stdout, r.stderr)
@@ -287,7 +290,7 @@ def test_a_repo_path_that_needs_quoting_stays_idempotent_and_removable(tmp_path)
     foreign = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo other"}]}]}}
     once = ish.merged(foreign, root, remove=False)
     assert ish.merged(once, root, remove=False) == once
-    assert sum(len(v) for v in once["hooks"].values()) == 10
+    assert sum(len(v) for v in once["hooks"].values()) == 11
     assert ish.merged(once, root, remove=True) == foreign
 
 
@@ -360,7 +363,8 @@ def test_the_task_sync_hooks_are_installed_with_a_30_second_timeout(tmp_path):
         assert len(h) == 1 and type(h[0].get("timeout")) is int and h[0].get("timeout") == 30
         assert h[0]["command"] == (f"[ -f {ROOT}/scripts/task_sync.py ] || exit 0; cd {ROOT} || exit 0; "
                                    f"python3 {SYNC} --hook {arg}")
-    others = [h for v in hooks.values() for g in v for h in g["hooks"] if "task_sync.py" not in h["command"]]
+    others = [h for v in hooks.values() for g in v for h in g["hooks"]
+              if "task_sync.py" not in h["command"] and "stack.py catalog" not in h["command"]]
     assert len(others) == 7 and all("timeout" not in h for h in others)
 
 
@@ -413,3 +417,74 @@ def test_the_repo_settings_register_both_task_sync_hooks(tmp_path):
         r = _sh(h["command"], stdin=json.dumps({"session_id": "s2"}), env=env)
         assert r.returncode == 0 and r.stderr == "", (ev, r.stderr)
     assert (tmp_path / "config" / "tasks" / "s2" / "10.json").exists()
+
+
+# ---- LS-B9 round 4 item 7: the stack catalog on SessionStart (start, resume, compact), fail loud, under 4,000 ----
+
+CATALOG_CMD = (f"[ -f {ROOT}/scripts/stack.py ] || exit 0; cd {ROOT} || exit 0; "
+               f"python3 {ROOT}/scripts/stack.py catalog "
+               '|| echo "stacks: no catalog (scripts/stack.py catalog exited $?)"')
+
+
+def _catalog_command(root):
+    [g] = [g for g in ish.our_hooks(Path(root))["SessionStart"]
+           if "scripts/stack.py catalog" in g["hooks"][0]["command"]]
+    return g["hooks"][0]["command"]
+
+
+def test_the_catalog_hook_is_installed_once_on_start_resume_and_compact(tmp_path):
+    """One SessionStart group after LS-B7's, matcher startup|resume|compact (never on clear), a 30-second timeout, the
+    command pinned; a second install changes nothing. Mutants: no matcher (it fires on clear too); the group before
+    LS-B7's; no timeout."""
+    target = tmp_path / "settings.json"
+    assert install(target).returncode == 0
+    groups = json.loads(target.read_text())["hooks"]["SessionStart"]
+    ours = [g for g in groups if CATALOG in g["hooks"][0]["command"]]
+    assert len(ours) == 1 and groups.index(ours[0]) == 2 and ours[0]["matcher"] == "startup|resume|compact"
+    [h] = ours[0]["hooks"]
+    assert (h["command"], type(h.get("timeout")), h.get("timeout")) == (CATALOG_CMD, int, 30)
+    before = target.read_bytes()
+    r = install(target)
+    assert r.returncode == 0 and "unchanged" in r.stdout and target.read_bytes() == before
+
+
+def test_the_installed_catalog_command_prints_the_catalog_under_4000_characters():
+    """The installed command through a shell from another cwd: the real catalog (the heading, `stack.py list`'s lines,
+    the ratings line), exit 0, under 4,000 characters (above 10,000 the harness shows only a 2,000-character preview,
+    AF-AP-183; the cap on a larger registry is tests/test_stack.py's). Mutant: the hook running `stack.py list` (no
+    heading, no ratings line)."""
+    r = _sh(_catalog_command(ROOT), stdin=json.dumps({"source": "compact"}))
+    listed = subprocess.run([sys.executable, str(ROOT / "scripts" / "stack.py"), "list"], capture_output=True,
+                            text=True, timeout=60)
+    assert (r.returncode, r.stderr, listed.returncode) == (0, "", 0)
+    assert r.stdout.startswith("Stacks (scripts/stacks.toml): ") and listed.stdout in r.stdout
+    assert r.stdout.splitlines()[-1].startswith("Ratings, the content stacks only (ctx, impact, find, echo, review)")
+    assert len(r.stdout) < 4000
+
+
+def test_the_catalog_hook_fails_loud_in_one_line_and_exits_0(tmp_path):
+    """Fail loud, never silent, never blocking: a stack.py that cannot run leaves ONE line naming its exit code, and
+    a registry that does not load, ONE line naming the defect; the command exits 0 each time. Mutants: the echo
+    dropped (the hook prints nothing on a failure); the catalog's refusal sent to stderr (the reader sees nothing)."""
+    repo = _fake_repo(tmp_path)
+    cmd = _catalog_command(repo)
+    (repo / "scripts" / "stack.py").write_text("raise SystemExit(3)\n")
+    r = _sh(cmd)
+    assert (r.returncode, r.stdout) == (0, "stacks: no catalog (scripts/stack.py catalog exited 3)\n"), r.stderr
+    shutil.copyfile(ROOT / "scripts" / "stack.py", repo / "scripts" / "stack.py")
+    (repo / "scripts" / "stacks.toml").write_text("version = 2\n")
+    r = _sh(cmd)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "stacks: no catalog (registry: version: must be 1 (found 2))\n",
+                                                  "")
+
+
+def test_an_older_catalog_spelling_is_replaced_on_install(tmp_path):
+    """The merge rule names `<repo>/scripts/stack.py catalog` as ours, so a changed command replaces the old one
+    instead of printing the catalog twice. Mutant: the catalog marker left out of the merge rule (two catalog hooks)."""
+    target = tmp_path / "settings.json"
+    old = {"type": "command", "command": f"python3 {ROOT}/scripts/stack.py catalog --an-older-spelling"}
+    target.write_text(json.dumps({"hooks": {"SessionStart": [{"matcher": "startup", "hooks": [old]}]}}))
+    assert install(target).returncode == 0
+    cmds = [h["command"] for g in json.loads(target.read_text())["hooks"]["SessionStart"] for h in g["hooks"]]
+    assert sum("stack.py catalog" in c for c in cmds) == 1 and old["command"] not in cmds
+    assert install(target, "--check").returncode == 0

@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
-"""install_session_hooks.py — register the seven project hooks for a session rooted ABOVE the repository.
+"""install_session_hooks.py — register the eight project hooks for a session rooted ABOVE the repository.
 
 Claude Code loads `.claude/settings.json` from the session's project root only. A session rooted in `/home/user` (the
 CCR default here) never loads `agent-factory/.claude/settings.json`, so none of the five project hooks fired there
-(AF-AP-172: the turn-end retro ran 0 times in 834 Stop runs). This script writes the same seven hooks, with absolute
+(AF-AP-172: the turn-end retro ran 0 times in 834 Stop runs). This script writes the project hooks, with absolute
 paths, into `<repo parent>/.claude/settings.json`. Measured 2026-09-24 (task #214): a settings file created
 mid-session takes effect on the next tool call, so running this script IS the manual start; no restart is needed.
+The repo's own `.claude/settings.json` is not written here (its commands spell `$CLAUDE_PROJECT_DIR`); it holds the
+same hooks except the stack catalog below.
 
 scripts/task_sync.py (LS-B7, D-102) is registered twice, on Stop and on SessionStart, each with an explicit 30-second
 timeout: it writes the harness task list from the ledger. It never blocks (never exit 2), and while
 `<repo>/.jev/task-sync-off` exists both registrations exit 0 at once.
+
+`scripts/stack.py catalog` (LS-B9 round 4, D-103) is registered on SessionStart for start, resume and compact, with a
+30-second timeout: the stack catalog (a heading line, `stack.py list`, one line on ratings) under 4,000 characters,
+since the harness shows only a 2,000-character preview of a hook text over 10,000 (AF-AP-183). This session loads no
+output style, so this line does the style's job (LS-DESIGN v2 §6, LS-B6). When the catalog cannot be built it prints
+ONE line naming why, and the command exits 0 always: stack.py catches its own failures, and a python3 that cannot run
+at all ends in the echo.
 
 The tool hooks run through scripts/hook_context.py: edit-snapshot prints plain text, which the wrapper turns into
 additionalContext the model reads (the Codex and Hermes adapters parse that plain text); search-intercept (task #228,
@@ -20,8 +29,9 @@ PreToolUse on Write, Edit and Bash (the governing skill lines for the situation)
 that match the prompt, beside wiki-context); session-start.sh resets its once-per-window marker. wiki-context runs through
 the wrapper too since D-095, so its excerpt carries the S1-RATE stamp and score request like every other injection.
 
-Merge rule, hook by hook: an install replaces every hook whose command names `<repo>/.claude/hooks/` or
-`<repo>/scripts/task_sync.py` (an older spelling of ours included); --remove takes out only our exact current commands. A foreign hook in the same group as one of ours
+Merge rule, hook by hook: an install replaces every hook whose command names `<repo>/.claude/hooks/`,
+`<repo>/scripts/task_sync.py` or `<repo>/scripts/stack.py catalog` (an older spelling of ours included); --remove takes
+out only our exact current commands. A foreign hook in the same group as one of ours
 stays, in that group with its matcher (S1-L1-R1 F19); every other key and entry in the file is kept. An existing file
 that is not a JSON object is refused (exit 1), never overwritten.
 
@@ -56,10 +66,15 @@ def our_hooks(root: Path) -> dict:
         return {"hooks": [{"type": "command", "command": guarded(
             "scripts/task_sync.py", f"python3 {r}/scripts/task_sync.py --hook {event}"), "timeout": 30}]}
 
+    catalog = {"matcher": "startup|resume|compact", "hooks": [{"type": "command", "command": guarded(
+        "scripts/stack.py",
+        f'python3 {r}/scripts/stack.py catalog || echo "stacks: no catalog (scripts/stack.py catalog exited $?)"'),
+        "timeout": 30}]}
+
     return {
         "SessionStart": [{"hooks": [{"type": "command", "command": guarded(
             ".claude/hooks/session-start.sh", f"CLAUDE_PROJECT_DIR={r} bash {r}/.claude/hooks/session-start.sh")}]},
-            task_sync("session-start")],
+            task_sync("session-start"), catalog],
         "UserPromptSubmit": [{"hooks": [{"type": "command", "command": guarded(
             ".claude/hooks/wiki-context.py", f"{wrap} UserPromptSubmit -- python3 {r}/.claude/hooks/wiki-context.py",
             True)}]},
@@ -95,9 +110,11 @@ def _without(entry: object, ours) -> object:
 def merged(current: dict, root: Path, remove: bool) -> dict:
     marker = f"{shlex.quote(str(root))}/.claude/hooks/"  # as the commands spell it (VERIFY-COORD-0924 F-L1-1)
     sync_marker = f"{shlex.quote(str(root))}/scripts/task_sync.py"
+    catalog_marker = f"{shlex.quote(str(root))}/scripts/stack.py catalog"
     mine = our_hooks(root)
     exact = {h["command"] for groups in mine.values() for g in groups for h in g["hooks"]}
-    ours = exact.__contains__ if remove else (lambda c: c in exact or marker in c or sync_marker in c)
+    ours = exact.__contains__ if remove else (
+        lambda c: c in exact or marker in c or sync_marker in c or catalog_marker in c)
     out = dict(current)
     hooks = dict(out.get("hooks") or {})
     for event in sorted(set(hooks) | set(mine)):
@@ -156,7 +173,7 @@ def main(argv: list[str]) -> int:
     else:
         os.chmod(tmp, 0o644)
     os.replace(tmp, target)
-    verb = "removed ours from" if args.remove else "installed 7 in"
+    verb = "removed ours from" if args.remove else "installed 8 in"
     print(f"session hooks: {verb} {target} (live from the next tool call)")
     return 0
 

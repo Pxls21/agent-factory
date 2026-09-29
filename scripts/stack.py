@@ -4,7 +4,10 @@ registry scripts/stacks.toml and run in ONE tool call (task #339, D-103: "Create
 to specific labels"; design docs/research/findings/labeling/LS-DESIGN-v2-2026-09-28.md §2-§5; the schema and the rules
 are the CONTRACT of tasks/briefs/labeling/LS-B9-brief.md).
 
-  python3 scripts/stack.py list                                  the catalog, one line per stack
+  python3 scripts/stack.py list                                  the catalog, one line per stack, its notes under it
+  python3 scripts/stack.py catalog                               the SessionStart text: a heading, list, one line on
+                                                                 ratings, under 4,000 characters; exit 0 always (on a
+                                                                 failure, one line naming why)
   python3 scripts/stack.py explain LABEL key=value ...          the resolved plan; runs nothing, writes no record
   python3 scripts/stack.py LABEL key=value ... [--rate RUN[.STEP]=REL/USE]...   run the stack
   python3 scripts/stack.py rate RUN[.STEP]=REL/USE ...          ratings only (REL and USE are 0 to 3)
@@ -27,8 +30,9 @@ removed after the run, on success, failure and signal alike.
 Step fields beyond the obvious: `foreach = "<list param>"` or `foreach = "@<step>"` (one call per element, or per stdout
 line of an earlier step, as {each}); `empty_ok = true` (a chained input that printed nothing leaves the step with
 nothing to do: not selected, never a failure); `needs = ["<step>", ...]` (the step runs only when each named earlier
-step ended ok); `headline = true` (the step's first stdout line goes into the print's header, which the print cap never
-cuts).
+step ended ok); `headline = true` (the step's first stdout line, its control characters escaped and cut at 500
+characters, goes into the print's header right after the tree line: the print cap cuts an over-long header from its
+end, `params:` first, VERIFY-LS-B9 R3-F1). A stack may carry `notes`, one-line cautions `list` prints under its line.
 A section over its cap_lines prints its first and its last lines (a verdict is often the last line) and names the
 saved full output; the whole print is capped at 9,000 characters, cut from the largest section first. Each step's
 full output (stdout, then a `--- stderr ---` block) is saved as <run dir>/<step>[.<n>].out; one JSON line per run
@@ -85,7 +89,13 @@ LIST_TYPES = {"paths": "path", "symbols": "symbol", "words": "word"}
 BUILTINS = ("tree", "run", "main", "head", "branch", "each", "transcript", "tmp")
 DEFAULT_BUILTINS = ("tree", "main", "head", "branch")
 INTERPRETER_RE = re.compile(r"python[0-9.]*|bash|sh|node")   # argv[1] of these is a script that must exist
-STACK_KEYS = {"summary", "replaces", "outward", "rated", "params", "steps"}
+STACK_KEYS = {"summary", "replaces", "outward", "rated", "params", "steps", "notes"}
+NOTE_MAX = 300            # characters of one catalog note
+CATALOG_CAP = 4000        # the SessionStart catalog stays under this: the harness swaps a hook text over 10,000
+                          # characters for a 2,000-character preview of its head (AF-AP-183)
+# C0 and C1 control characters, DEL and the two Unicode line separators: a headline shows each as an escape (a CR or
+# an ESC copied raw lets a step's output overwrite the header line in a terminal, VERIFY-LS-B9 R3-F5)
+CONTROL_RE = re.compile("[\x00-\x1f\x7f-\x9f" + chr(0x2028) + chr(0x2029) + "]")
 PARAM_KEYS = {"type", "required", "default", "choices", "split_from"}
 STEP_KEYS = {"id", "argv", "group", "timeout", "cap_lines", "ok_rc", "required", "when", "repeat", "foreach",
              "unmapped_if", "tool", "save_cap_mb", "empty_ok", "needs", "headline"}
@@ -350,6 +360,11 @@ class Stack:
                 _bad(where + "." + key, "must be one non-empty line")
         self.label, self.summary, self.replaces = label, spec["summary"], spec["replaces"]
         self.rated = _bool(spec.get("rated", False), where + ".rated")   # only a rated stack takes ratings
+        self.notes = spec.get("notes", [])
+        if not (isinstance(self.notes, list) and all(isinstance(n, str) and n.strip() and len(n) <= NOTE_MAX
+                                                     and not CONTROL_RE.search(n) for n in self.notes)):
+            _bad(where + ".notes", "a list of notes of 1 to %d characters, each one line with no control character"
+                 % NOTE_MAX)
         params = spec.get("params", {})
         if not isinstance(params, dict):
             _bad(where + ".params", "must be a table")
@@ -1155,16 +1170,46 @@ def rating_lines(ratings):
 
 # ---------- commands ----------
 
+def list_lines(stack):
+    """A stack's catalog lines: its label, parameters and summary, then its notes, indented."""
+    parts = []
+    for name in stack.settable():
+        p = stack.params[name]
+        shape = "|".join(p.choices) if p.type == "choice" else "<%s>" % p.type
+        parts.append(("%s=%s" if p.required else "[%s=%s]") % (name, shape))
+    return ["%s  %s  — %s%s" % (stack.label, " ".join(parts) or "(no parameters)", stack.summary,
+                                " · rated" if stack.rated else "")] + ["  note: " + n for n in stack.notes]
+
+
 def cmd_list(stacks):
-    for label, stack in stacks.items():
-        parts = []
-        for name in stack.settable():
-            p = stack.params[name]
-            shape = "|".join(p.choices) if p.type == "choice" else "<%s>" % p.type
-            parts.append(("%s=%s" if p.required else "[%s=%s]") % (name, shape))
-        print("%s  %s  — %s%s" % (label, " ".join(parts) or "(no parameters)", stack.summary,
-                                  " · rated" if stack.rated else ""))
+    for stack in stacks.values():
+        print("\n".join(list_lines(stack)))
     return 0
+
+
+def catalog(registry):
+    """The SessionStart text: a heading line, `list`'s lines, one line on ratings, under CATALOG_CAP characters (whole
+    stacks dropped from the end, with a line saying so). Never raises: on any failure it is ONE line naming why."""
+    try:
+        _tools, stacks = load_registry(registry)
+        head = ("Stacks (scripts/stacks.toml): `python3 scripts/stack.py <label> key=value ...` runs one in one call; "
+                "`python3 scripts/stack.py explain <label> ...` prints its plan and runs nothing.")
+        rate = ("Ratings, the content stacks only (%s): `--rate <run id>=<rel>/<use>` on the next stack call, or "
+                "`python3 scripts/stack.py rate <run id>=<rel>/<use>`; rel and use are 0 to 3."
+                % (", ".join(label for label, st in stacks.items() if st.rated) or "none"))
+        blocks = [list_lines(st) for st in stacks.values()]
+        shown, cut = len(blocks), []
+        while True:
+            text = "\n".join([head] + [ln for b in blocks[:shown] for ln in b] + cut + [rate]) + "\n"
+            if len(text) < CATALOG_CAP or shown == 0:
+                break
+            shown -= 1
+            cut = ["… %d of %d stacks not shown (this catalog stays under %s characters): python3 scripts/stack.py list"
+                   % (len(blocks) - shown, len(blocks), format(CATALOG_CAP, ","))]
+        return text if len(text) < CATALOG_CAP else text[:CATALOG_CAP - 3] + "…\n"
+    except Exception as e:          # fail loud, never silent: the hook's reader learns why there is no catalog
+        why = " ".join(("%s: %s" % (type(e).__name__, e) if not isinstance(e, Refusal) else str(e)).split())
+        return "stacks: no catalog (%s)\n" % (why if len(why) <= 300 else why[:300] + "…")
 
 
 def log_dir_of(opts, env):
@@ -1298,15 +1343,19 @@ def cmd_run(stack, tokens, tools, opts, stacks):
     header = ["stack %s · run %s · exit %d%s" % (stack.label, run_id, rc if log_error is None else 3,
                                                  "" if not bad else " — required, not ok: " + ", ".join(
                                                      sorted({r.step.id for r in bad}))),
-              "tree %s · HEAD %s" % (tree, head[:12] if head else "none"),
-              "params: %s" % (" ".join("%s=%s" % (k, fmt_value(v)) for k, v in values.items()) or "(none)"),
-              "outputs: %s/ (<step>.out each) · record: %s" % (run_dir, os.path.join(log_dir, "runs.jsonl"))]
-    if tmp_line:
-        header.append(tmp_line)
-    for step, invs, why in plan:       # a headline step's first stdout line: the print cap never cuts the header
+              "tree %s · HEAD %s" % (tree, head[:12] if head else "none")]
+    # A headline step's first stdout line, before params: over the print cap the header is cut from its end, and a
+    # long paths= value made params the line that pushed the gate's counts out of the print (VERIFY-LS-B9 R3-F1). Its
+    # control characters are escaped first (R3-F5), then it is cut: the header line stays bounded.
+    for step, invs, why in plan:
         first = next((ln for r in runner.results.get(step.id, []) for ln in r.stdout.split("\n") if ln.strip()), None)
         if step.headline and first is not None:
+            first = CONTROL_RE.sub(lambda m: repr(m.group())[1:-1], first)
             header.append("%s · %s" % (step.id, first if len(first) <= HEADLINE_MAX else first[:HEADLINE_MAX] + "…"))
+    header += ["params: %s" % (" ".join("%s=%s" % (k, fmt_value(v)) for k, v in values.items()) or "(none)"),
+               "outputs: %s/ (<step>.out each) · record: %s" % (run_dir, os.path.join(log_dir, "runs.jsonl"))]
+    if tmp_line:
+        header.append(tmp_line)
     skipped = ["%s (%s)" % (step.id, why if invs is None else runner.idle[step.id]) for step, invs, why in plan
                if invs is None or step.id in runner.idle]
     if skipped:
@@ -1332,9 +1381,13 @@ def main(argv=None):
     ap.add_argument("--log-dir", help=argparse.SUPPRESS)
     ap.add_argument("--transcript-root", default=DEFAULT_TRANSCRIPT_ROOT, help=argparse.SUPPRESS)
     ap.add_argument("--rate", action="append", default=[], metavar="RUN[.STEP]=REL/USE")
-    ap.add_argument("command", help="list | explain | rate | a stack label")
+    ap.add_argument("command", help="list | catalog | explain | rate | a stack label")
     ap.add_argument("tokens", nargs="*", help="key=value parameters (explain: the label first; rate: ratings)")
     opts = ap.parse_intermixed_args(argv)
+    if opts.command == "catalog":   # the SessionStart hook's text: exit 0 always, a failure is one line on stdout
+        sys.stdout.write(catalog(opts.registry) if not (opts.tokens or opts.rate) else
+                         "stacks: no catalog (catalog takes no argument)\n")
+        return 0
     try:
         tools, stacks = load_registry(opts.registry)
         if opts.command == "list":
