@@ -58,6 +58,11 @@ hash gate for four increments — caught only when a downstream cross-check re-r
   (`module:fn`) — it does Y" — before designing anything that could duplicate it.
 
 **Phase 2 — measure before designing.**
+- **Count what the agent actually does, not the tool named for the action (2026-09-29, VERIFY-K1 F3, AF-AP-240).** K1's
+  re-fetch shapes, and the first idea of file packs, keyed on the Read tool; the main loop reads files through Bash reader
+  commands instead (K2's probe over 141 context windows: a median of 32 files per window, 5 through Read, Edit or Write,
+  83% only through Bash), so K1 undercounted a compaction's cost five to seven times. Before a measure, a score or a hook
+  keys on a tool, tabulate from the transcripts which tools carry the action, and key on all of them.
 - **An anecdote is not a signal: a model-ranked order becomes a DEFAULT only after it beats plain baselines on a committed sample** (2026-09-24, J2): one live test had Jev rank the right quirk note first out of eight, and two build briefs made Jev ranking their default; the 100-heading probe then measured Jev's reranking at 5% top-1 against 59% for plain word overlap, below random. Brief a ranker as opt-in until its probe (majority, lexical and random beside it) is filed.
 - **A failed probe indicts the model only after the task and the inputs are cleared (2026-09-24, J2b).** Before filing "model X has no signal", run a stronger comparator on the SAME label-free inputs, and check that the inputs carry the signal: length caps, truncation, per-option token budgets. J2 rejected Laya on two tasks; J2b then found Haiku also lost to word overlap on one (top-1 0.39 against 0.59) and only tied the majority on the other, whose input was a title capped at 120 characters, while Laya's head gives each of 16 options at most 15 tokens. The verdict narrowed from "no signal" to "this model on these inputs", and the owner's next step (fine-tune with better inputs, D-075) follows only from the narrower one.
 - **A process ordered killed is a measurement asset — profile it BEFORE killing it.** A live
