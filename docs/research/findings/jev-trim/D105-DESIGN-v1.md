@@ -360,9 +360,22 @@ VERIFY-K1 attacks them).
 - **The cost model (a model).** At 785k it reproduces the observed count (119 against 121). At 500k: 206 compactions,
   mean fill 306k, 6.19 billion cache-read tokens against 9.24 billion. At 400k: 278, 256k, 5.17 billion. At 300k: 427,
   205k, 4.10 billion. The modeled missed tokens grow with the count (48,940 at 785k, 84,720 at 500k, 175,610 at 300k).
-- **The main loop's reading.** The published curves (§10.5) say the work gets worse as the fill passes about 256k; our
+- **The main loop's reading (its basis struck by VERIFY-K1: see the next item).** The published curves (§10.5) say the work gets worse as the fill passes about 256k; our
   mechanics show no decline, and a compaction costs this session little re-fetching, because the ledger, the live-state
   block and the start hook restore its state. So moving the point down from 785k is cheap, and 500k cuts the cache reads
   by a third. The first live arm (R-D) is the owner's 500k: `autoCompactWindow` 500000 (never "500k", §10.5), with the
   real point read from the next boundary's preTokens (the 80% override may bring it near 400k). The subagents' larger
   loss is an item for §10.3: their start holds no ledger or live-state block, so task packs (P3) matter most there.
+- **VERIFY-K1's correction (2026-09-29 04:2xZ; `tasks/briefs/jev-trim/VERIFY-K1-report.md`).** The numbers above reproduce
+  exactly (an independent reader, 0 differences), but the reading does not stand as written. K1's shapes counted writes
+  as re-fetches (about a third of all counted calls; 45% of the ledger "reads" were edits and commits), and they could
+  not see this session's main re-fetch forms: a Bash view of a file known before the boundary (10.97 per 100 requests
+  after a boundary against 3.87 at sliding control points) and a repeated `git log` or `git show`. Corrected, the first
+  20 requests after a compaction carry +12.6 to +16.5 re-fetch calls per 100 over four controls: +2.5 to +3.3 calls and
+  about +7k tokens per boundary, five to seven times K1's. Over 100 requests the excess stays positive (+1.5 to +3.7
+  per 100), and the ledger is re-read 4 to 10 times, the live-state about 9 times, their normal rates. The cost model's
+  constant growth per request fails in the data; a position-aware variant gives 247 compactions at 500k, not 206. What
+  may survive, as the verifier's inference (not measured): at 500k the extra re-fetching stays under a tenth of the
+  cache-read cut. K1 round 2 (`tasks/briefs/jev-trim/K1-R2-brief.md`) re-measures with the corrected shapes. Until
+  then the first live arm stays 500000 on that inference, not on the struck reason. For §10.3: the dominant re-fetch
+  after a boundary is a Bash view of a known file, which is what K2's file packs trigger on.

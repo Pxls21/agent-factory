@@ -1,5 +1,7 @@
 > Coordinator note (2026-09-29 03:1xZ): the report of record, extracted by `scripts/stack.py harvest` (the lane's report-file write is refused for subagents). Served model: claude-opus-5-5 on every assistant record of this lane (876 across its three rounds), 0 refusal stops; `report_lint` 0 refs. An independent verify follows (VERIFY-K1).
 
+> Coordinator note (2026-09-29 04:2xZ): superseded in part by VERIFY-K1 (`tasks/briefs/jev-trim/VERIFY-K1-report.md`). The numbers reproduce exactly, but the R-C shapes counted writes as re-fetches (F2) and missed this session's main re-fetch forms, Bash views of known files and repeated `git log` or `git show` (F3); corrected, the first 20 requests after a compaction carry +2.5 to +3.3 re-fetch calls per boundary, not +0.49, and the missed-path share is 1.3% to 2.0%, not 1% to 4% (F9). K1 round 2 (`tasks/briefs/jev-trim/K1-R2-brief.md`) re-measures.
+
 # K1-COMPACTION-LOSS report (T0-REPLAY round 3; task #352, D-106)
 
 Written 2026-09-29, last `date -u` 03:13:29Z. Contract: `tasks/briefs/jev-trim/K1-COMPACTION-LOSS-brief.md`. I measure; there is no recommendation.

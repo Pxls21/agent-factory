@@ -28,7 +28,8 @@ after it beats them on the replay (D-106).
 - `scripts/hook_context.py` (READ): the wrapper every injecting hook runs through. It stamps the output
   `[S1 <id> <source>]` (the source is the script's name, here `filepacks`) and adds the score request, so each pack
   injection is scored like any System-1 injection (task #295).
-- `scripts/hooks/post-commit` (MODIFY, item 5): its code-map refresh section is the model for yours.
+- `scripts/hooks/post-commit` (READ, item 5): its code-map refresh section is the model for yours. The coordinator's
+  commits run this file from the shared tree while you work, so you never edit it there; item 5 delivers a patch.
 - The installed tools, checked at authoring (orchestration 0l): the enabled plugins are `aegis`, `fast-jev-output` and
   `honey`. Aegis's `CONTEXT-MAP.md` and `CONTEXT.md` are a glossary the model reads on its own (`wiki/CONTEXT.md` is
   one), not a per-file injector. `fast-jev-output` is jev-pruner's Bash-output pruner (a `tool.call` function hook that
@@ -51,8 +52,9 @@ after it beats them on the replay (D-106).
 ## Boundary
 
 - CREATE: `scripts/filepacks.py` (the builder, the reader, the hook and the replay), `tests/test_filepacks.py`.
-- MODIFY: `scripts/codemap.py` (a file-level reader only, if `lookup` cannot give one), `scripts/hooks/post-commit`
-  (item 5), `tests/test_codemap.py` (only for the new reader).
+- CREATE: `tasks/briefs/jev-trim/K2-post-commit.patch` (item 5).
+- MODIFY: `scripts/codemap.py` (a file-level reader only, if `lookup` cannot give one; additive, written in one step,
+  because the post-commit refresh runs this file after every commit), `tests/test_codemap.py` (only for the new reader).
 - READ: everything named above; `tests/test_system1_context.py` (its payload fixtures and window tests are the model
   for yours); `docs/research/findings/jev-trim/D105-DESIGN-v1.md`.
 - NOT yours: `.claude/settings.json`, `scripts/install_session_hooks.py`, `tests/test_session_hooks.py`, anything under
@@ -101,9 +103,12 @@ after it beats them on the replay (D-106).
      record shape: event, tool, tool_use_id, injected with key, bytes and sha, skipped with why, bytes, window, t, ms).
    - The boundary: only tracked files. A path outside the root, a path with `..`, an untracked file, or a pack path that
      is a symlink gives nothing.
-5. **The post-commit refresh.** `scripts/hooks/post-commit` starts `filepacks.py build` in the background, niced, one at
-   a time (a blocking flock, as the code-map refresh), with one line per commit in its log; it never blocks or fails
-   the commit.
+5. **The post-commit refresh, as a patch.** Write the hunk that makes `scripts/hooks/post-commit` start `filepacks.py
+   build` in the background, niced, one at a time (a blocking flock, as the code-map refresh), with one line per commit
+   in its log, never blocking or failing the commit, as `tasks/briefs/jev-trim/K2-post-commit.patch` (`git diff`
+   format against the file at the premise's sha256). Prove it on a copy: apply it with `git apply --check` and `git apply`
+   to the hook inside a temporary repo, commit there, and paste the log line and the build it started. The coordinator
+   applies it at landing.
 6. **The dry run: `filepacks.py replay --transcript PATH --bytes N`.** Replay the main loop's recorded tool calls through
    the hook's planner with a temporary state directory (never the live `.jev/filepacks-seen`), splitting windows at the
    compaction boundaries. Read only compaction boundaries and `tool_use` inputs; print only counts, bytes and file
