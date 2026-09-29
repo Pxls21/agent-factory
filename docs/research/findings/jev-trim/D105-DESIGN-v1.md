@@ -340,6 +340,12 @@ Source: `tasks/briefs/jev-trim/K0-COMPACTION-POINT-report.md` (evidence only; th
 
 ### 10.6 K1: what our own compactions cost (2026-09-29)
 
+**Current reading (07:4xZ, replaced each round, never appended to):** a compaction costs this session about four extra
+re-fetch calls and about 9k tokens in the first 20 requests after it (+3.5 to +4.2 calls under every defensible
+direction rule; subagents lose more). Moving the point from about 785k to 500k saves 17% to 21% of the cache cost
+(a model calibrated at 785k; cache writes priced), and the extra re-fetching stays small beside it. The first live arm
+is 500000; the live test (K5) decides. Sources: K1 round 2 and VERIFY-K1 round 2, the last two items below.
+
 Source: `tasks/briefs/jev-trim/K1-COMPACTION-LOSS-report.md` and the outputs under
 `docs/research/findings/jev-trim/compaction-2026-09-29/` (measurements; the reading at the end is the main loop's;
 VERIFY-K1 attacks them).
