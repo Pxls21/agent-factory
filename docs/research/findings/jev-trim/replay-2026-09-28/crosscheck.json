@@ -1,0 +1,311 @@
+{
+ "days": {
+  "2026-09-02": {
+   "mine": {
+    "compactions": 0,
+    "first": "2026-09-02T21:10:19.814Z",
+    "last": "2026-09-02T22:30:03.482Z",
+    "max": 491162,
+    "median": 369705,
+    "median_nearest_rank": 369705,
+    "min": 57591,
+    "p90": 460082,
+    "requests": 135
+   }
+  },
+  "2026-09-03": {
+   "mine": {
+    "compactions": 7,
+    "first": "2026-09-03T04:29:13.976Z",
+    "last": "2026-09-03T22:24:08.294Z",
+    "max": 781052,
+    "median": 367993,
+    "median_nearest_rank": 367993,
+    "min": 78844,
+    "p90": 649631,
+    "requests": 489
+   }
+  },
+  "2026-09-04": {
+   "mine": {
+    "compactions": 16,
+    "first": "2026-09-04T04:24:47.220Z",
+    "last": "2026-09-04T23:48:53.184Z",
+    "max": 785194,
+    "median": 240417.0,
+    "median_nearest_rank": 239813,
+    "min": 79089,
+    "p90": 645143,
+    "requests": 1012
+   }
+  },
+  "2026-09-05": {
+   "mine": {
+    "compactions": 2,
+    "first": "2026-09-05T05:59:23.637Z",
+    "last": "2026-09-05T22:56:30.222Z",
+    "max": 782811,
+    "median": 528610,
+    "median_nearest_rank": 528610,
+    "min": 106286,
+    "p90": 720688,
+    "requests": 221
+   }
+  },
+  "2026-09-06": {
+   "mine": {
+    "compactions": 3,
+    "first": "2026-09-06T01:14:32.217Z",
+    "last": "2026-09-06T20:50:24.788Z",
+    "max": 784718,
+    "median": 444208,
+    "median_nearest_rank": 444208,
+    "min": 92926,
+    "p90": 696207,
+    "requests": 719
+   }
+  },
+  "2026-09-07": {
+   "mine": {
+    "compactions": 3,
+    "first": "2026-09-07T12:38:17.809Z",
+    "last": "2026-09-07T23:59:55.117Z",
+    "max": 783368,
+    "median": 445524.0,
+    "median_nearest_rank": 445053,
+    "min": 92535,
+    "p90": 706844,
+    "requests": 492
+   }
+  },
+  "2026-09-08": {
+   "mine": {
+    "compactions": 7,
+    "first": "2026-09-08T00:00:06.512Z",
+    "last": "2026-09-08T22:37:36.900Z",
+    "max": 781046,
+    "median": 453019.0,
+    "median_nearest_rank": 452964,
+    "min": 99964,
+    "p90": 707917,
+    "requests": 1194
+   }
+  },
+  "2026-09-14": {
+   "mine": {
+    "compactions": 3,
+    "first": "2026-09-14T11:33:10.766Z",
+    "last": "2026-09-14T23:15:59.362Z",
+    "max": 783912,
+    "median": 494338.0,
+    "median_nearest_rank": 493804,
+    "min": 99008,
+    "p90": 725270,
+    "requests": 508
+   }
+  },
+  "2026-09-15": {
+   "mine": {
+    "compactions": 6,
+    "first": "2026-09-15T00:00:59.013Z",
+    "last": "2026-09-15T22:19:21.432Z",
+    "max": 788079,
+    "median": 500129,
+    "median_nearest_rank": 500129,
+    "min": 97587,
+    "p90": 725037,
+    "requests": 843
+   }
+  },
+  "2026-09-16": {
+   "mine": {
+    "compactions": 5,
+    "first": "2026-09-16T00:13:36.354Z",
+    "last": "2026-09-16T23:47:46.838Z",
+    "max": 780273,
+    "median": 472006,
+    "median_nearest_rank": 472006,
+    "min": 95204,
+    "p90": 724244,
+    "requests": 521
+   }
+  },
+  "2026-09-17": {
+   "mine": {
+    "compactions": 5,
+    "first": "2026-09-17T00:28:01.716Z",
+    "last": "2026-09-17T23:59:56.408Z",
+    "max": 788780,
+    "median": 449623,
+    "median_nearest_rank": 449623,
+    "min": 99294,
+    "p90": 721847,
+    "requests": 539
+   }
+  },
+  "2026-09-18": {
+   "mine": {
+    "compactions": 4,
+    "first": "2026-09-18T00:00:42.056Z",
+    "last": "2026-09-18T19:56:31.801Z",
+    "max": 780977,
+    "median": 463229,
+    "median_nearest_rank": 463229,
+    "min": 98997,
+    "p90": 738381,
+    "requests": 377
+   }
+  },
+  "2026-09-19": {
+   "mine": {
+    "compactions": 5,
+    "first": "2026-09-19T04:07:55.988Z",
+    "last": "2026-09-19T21:56:42.260Z",
+    "max": 782972,
+    "median": 456553,
+    "median_nearest_rank": 456553,
+    "min": 98395,
+    "p90": 719822,
+    "requests": 435
+   }
+  },
+  "2026-09-21": {
+   "mine": {
+    "compactions": 3,
+    "first": "2026-09-21T12:43:39.339Z",
+    "last": "2026-09-21T23:59:29.504Z",
+    "max": 783659,
+    "median": 505160.0,
+    "median_nearest_rank": 504889,
+    "min": 107548,
+    "p90": 743889,
+    "requests": 362
+   }
+  },
+  "2026-09-22": {
+   "mine": {
+    "compactions": 10,
+    "first": "2026-09-22T00:00:13.308Z",
+    "last": "2026-09-22T23:20:08.522Z",
+    "max": 783991,
+    "median": 486533,
+    "median_nearest_rank": 486533,
+    "min": 104718,
+    "p90": 726147,
+    "requests": 1513
+   }
+  },
+  "2026-09-23": {
+   "mine": {
+    "compactions": 31,
+    "first": "2026-09-23T00:00:33.516Z",
+    "last": "2026-09-23T23:59:54.748Z",
+    "max": 795650,
+    "median": 476234.5,
+    "median_nearest_rank": 476215,
+    "min": 114156,
+    "p90": 726813,
+    "requests": 4410
+   }
+  },
+  "2026-09-24": {
+   "mine": {
+    "compactions": 15,
+    "first": "2026-09-24T00:00:05.398Z",
+    "last": "2026-09-24T23:56:58.662Z",
+    "max": 786774,
+    "median": 460348,
+    "median_nearest_rank": 460348,
+    "min": 129411,
+    "p90": 723619,
+    "requests": 3065
+   }
+  },
+  "2026-09-25": {
+   "mine": {
+    "compactions": 7,
+    "first": "2026-09-25T00:07:30.016Z",
+    "last": "2026-09-25T23:30:51.470Z",
+    "max": 783129,
+    "median": 496640.0,
+    "median_nearest_rank": 496624,
+    "min": 125238,
+    "p90": 727376,
+    "requests": 2214
+   }
+  },
+  "2026-09-26": {
+   "audit": {
+    "compactions": 2,
+    "max": 783173,
+    "median": 545883,
+    "min": 130278,
+    "p90": 733680,
+    "requests": 781
+   },
+   "match": {
+    "compactions": true,
+    "max": true,
+    "median": true,
+    "min": true,
+    "p90": true,
+    "requests": true
+   },
+   "median_match_after_truncation": true,
+   "mine": {
+    "compactions": 2,
+    "first": "2026-09-26T00:13:03.825Z",
+    "last": "2026-09-26T12:26:18.581Z",
+    "max": 783173,
+    "median": 545883,
+    "median_nearest_rank": 545883,
+    "min": 130278,
+    "p90": 733680,
+    "requests": 781
+   }
+  },
+  "2026-09-28": {
+   "audit": {
+    "compactions": 3,
+    "max": 783147,
+    "median": 460505,
+    "min": 127359,
+    "p90": 714430,
+    "requests": 792
+   },
+   "match": {
+    "compactions": true,
+    "max": true,
+    "median": false,
+    "min": true,
+    "p90": true,
+    "requests": true
+   },
+   "median_match_after_truncation": true,
+   "mine": {
+    "compactions": 3,
+    "first": "2026-09-28T12:21:01.676Z",
+    "last": "2026-09-28T21:44:13.997Z",
+    "max": 783147,
+    "median": 460505.5,
+    "median_nearest_rank": 460365,
+    "min": 127359,
+    "p90": 714430,
+    "requests": 792
+   }
+  }
+ },
+ "pin": 777005680,
+ "requests": 20622,
+ "sidechain": false,
+ "stats": {
+  "bookkeeping_records": 44368,
+  "items_in_segments_without_a_request": 0,
+  "requests": 20622,
+  "segments": 138,
+  "stop_hook_summaries": 1196,
+  "synthetic_records_excluded": 50,
+  "unparseable_lines": 9
+ },
+ "transcript": "bdab799a-dc80-5933-9c9e-c80f206f9a17.jsonl"
+}
