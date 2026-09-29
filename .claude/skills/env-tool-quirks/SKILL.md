@@ -104,6 +104,12 @@ a scratch copy) to compare with.
 
 ## Test gates and pasted counts
 
+**`graft build` inside a test can outlive it (2026-09-29, K2 round 2's first gate run):** it starts a detached `graft
+_update-check` child when `$HOME/.graft/update-check.json` is stale, and with the repo's `tmp_path_retention_policy =
+"failed"` a later test can reuse the deleted temp directory's name while that child still writes into it
+(FileExistsError on the next test's `home`). A test that runs graft first writes a fresh update-check answer into
+graft's private HOME (`tests/test_filepacks.py`), so no child is spawned.
+
 **A skip guard that stats a path under `/root` raises on CI instead of skipping (2026-09-26, stage0-ci run #1102):** the sandbox runs as root, CI's runner does not, and Python 3.12's `Path.exists()` swallows only ENOENT, ENOTDIR, EBADF and ELOOP, so `Path("/root/venv-laya-probe/bin/python").exists()` raised `PermissionError` and the test failed where it meant to skip (`tests/test_s1_synth.py`, SYNTH1). A guard for a sandbox-only resource uses `os.path.exists` (it returns False on any `OSError`) or catches `OSError`; a green in the sandbox proves nothing about a non-root runner.
 
 **`tests/test_proof_status.py` needs a SHORT `--basetemp` (e.g. `/tmp/ps/bt`)** — the session scratchpad path exceeds gpg-agent's Unix-socket

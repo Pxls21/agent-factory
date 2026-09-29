@@ -239,6 +239,12 @@ origin state, task state, or owner statements contradict what you remember:
   while it was stopped (the restart time, other lanes' landings, any new finding that touches its files) and
   repeat the standing rules. Re-dispatch only when the transcript is gone. Processes a lane or the coordinator
   started outside the harness (a `setsid` server, a PC run) survive a worker restart: check them by pid.
+  **Before any resume, read the lane's `subagents/agent-<id>.meta.json` (2026-09-29).** Its `description` names the lane:
+  an agent id carried by a compaction summary named the wrong one, and a resume reached the TRIM-AUDIT evidence-gatherer
+  instead of the LS-B9 verifier (AF-AP-241). `"stoppedByUser":true` marks a lane the OWNER'S INTERRUPT stopped: the harness
+  refuses its resume and allows a new agent only on the owner's explicit ask (VERIFY-SCRUB2 2026-09-26, D-098; VERIFY-K2
+  round 2 2026-09-29; AF-AP-245). Ask the owner at once, with a resume brief ready (D-098's pattern: a fresh agent
+  continues from the saved scratch and report), so one word relaunches it.
   **A lane's own foreground command survives too, as an orphan (PPID 1), while its agent is gone (2026-09-26 05:4xZ):**
   SYNTH1's 18-file gate run went on after a container restart, headed for the whole `tests/test_vendored_manifest.py`
   (about 3.4 GB of copies against 1.5 GB free). Before the resume messages, list the orphans
@@ -263,6 +269,11 @@ code default 3-token); the ledger's dated sync blocks are append-only and win. A
 EXTERNAL research doc is a source of questions, never of campaign constants — RP-31's
 "hourly" framing contradicted the settled 4h frame and rode into two preregs before
 the audit caught it.
+
+**A handed COMMAND is re-runnable (2026-09-29, D-107; AF-AP-244).** An owner runs a pasted loop twice as easily as
+once. A command that deletes and re-creates state skips each item already in its target state, and the coordinator
+re-measures after the owner reports: the signing loop ran twice, and its second run replaced the twelve signed tags
+and invalidated the copies imported from the first.
 
 ## Deep-history asset (2026-09-03)
 
