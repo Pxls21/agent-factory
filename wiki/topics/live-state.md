@@ -11,6 +11,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-29 00:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin 0e6d4a1, plus local commits; the main tree is the primary.**
+- **RUNNING (sandbox, three lanes):** VERIFY-SCRUB2 round 3 (task #321); T0-REPLAY round 2 (task #346); T1-LCM-AUDIT (task #346).
+- **HOME:** VERIFY-I59-F round 5: MERGE-READY-WITH-FOLLOWUPS (issue #81; a refusal switched its last 31 minutes to claude-opus-4-8, stated on the report).
+- **WAITING ON THE OWNER:** the S0-05 re-capture (one sudo command on the PC, in the ledger line "I59-F LANDING STAGED" of 00:4xZ; the worktree `~/af-i59f-recap` is ready), then the one landing and the owner's single signature of the twelve; the D-105 questions (§8); the chat form of LS-DESIGN v2 §3.
+- **BRIEFED, WAITING FOR A SLOT:** LS-B9 round 4 with the stacks' wiring.
+
 **2026-09-29 00:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin 0e6d4a1 (pushed 2026-09-29 00:3xZ after CI run #1125 passed); the main tree is the primary.**
 - **RUNNING (sandbox, three lanes, the D-062 limit):** VERIFY-SCRUB2 round 3 (task #321); VERIFY-I59-F round 5 (task #335); T0-REPLAY round 2 (task #346: request-window protection, rules for hand-backs and attachments, a trim guard).
