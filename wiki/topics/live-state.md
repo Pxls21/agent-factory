@@ -12,7 +12,7 @@ last_compiled: 2026-09-03
 ## Active lanes
 
 **2026-09-29 01:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
-- **Origin 774c112 (the landing pushed as 5d9a1d3, then the transcript sync); CI run #1128 red on one test pinned on Python 3.11 (AF-AP-238), fixed locally and re-pushed with CI_FIX; the main tree is the primary.**
+- **Origin 975523a (the CI fix, pushed with CI_FIX after run #1128 went red on one test pinned on Python 3.11, AF-AP-238); CI runs on it; the owner signs the twelve on 975523a once it is green; the main tree is the primary.**
 - **RUNNING (sandbox, two lanes):** K1, what a compaction loses (task #352); LS-B9 round 4 with the stacks' wiring (task #339).
 - **NEW, D-106:** the owner re-scoped D-105. Hermes: the LCM plugin if it is good enough. This session: a measured compaction point, a richer compaction and context packs, no trimmer; Jev acts only after it beats the fixed rules on the replay. Plan: §10 of `docs/research/findings/jev-trim/D105-DESIGN-v1.md`; tasks #352 and #353.
 - **HOME:** K0 (02:1xZ: the published evidence; the design's §10.5 reads it). T0-REPLAY round 2 (landed 02:0xZ: a record under D-106). T1-LCM-AUDIT (LCM-X is good enough for the PC lanes under five conditions; H1 next). VERIFY-SCRUB2-R1 round 3: NOT-READY on R3V-1; the repair budget is spent, so the scrubber repair is BLOCKED for the owner (round 3 held as `tasks/briefs/system1/SCRUB2-R1-R3.patch`, the tree back at the PIN).
@@ -20,6 +20,7 @@ last_compiled: 2026-09-03
 - **WAITING ON THE OWNER:** a fourth scrubber round (a structural fix proposed); the chat form of LS-DESIGN v2 §3.
 - **RETRO 01:4xZ:** two quirks baked into `env-tool-quirks` (a re-landed evidence set is the prior mint's file list; the task view names a task from the first body mention of its id); task #354 registered (backlog: an S0-05 re-capture landing script); LS-B9 round 4 gains item 6b (the harvest lists local commit ids).
 - **RETRO 02:2xZ:** `session-continuity` gains the newest-block rule for live-state edits; task #355 registered (backlog: `ci_gate.py` once read a runs list without the newest run).
+- **RETRO 03:0xZ:** task #356 registered (backlog: a gate that runs a test set under CI's Python).
 
 **2026-09-29 00:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin 0e6d4a1, plus local commits; the main tree is the primary.**
