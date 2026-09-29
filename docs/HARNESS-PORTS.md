@@ -404,7 +404,7 @@ starting a second one. Keyed on the STATE it intends to create, not on mutual ex
 | `LCM_X_DIR` | `$HOME/lcm-x` | the pinned LCM-X clone (lcm-x mode only) |
 | `LCM_X_DEPS_DIR` | `$HOME/lcm-x-deps` | LCM-X's runtime import, `pip install --target` (lcm-x mode only) |
 | `LCM_X_TIKTOKEN_DIR` | `$HOME/lcm-x-tiktoken` | the pre-seeded tokenizer cache (lcm-x mode only) |
-| `LCM_X_PYTHON` | read from `HERMES_BIN`'s shebang | the lane's Python for `verify`'s import check; `scripts/pc_lane.sh` does not forward it |
+| `LCM_X_PYTHON` | read from `HERMES_BIN`'s shebang | the lane's Python for `verify`'s import check; `scripts/pc_lane.sh` forwards it (VERIFY-H1a F23, issue #85). The PC needs it: its `hermes` is a bash wrapper over a `/bin/sh` trampoline, so set it to `~/.hermes/hermes-agent/venv/bin/python3` (measured 2026-09-29) |
 
 ### LCM-X lane mode (task #365, H1; off by default)
 
@@ -484,11 +484,11 @@ printf 'tiktoken==0.14.0 --hash=sha256:f5e7665f6624e052e5e7f6a36919ab69279decdc9
 mkdir -p ~/lcm-x-tiktoken; T=~/lcm-x-tiktoken/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
 [ -f "$T" ] || { curl -fsSL -o "$T.tmp" https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken && mv "$T.tmp" "$T"; }
 echo "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7  $T" | sha256sum -c -
-LANE_CONTEXT_ENGINE=lcm-x bash harness-ports/bin/lane-profile.sh create h1-preflight \
+LANE_CONTEXT_ENGINE=lcm-x LCM_X_PYTHON=~/.hermes/hermes-agent/venv/bin/python3 bash harness-ports/bin/lane-profile.sh create h1-preflight \
   && bash harness-ports/bin/lane-profile.sh remove aflaneh1preflight   # create runs the full verify
 ```
 
-**NOT done.** Nothing ran on the PC: no clone, no install, no launch, no load of LCM-X in Hermes. `verify` is static:
+**Done on the PC (2026-09-29, H1b's first half):** the steps above: the clone at 601a9cc (clean, every file tagged `H`), the wheel (hash-pinned) and the tokenizer (digest-checked), and the preflight `create` (rc 0, the full verify; the lane profile's `plugins/` held the one link) and `remove`. **NOT done:** no lane launch and no load of LCM-X in Hermes. `verify` is static:
 it cannot see a load failure, after which Hermes falls back to its built-in compressor with only a warning
 (`hermes_cli/plugins_loader.py:283-289`, 321; `agent/agent_init.py:1789-1792`); the proof that LCM-X ran is rows for the lane's session in `<profile>/lcm.db`. Production
 use is a later decision with its own proof (standing rules 10 and 11; T1 report section 5 row 7).
@@ -826,8 +826,9 @@ The PC build/verify lanes run Hermes at commit `b3399c1` (v0.21.1, python 3.11.1
 (D-043, D-048 item 3).
 
 **What this pin covers:** every `scripts/pc_lane.sh` dispatch on the PC, where
-`~/.local/bin/hermes` resolves to the `~/.hermes/hermes-agent/venv/bin/hermes` install at that
-commit.
+`~/.local/bin/hermes` is a four-line bash wrapper that execs the `~/.hermes/hermes-agent/venv/bin/hermes` install at
+that commit, itself a `/bin/sh` trampoline that runs the venv's `python3` (measured 2026-09-29; so the LCM-X mode needs
+`LCM_X_PYTHON`, section 7).
 Until REPIN-b lands, nothing reads `lane_runtime`, so a `hermes update` or a `HERMES_BIN`
 override moves the lanes with no check failing.
 

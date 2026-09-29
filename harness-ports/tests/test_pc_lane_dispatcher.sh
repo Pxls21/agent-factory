@@ -6,7 +6,7 @@
 # must show NO mkdir -p (the guard runs before the write, AF-AP-79).
 set -uo pipefail
 unset HERMES_MODEL HERMES_REASONING HERMES_PROFILE LANE_SERVER_EFFORT ROLE PC_LANE_TEST_POLL_STATE PC_LANE_TEST_PROVIDER_MIX PC_LANE_TEST_PROVIDER_MIX_RC PC_LANE_TEST_SQL_CAPTURE PC_LANE_TEST_RESUME PC_LANE_TEST_EVAL_PREMISE PC_LANE_TEST_PREMISE_ERROR PC_LANE_TEST_LANE_PID PC_LANE_TEST_AF_REPO 2>/dev/null || true
-unset LANE_CONTEXT_ENGINE LCM_X_DIR LCM_X_DEPS_DIR LCM_X_TIKTOKEN_DIR 2>/dev/null || true
+unset LANE_CONTEXT_ENGINE LCM_X_DIR LCM_X_DEPS_DIR LCM_X_TIKTOKEN_DIR LCM_X_PYTHON 2>/dev/null || true
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"
 TMP="$(mktemp -d)"; FIXTURE_PIDS=()
 cleanup() {
@@ -236,15 +236,16 @@ PC_LANE_TEST_TERMINAL=applied run_dispatch HERMES_MODEL=agentfactory-build; rc=$
 [ "$rc" -eq 75 ] && ! grep -q 'restart-when-idle' "$BRIDGE_CALLS" && grep -q 'setsid env LANE_ID=' "$BRIDGE_CALLS"
 check "cloud route skips deferred effort step" $? "rc=$rc calls=$(tr '\n' ';' < "$BRIDGE_CALLS")"
 
-# LANE_CONTEXT_ENGINE (task #365): the mode and its three paths travel on the launch line as HERMES_MODEL does; unset,
-# the launch line carries none of them (the line pc_lane.sh sent before the mode existed). The three spaces before
-# `bash` are the LAUNCH string's backslash-newline continuation.
+# LANE_CONTEXT_ENGINE (task #365): the mode, its three paths and its interpreter travel on the launch line as HERMES_MODEL
+# does; unset, the launch line carries none of them (the line pc_lane.sh sent before the mode existed). LCM_X_PYTHON
+# travels too (VERIFY-H1a F23, issue #85): the PC's hermes is a bash wrapper, so verify needs the interpreter named. The
+# three spaces before `bash` are the LAUNCH string's backslash-newline continuation.
 PC_LANE_TEST_TERMINAL=applied run_dispatch HERMES_MODEL=agentfactory-build LANE_CONTEXT_ENGINE=lcm-x LCM_X_DIR=/pc/lcm-x \
-  LCM_X_DEPS_DIR=/pc/lcm-x-deps 'LCM_X_TIKTOKEN_DIR=/pc/tok dir'; rc=$?
+  LCM_X_DEPS_DIR=/pc/lcm-x-deps 'LCM_X_TIKTOKEN_DIR=/pc/tok dir' 'LCM_X_PYTHON=/pc/venv x/bin/python3'; rc=$?
 LCM_LAUNCH="$(grep 'setsid env LANE_ID=' "$BRIDGE_CALLS")"
 [ "$rc" -eq 75 ] && [ "$(printf '%s\n' "$LCM_LAUNCH" | grep -c .)" -eq 1 ] \
-  && printf '%s' "$LCM_LAUNCH" | grep -Fq ' HERMES_MODEL=agentfactory-build LANE_CONTEXT_ENGINE=lcm-x LCM_X_DIR=/pc/lcm-x LCM_X_DEPS_DIR=/pc/lcm-x-deps LCM_X_TIKTOKEN_DIR=/pc/tok\ dir   bash harness-ports/bin/pc-lane.sh '
-check "the LCM-X mode and its paths travel on the launch line, quoted" $? "rc=$rc launch=$LCM_LAUNCH"
+  && printf '%s' "$LCM_LAUNCH" | grep -Fq ' HERMES_MODEL=agentfactory-build LANE_CONTEXT_ENGINE=lcm-x LCM_X_DIR=/pc/lcm-x LCM_X_DEPS_DIR=/pc/lcm-x-deps LCM_X_TIKTOKEN_DIR=/pc/tok\ dir LCM_X_PYTHON=/pc/venv\ x/bin/python3   bash harness-ports/bin/pc-lane.sh '
+check "the LCM-X mode, its paths and its interpreter travel on the launch line, quoted" $? "rc=$rc launch=$LCM_LAUNCH"
 PC_LANE_TEST_TERMINAL=applied run_dispatch HERMES_MODEL=agentfactory-build; rc=$?
 OFF_LAUNCH="$(grep 'setsid env LANE_ID=' "$BRIDGE_CALLS")"
 [ "$rc" -eq 75 ] && printf '%s' "$OFF_LAUNCH" | grep -q 'setsid env LANE_ID=[^ ]* HERMES_MODEL=agentfactory-build   bash harness-ports/bin/pc-lane.sh ' \
