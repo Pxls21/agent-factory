@@ -13,7 +13,8 @@ started and ended; the refresh must build after the last end. Each check is a fu
 mutated copies of it (one mutation per property, each applied exactly once): a mutant must fail the same check.
 
 Needs graft, gitnexus and code-review-graph installed (scripts/setup.sh); without them those tests skip, and say why.
-Deterministic and LLM-free.
+The FIFO checks (VERIFY-K2 F2: each reader opens with the System-1 hook's open_regular, so a FIFO is refused at once)
+need none of them. Deterministic and LLM-free.
 """
 import hashlib
 import importlib.util
@@ -31,6 +32,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 CODEMAP = ROOT / "scripts" / "codemap.py"
 HOOK = ROOT / "scripts" / "hooks" / "post-commit"
+SYSTEM1 = ROOT / ".claude" / "hooks" / "system1-context.py"
 CRG_FALLBACK = "/root/venv-crg/bin/code-review-graph"
 TOOLS = {"graft": shutil.which("graft"), "gitnexus": shutil.which("gitnexus"), "node": shutil.which("node"),
          "code-review-graph": shutil.which("code-review-graph")
@@ -122,7 +124,8 @@ FILES = {"scripts/alpha.py": ALPHA, "scripts/beta.py": BETA, "scripts/user.py": 
 # the tools the hook and the refresh run, never committed in the fixture (a commit must not carry them)
 TOOLING = {"scripts/codemap.py": CODEMAP, "scripts/ap_screen.py": ROOT / "scripts" / "ap_screen.py",
            ".claude/hooks/edit-snapshot.py": ROOT / ".claude" / "hooks" / "edit-snapshot.py",
-           "scripts/hooks/post-commit": HOOK}
+           "scripts/hooks/post-commit": HOOK,
+           ".claude/hooks/system1-context.py": SYSTEM1}              # codemap's readers open files with its opens
 EXCLUDE = "\n".join(list(TOOLING) + [".gitnexus/", "graft/", ".code-review-graph/", ".claude/skills/", ".jev/",
                                      ".gitignore", ".ignore", "AGENTS.md", "CLAUDE.md"]) + "\n"
 
@@ -448,7 +451,7 @@ MUTANTS = {
                     "a line past the end: module"),
     "unknown-read-as-none": ("lookup-positions", 'line = "risk UNKNOWN — " + UNRESOLVED % s["name"]',
                              'line = "risk UNKNOWN — no callers"', "UNKNOWN is not said as unresolved"),
-    "never-stale": ("stale", 'stale = blob_sha((root / rel).read_bytes()) != pack["blob"]', "stale = False",
+    "never-stale": ("stale", 'stale = blob_sha(sys1.read_regular(str(root / rel), True)) != pack["blob"]', "stale = False",
                     "an edited file was not flagged stale"),
     "miss-as-module": ("miss", 'return dict(res, status="miss", text="codemap: %s for %s',
                        'return dict(res, status="module", text="codemap: %s for %s', "a missing pack is not a miss"),
@@ -468,7 +471,8 @@ MUTANTS = {
                                  'shown = [s for s in syms if s.get("from", s["start"]) <= end_line and s["end"] >= line]',
                                  'shown = [s for s in syms if s.get("from", s["start"]) >= line and s["end"] <= end_line]',
                                  "a range does not name every symbol that overlaps it"),
-    "file-entry-never-stale": ("file-entry", 'stale = pack["blob"] != blob_sha((root / rel).read_bytes())', "stale = False",
+    "file-entry-never-stale": ("file-entry", 'stale = pack["blob"] != blob_sha(sys1.read_regular(str(root / rel), True))',
+                               "stale = False",
                                "an edited file's entry does not say STALE"),
 }
 
@@ -792,6 +796,99 @@ def test_cap_cuts_on_a_character_boundary():
         assert len(raw) <= 1500 and cut.endswith("…[cut at 1500 bytes]") and raw.decode("utf-8") == cut
         assert 1500 - len(raw) < 3                     # at most one partial character dropped
     assert cm._cap("short") == "short"
+
+
+# ---------- VERIFY-K2 F2: no reader waits on a FIFO (tools-free: the pack comes from build_one with no graph) ----------
+
+FIFO_CHILD = r"""
+import importlib.util, json, os, sys
+sys.dont_write_bytecode = True
+root, reader = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("codemap_fifo", os.path.join(root, "scripts", "codemap.py"))
+cm = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cm)
+if reader == "load-pack":
+    pack, why = cm._load_pack(root, "scripts/x.py")
+    out = [pack is None, why]
+elif reader == "lookup":
+    r = cm.lookup("scripts/x.py", 2, root=root)
+    out = [r["status"], r["stale"]]
+elif reader == "file-entry":
+    r = cm.file_entry("scripts/x.py", root=root)
+    out = [r["status"], r["stale"]]
+elif reader == "edit-context":
+    r = cm.edit_context("scripts/x.py", "return 1", root=root)
+    out = [r["status"], r["text"]]
+else:
+    out = [cm.language(root, "scripts/tool")]
+print(json.dumps(out))
+"""
+# what each reader gives when the file it opens is a FIFO no one writes: refused at once, never waited on
+FIFO_WANT = {"load-pack": [True, "the pack is unreadable (OSError)"], "lookup": ["module", True],
+             "file-entry": ["file", True],
+             "edit-context": ["miss", "codemap: cannot place the edit (the file is unreadable or outside the repo)"],
+             "language": [None]}
+# each reader's open before F2 (a plain open, which blocks on a FIFO until a writer comes)
+FIFO_MUTANTS = {
+    "load-pack-blocks": ("load-pack", 'pack = json.loads(sys1.read_regular(str(p)).decode("utf-8"))',
+                         'pack = json.loads(p.read_text(encoding="utf-8"))'),
+    "lookup-blocks": ("lookup", 'stale = blob_sha(sys1.read_regular(str(root / rel), True)) != pack["blob"]',
+                      'stale = blob_sha((root / rel).read_bytes()) != pack["blob"]'),
+    "file-entry-blocks": ("file-entry", 'stale = pack["blob"] != blob_sha(sys1.read_regular(str(root / rel), True))',
+                          'stale = pack["blob"] != blob_sha((root / rel).read_bytes())'),
+    "edit-context-blocks": ("edit-context",
+                            'content = sys1.read_regular(str(root / rel), True).decode("utf-8", "replace") if rel else None',
+                            'content = (root / rel).read_bytes().decode("utf-8", "replace") if rel else None'),
+    "language-blocks": ("language", "fd = sys1.open_regular(str(Path(root) / rel), os.O_RDONLY, True)",
+                        "fd = os.open(str(Path(root) / rel), os.O_RDONLY)"),
+}
+
+
+def fifo_check(tmp_path, codemap_text, reader, bound=10):
+    """A tree holding `codemap_text` as scripts/codemap.py and the System-1 hook; scripts/x.py's pack built by the
+    real builder with no graph installed; then the file `reader` opens swapped for a FIFO no one writes. The reader
+    runs in a child: a run past `bound` seconds is a stall."""
+    root = tmp_path / "fifo"
+    (root / "scripts").mkdir(parents=True)
+    (root / ".claude" / "hooks").mkdir(parents=True)
+    (root / "scripts" / "codemap.py").write_text(codemap_text, encoding="utf-8")
+    shutil.copy2(SYSTEM1, root / ".claude" / "hooks" / "system1-context.py")
+    (root / "scripts" / "x.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("codemap_fifo_build", CODEMAP)
+    cm = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cm)
+    outcome, _ = cm.build_one(root, "scripts/x.py", ("absent", "not in this test"), {"PATH": "/nonexistent"}, "0" * 40)
+    assert outcome == "built"
+    target = {"load-pack": root / ".jev" / "codemap" / "scripts" / "x.py.json",
+              "language": root / "scripts" / "tool"}.get(reader, root / "scripts" / "x.py")
+    if target.exists():
+        target.unlink()
+    os.mkfifo(target)
+    try:
+        r = subprocess.run([sys.executable, "-c", FIFO_CHILD, str(root), reader], capture_output=True, text=True,
+                           timeout=bound)
+    except subprocess.TimeoutExpired:
+        raise AssertionError("codemap's %s stalled on a FIFO past %d s" % (reader, bound)) from None
+    assert r.returncode == 0, r.stderr[-600:]
+    return json.loads(r.stdout)
+
+
+@pytest.mark.parametrize("reader", sorted(FIFO_WANT))
+def test_no_reader_waits_on_a_fifo(tmp_path, reader):
+    assert fifo_check(tmp_path, CODEMAP.read_text(encoding="utf-8"), reader) == FIFO_WANT[reader]
+
+
+@pytest.mark.parametrize("mutant", sorted(FIFO_MUTANTS))
+def test_negative_control_a_reader_with_a_plain_open_stalls(tmp_path, mutant):
+    reader, old, new = FIFO_MUTANTS[mutant]
+    with pytest.raises(AssertionError, match="codemap's %s stalled on a FIFO" % reader):
+        fifo_check(tmp_path, mutate(CODEMAP, old, new), reader)
+
+
+def test_every_fifo_mutant_is_graded_by_a_reader_check():
+    assert set(FIFO_WANT) == {m[0] for m in FIFO_MUTANTS.values()}
+    for _, old, new in FIFO_MUTANTS.values():
+        compile(mutate(CODEMAP, old, new), "codemap-fifo-mutant", "exec")
 
 
 HANG = """import json, sys

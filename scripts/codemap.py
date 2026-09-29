@@ -78,15 +78,46 @@ def rel_path(root: Path, path) -> str | None:
         return None
 
 
+_S1 = None
+
+
+def _system1():
+    """The System-1 hook (.claude/hooks/system1-context.py), imported by path once per process for its safe opens: the
+    readers below open every file with its open_regular (O_NONBLOCK, then fstat: a FIFO swapped in between a caller's
+    check and the open is refused, never waited on; VERIFY-K2 F2, AF-AP-70). No bytecode is written beside it in
+    .claude/hooks. scripts/filepacks.py hands over its own import; a missing or broken hook raises, never reads as
+    "no pack"."""
+    global _S1
+    if _S1 is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("codemap_system1", ROOT / ".claude" / "hooks" / "system1-context.py")
+        mod = importlib.util.module_from_spec(spec)
+        saved = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec.loader.exec_module(mod)
+        finally:
+            sys.dont_write_bytecode = saved
+        _S1 = mod
+    return _S1
+
+
 def language(root: Path, rel: str) -> str | None:
     e = _ext(rel)
     if e:
         return LANG.get(e)
+    sys1 = _system1()
     try:
-        with open(Path(root) / rel, "rb") as f:
-            head = f.readline(200)
+        fd = sys1.open_regular(str(Path(root) / rel), os.O_RDONLY, True)
+        try:
+            head = os.read(fd, 200)
+        finally:
+            os.close(fd)
     except OSError:
         return None
+    nl = head.find(b"\n")
+    if nl >= 0:
+        head = head[:nl + 1]                              # the first line, as readline(200) read it
     if head.startswith(b"#!"):
         if b"python" in head:
             return "python"
@@ -863,9 +894,10 @@ def _entry_text(pack, rel, line, end_line, stale, sym, where_rows):
 
 
 def _load_pack(root, rel):
+    sys1 = _system1()
     p = pack_path(root, rel)
     try:
-        pack = json.loads(p.read_text(encoding="utf-8"))
+        pack = json.loads(sys1.read_regular(str(p)).decode("utf-8"))      # the pack itself: no link, no FIFO
     except FileNotFoundError:
         return None, "no pack"
     except (OSError, ValueError) as e:
@@ -875,10 +907,11 @@ def _load_pack(root, rel):
     return pack, None
 
 
-def lookup(path, line, end_line=None, root=None):
+def lookup(path, line, end_line=None, root=None, pack=None):
     """The entry for the symbol that encloses lines [line, end_line] of `path`, from its pack: a dict with `status`
     (hit, module, past-end, miss, out-of-scope), `stale` (the working file's blob differs from the pack's; None when
-    there is no pack) and `text` (at most TEXT_CAP bytes). Reads one pack and hashes the working file: no subprocess."""
+    there is no pack) and `text` (at most TEXT_CAP bytes). Reads one pack (or takes `pack`, one its caller read) and
+    hashes the working file: no subprocess."""
     root = Path(root or ROOT)
     rel = rel_path(root, path)
     end_line = line if end_line is None else end_line
@@ -887,12 +920,14 @@ def lookup(path, line, end_line=None, root=None):
     if not in_scope(rel) or not language(root, rel):
         return dict(res, status="out-of-scope", pack=None, text="codemap: %s is outside the code map (code files "
                     "under %s)" % (res["path"], ", ".join(PREFIXES)))
-    pack, why = _load_pack(root, rel)
     if pack is None:
-        return dict(res, status="miss", text="codemap: %s for %s (`python3 scripts/codemap.py build %s` builds "
-                    "it)" % (why, rel, rel))
+        pack, why = _load_pack(root, rel)
+        if pack is None:
+            return dict(res, status="miss", text="codemap: %s for %s (`python3 scripts/codemap.py build %s` builds "
+                        "it)" % (why, rel, rel))
+    sys1 = _system1()
     try:
-        stale = blob_sha((root / rel).read_bytes()) != pack["blob"]
+        stale = blob_sha(sys1.read_regular(str(root / rel), True)) != pack["blob"]
     except OSError:
         stale = True
     res["stale"] = stale
@@ -915,14 +950,15 @@ def lookup(path, line, end_line=None, root=None):
     return res
 
 
-def edit_context(file_path, old_string, root=None, replace_all=False):
+def edit_context(file_path, old_string, root=None, replace_all=False, pack=None):
     """What L2b injects before an Edit: the line range of `old_string` in the file as it is now (the Edit tool needs it
-    unique unless replace_all), the enclosing symbol and its entry. Never guesses a location (D8: the first occurrence
-    of the first line named the wrong symbol)."""
+    unique unless replace_all), the enclosing symbol and its entry (from `pack` when given, see lookup). Never guesses
+    a location (D8: the first occurrence of the first line named the wrong symbol)."""
     root = Path(root or ROOT)
     rel = rel_path(root, file_path)
+    sys1 = _system1()
     try:
-        content = (root / rel).read_bytes().decode("utf-8", "replace") if rel else None
+        content = sys1.read_regular(str(root / rel), True).decode("utf-8", "replace") if rel else None
     except OSError:
         content = None
     if content is None or not old_string:
@@ -941,21 +977,21 @@ def edit_context(file_path, old_string, root=None, replace_all=False):
         return {"status": "ambiguous", "path": rel, "ranges": ranges, "text": "codemap: old_string occurs %d times in "
                 "%s (lines %s); the Edit tool refuses a non-unique old_string" % (
                     len(ranges), rel, ", ".join("%d-%d" % r for r in ranges[:5]))}
-    res = lookup(rel, ranges[0][0], ranges[0][1], root=root)
+    res = lookup(rel, ranges[0][0], ranges[0][1], root=root, pack=pack)
     return dict(res, ranges=ranges)
 
 
 FILE_SYMBOLS = 8                    # symbols a file-level entry names
 
 
-def file_entry(path, line=None, end_line=None, root=None):
+def file_entry(path, line=None, end_line=None, root=None, pack=None):
     """The file-level entry of `path` from its pack, for a touch that names no one symbol (L2b, task #353: a Read, a
     Write, a shell reader, or a Read range that no one symbol holds): the symbol count and the first FILE_SYMBOLS
     top-level symbols with their spans (with `line`: the symbols that overlap lines [line, end_line] instead), the
     tests that cover the file, its registry rows (those in the range, with `line`) and the instruments line. A dict
     like lookup's: `status` (file, range, miss, out-of-scope), `stale` (the working file's blob differs from the
-    pack's; None when there is no pack) and `text` (at most TEXT_CAP bytes). Reads one pack and hashes the working
-    file: no subprocess."""
+    pack's; None when there is no pack) and `text` (at most TEXT_CAP bytes). Reads one pack (or takes `pack`, one its
+    caller read) and hashes the working file: no subprocess."""
     root = Path(root or ROOT)
     rel = rel_path(root, path)
     end_line = line if end_line is None else end_line
@@ -964,11 +1000,13 @@ def file_entry(path, line=None, end_line=None, root=None):
     if not in_scope(rel) or not language(root, rel):
         return dict(res, status="out-of-scope", pack=None, text="codemap: %s is outside the code map (code files "
                     "under %s)" % (res["path"], ", ".join(PREFIXES)))
-    pack, why = _load_pack(root, rel)
     if pack is None:
-        return dict(res, status="miss", text="codemap: no file entry for %s: %s" % (rel, why))
+        pack, why = _load_pack(root, rel)
+        if pack is None:
+            return dict(res, status="miss", text="codemap: no file entry for %s: %s" % (rel, why))
+    sys1 = _system1()
     try:
-        stale = pack["blob"] != blob_sha((root / rel).read_bytes())
+        stale = pack["blob"] != blob_sha(sys1.read_regular(str(root / rel), True))
     except OSError:
         stale = True
     res["stale"] = stale

@@ -15,27 +15,47 @@ boundary (`scripts/stack.py` never matches inside `scripts/stack.py.json` or `x/
   - the last 400 commits, from one `git log --name-only`: the newest 3 that changed the file, with their subjects.
 A file that has anything gets <state>/filepacks/<path>.json, written atomically and only when its bytes change; the pack
 of a file that has nothing any more is removed. <state>/filepacks/TRACKED.txt lists the tracked files (the hook's
-boundary) and <state>/filepacks/BUILD.json records the SHA, the counts and the milliseconds. A named path can only be
+boundary), <state>/filepacks/BLOBS.txt holds each one's blob id at that commit (`<path>TAB<blob>` lines, from the same
+`ls-tree`) and <state>/filepacks/BUILD.json records the SHA, the counts and the milliseconds. A named path can only be
 matched when all of its characters are path characters (PATH_RX); the tree's paths use none other (measured).
 
 P1, `hook` (PreToolUse on Read, Edit, Write and Bash, through scripts/hook_context.py): the first time a context window
 touches a tracked file, its entry is injected (`entry`): for a code file with a code-map pack (scripts/codemap.py, L2a)
 the code part first (the enclosing symbol for an Edit, the symbols in range for a Read with offset and limit, else the
 file's own entry, each keeping the code map's STALE mark), then the pack's lines, the sources taken in turn (GROUPS),
-all cut at a line boundary within PACK_BUDGET bytes. A Bash call touches the files named as arguments of a reader
-command word (READERS) at a command position, as the System-1 hook's shell parser finds them: quoted text, heredoc
-bodies and comments are data; a `cd` at a command position moves the directory later relative paths resolve against.
+all cut at a line boundary within PACK_BUDGET bytes. The code part is shown only when the code-map pack's blob is the
+file's blob at the build's commit (BLOBS.txt): the code map builds a pack from the working copy, so a pack of a file
+untracked since the build, or of bytes no commit holds, would put text no commit holds in front of the model (VERIFY-K2
+F1); such a touch gets the pack's lines only, and its record says `code_skip`.
+
+A Bash call touches the files named as arguments of a reader command word (READERS) at a command position, as the
+System-1 hook's shell parser finds them: quoted text, heredoc bodies and comments are data; a nested shell's script
+(`bash -c '…'`, `sh -c "…"`, `eval '…'`) is code, and the closing quote System-1's code text keeps ends its last word.
+grep, egrep and rg name files after their pattern (the first operand, unless -e or -f gives it; a -f file is read).
+`cd`, `pushd` and `popd` at a command position move the directory later relative paths resolve against; a `cd` inside
+`( … )`, `$( … )`, backticks or a child shell's script stays inside it (an `eval` script's does not). A command under
+`ssh` or `pc.sh` runs on another host: its words, quoted ones and heredocs included, name no file here. Each command
+word's arguments are read from a word list built once per command line, at most WORDS_MAX of them, and at most
+FILES_MAX paths a command line (VERIFY-K2 F3: the parse is linear in the command's length). Not followed: a `cd` in a
+pipeline (it runs in a subshell), a heredoc fed to a shell, `case` patterns inside a subshell (their `)` ends it early).
+
 Once per window: `file:<path>` (Read, Write, Bash; an Edit sets it too) and `sym:<path>:<symbol>` (Edit) go into
 <state>/filepacks-seen/<window>.json under the System-1 WindowLock. At most CALL_MAX files a call (the first named that
 inject) and PACK_WINDOW_MAX a window. `hook --reset` (SessionStart) has the System-1 reset's semantics: a compaction
 forgets the compacted window, a resume or a clear every window of its session, and a marker idle 7 days goes.
 
-Boundary: only files tracked at the last build (TRACKED.txt). A path outside the root or with a `..` component, an
-untracked file, a pack reached through a symbolic link and a working file that is not a regular file give nothing.
-Advisory, never a gate: every path exits 0 and prints nothing on an error; a decision or an error is one JSON line in
-<state>/filepacks.jsonl (the System-1 record shape: keys, bytes, sha, why; never the tool input). Off switch: the file
-<state>/filepacks-off (a dangling link counts; the reset still runs). A call that names no tracked file, or that comes
-before the first build, logs nothing and creates nothing.
+Boundary: only files tracked at the last build (TRACKED.txt, one exact line per path). A path outside the root or with a
+`..` component and an untracked file give nothing. A pack that is itself a symbolic link gives nothing (`link`), and so
+does a code pack whose directory resolves outside .jev/codemap (`unreadable`) or a pack whose directory resolves
+outside <state>/filepacks (`link`); a directory link that stays inside them, a linked .jev/codemap and a linked
+<state>/filepacks are followed, since the state is trusted (VERIFY-K2 F6). A working file that is not a regular file
+gives no code part. Advisory, never a gate: every path exits 0 and prints nothing on an error; a decision or an error
+is one JSON line in <state>/filepacks.jsonl (the System-1 record shape: keys, bytes, sha, why; never the tool input).
+Off switch: the file <state>/filepacks-off (a dangling link counts; the reset still runs). A call that names no tracked
+file, or that comes before the first build, logs nothing and writes no marker. What a call does write (VERIFY-K2 F12):
+a payload that is not JSON logs one line, creating <state> when it is missing; the first call with <state> present
+caches the System-1 hook's bytecode under <state>/pycache; the import of scripts/codemap.py caches its bytecode in
+scripts/__pycache__, which git ignores.
 
 `replay` runs the main loop's recorded tool calls through the hook's planner, window by window (split at the compaction
 boundaries), with the seen keys in memory, never the live markers. It reads only compaction boundaries and tool_use
@@ -43,7 +63,8 @@ inputs, and prints only counts, bytes and milliseconds. `--wrapper K` also times
 wrapper and hook, on a temporary copy of the packs.
 
 The System-1 hook (.claude/hooks/system1-context.py) is imported by path, never copied: its shell parser, window ids,
-lock, safe opens and bounded stdin. Its bytecode cache goes under <state>/pycache, never beside it in .claude/hooks.
+lock, safe opens and bounded stdin. Its bytecode cache goes under <state>/pycache, never beside it in .claude/hooks. The
+code map's readers open files with the same safe opens (VERIFY-K2 F2); this module hands them its own import.
 
 <state> is <repo>/.jev. Test seam, read once at start: AF_FILEPACKS_STATE (the state directory instead of <repo>/.jev).
 
@@ -54,6 +75,7 @@ Usage:
 """
 from __future__ import annotations
 
+import bisect
 import hashlib
 import importlib.util
 import json
@@ -95,6 +117,22 @@ WORD_RX = re.compile(r"[^\s;&|()`]+")                  # a command word, as the 
 SEP_RX = re.compile(r"[;&|()\n`]|\$\(")                # where a simple command's words end, in its shell code
 NONSPACE_RX = re.compile(r"\S+")
 REDIR_RX = re.compile(r"(?:\d+|&)?(?:>>|>&|>\||<<<|<<-|<<|<&|<>|>|<)")
+STRUCT_RX = re.compile(r"[()`'\";&|\n]")           # where a frame opens or ends, or a simple command ends, in shell code
+# `ssh` and `pc.sh` as System-1's _word sees them (a word, after its last "/"): the quote readers that run on another host
+REMOTE_RX = re.compile(r"(?<![^\s;&|()<`/])(?:ssh|pc\.sh)(?![^\s;&|()<])")
+WORDS_MAX = 64                       # argument words read after one command word (F3: a bounded scan per position)
+FILES_MAX = 64                       # paths one command line gives, in the order named
+# grep's and rg's options that take a value: (short letters, long names); the value is the next word unless attached
+GREP_VALUES = ("efmABCdD", frozenset(("regexp", "file", "max-count", "after-context", "before-context", "context",
+                                      "devices", "directories", "include", "exclude", "exclude-from", "exclude-dir",
+                                      "label", "group-separator", "binary-files")))
+GREP = {"grep": GREP_VALUES, "egrep": GREP_VALUES,
+        "rg": ("ABCdEefgjMmrtT", frozenset((
+            "regexp", "file", "glob", "iglob", "type", "type-not", "type-add", "type-clear", "max-count",
+            "after-context", "before-context", "context", "max-columns", "max-depth", "threads", "replace", "encoding",
+            "sort", "sortr", "color", "colors", "context-separator", "field-context-separator",
+            "field-match-separator", "path-separator", "pre", "pre-glob", "max-filesize", "dfa-size-limit",
+            "regex-size-limit", "engine", "ignore-file", "hostname-bin", "hyperlink-format")))}
 
 _S1 = None
 _CM = None
@@ -124,12 +162,14 @@ def s1(cache=None):
 
 
 def codemap():
-    """scripts/codemap.py (L2a), imported once per process: its pack paths and its readers."""
+    """scripts/codemap.py (L2a), imported once per process: its pack paths and its readers. Its readers' safe opens
+    come from this process's System-1 module, never from a second import."""
     global _CM
     if _CM is None:
         spec = importlib.util.spec_from_file_location("filepacks_codemap", ROOT / "scripts" / "codemap.py")
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
+        mod._S1 = s1()
         _CM = mod
     return _CM
 
@@ -157,35 +197,64 @@ def _inside(path, base):
     return d == b or d.startswith(b + os.sep)
 
 
-def _args(code, cmd, start):
-    """The argument words (quotes removed) of the simple command whose command word ends at `start`, up to the next
-    separator of its shell code `code` (the words are read from `cmd`, at the same offsets); a redirection operator and
-    its target are not arguments."""
+def _dequote(text):
+    """One shell word with its quotes removed; None when it is not one word (an unmatched quote, an empty string)."""
+    if not any(c in text for c in "'\"\\"):
+        return text
     import shlex
-    m = SEP_RX.search(code, start)
-    out, skip = [], False
-    for w in NONSPACE_RX.finditer(code, start, m.start() if m else len(code)):
-        if skip:
-            skip = False
-            continue
-        r = REDIR_RX.match(w.group(0))
-        if r:
-            skip = r.end() == len(w.group(0))            # the operator alone: its target is the next word
-            continue
-        try:
-            parts = shlex.split(cmd[w.start():w.end()])
-        except ValueError:
-            continue
-        if len(parts) == 1:
-            out.append(parts[0])
-    return out
+    try:
+        parts = shlex.split(text)
+    except ValueError:
+        return None
+    return parts[0] if len(parts) == 1 else None
+
+
+class _Words:
+    """The words of one command line's shell code, split once (F3: the old scan re-read the rest of a simple command
+    from every command position in it): a word ends at whitespace, at a separator and at a nested script's closing
+    quote, which System-1's code text keeps (`bash -c ;cat a b'`: the last word is `b`, F5). Each word's text is read
+    from the command line at the same offsets and dequoted once."""
+
+    def __init__(self, code, cmd, closers):
+        bounds = sorted([(m.start(), m.end()) for m in SEP_RX.finditer(code)] + [(k, k + 1) for k in closers])
+        self.ends = [a for a, _ in bounds] + [len(code)]
+        self.toks, pos = [], 0
+        for a, b in bounds + [(len(code), len(code))]:
+            self.toks += [(t.start(), t.end()) for t in NONSPACE_RX.finditer(code, pos, a)]
+            pos = b
+        self.starts = [s for s, _ in self.toks]
+        self.code, self.cmd, self.memo = code, cmd, {}
+
+    def after(self, start):
+        """The argument words after offset `start` to the end of its simple command, at most WORDS_MAX read; a
+        redirection operator and its target are not arguments; None for a word that does not dequote to one."""
+        end = self.ends[bisect.bisect_left(self.ends, start)]
+        i = bisect.bisect_left(self.starts, start)
+        out, skip = [], False
+        for s, e in self.toks[i:i + WORDS_MAX]:
+            if s >= end:
+                break
+            if skip:
+                skip = False
+                continue
+            r = REDIR_RX.match(self.code, s, e)
+            if r:
+                skip = r.end() == e                          # the operator alone: its target is the next word
+                continue
+            if s not in self.memo:
+                self.memo[s] = _dequote(self.cmd[s:e])
+            out.append(self.memo[s])
+        return out
 
 
 def _cd(words, cwd):
-    """Where a `cd` with these arguments moves to; None when that is unknown (`cd -`, a variable)."""
+    """Where a `cd` with these arguments moves to; None when that is unknown (`cd -`, a variable, a word that does not
+    dequote)."""
     if words[:1] == ["-"]:
         return None
-    args = [w for w in words if not w.startswith("-")]
+    args = [w for w in words if w is None or not w.startswith("-")]
+    if args[:1] == [None]:
+        return None
     d = os.path.expanduser(args[0] if args else "~")
     if "$" in d or "`" in d:
         return None
@@ -196,27 +265,180 @@ def _cd(words, cwd):
     return os.path.normpath(d)
 
 
+def _shell(cmd, sys1):
+    """(code, remote): the command line's shell code, with every `ssh` and `pc.sh` word the System-1 parser reads as a
+    quote reader read as a plain word instead, so the quoted words and heredocs it hands to another host are data; and
+    the offsets of those words."""
+    code = sys1.shell_code(cmd)
+    if "ssh" not in cmd and "pc.sh" not in cmd:
+        return code, frozenset()
+    spans = [m.span() for m in REMOTE_RX.finditer(code)]
+    if not spans:
+        return code, frozenset()
+    chars = list(cmd)
+    for a, b in spans:
+        chars[a:b] = "_" * (b - a)
+    return sys1.shell_code("".join(chars)), frozenset(a for a, _ in spans)
+
+
+def _frames(code, cmd):
+    """(events, closers) of one command line's shell code, in one pass: (offset, "open", kind) where a subshell or a
+    `$(` ("sub"), a backtick ("bt") or a nested shell's script ("script", its opening quote, which System-1 writes as
+    ";") starts; (offset, "close") where it ends; (offset, "sep") at a separator; and the offsets of the scripts'
+    closing quotes, which System-1 keeps. Quoted data is skipped (its text is masked), a substitution inside double
+    quotes is not. A single-quoted script ends at the next quote, as System-1 reads it; a `)` with no `(` is ignored."""
+    events, closers, stack, squote, i, n = [], [], [], 0, 0, len(code)
+    while i < n:
+        m = STRUCT_RX.search(code, i)
+        if m is None:
+            break
+        j, c = m.start(), m.group(0)
+        i = j + 1
+        top = stack[-1] if stack else None
+        if c == "'" and squote:                          # a single-quoted script's end: whatever it left open ends too
+            while True:
+                f = stack.pop()
+                if f != "dq":
+                    events.append((j, "close"))
+                if f == "'":
+                    break
+            squote -= 1
+            closers.append(j)
+        elif top == "dq":                                # a double-quoted string: its end and its substitutions only
+            if c == '"':
+                stack.pop()
+            elif c in "(`":
+                stack.append("sub" if c == "(" else "bt")
+                events.append((j, "open", stack[-1]))
+        elif c == ";" and cmd[j] in "'\"":               # a nested shell's script opens
+            stack.append(cmd[j])
+            squote += cmd[j] == "'"
+            events.append((j, "open", "script"))
+        elif c == '"' and top == '"':                    # a double-quoted script closes
+            stack.pop()
+            closers.append(j)
+            events.append((j, "close"))
+        elif c == "'":                                   # single-quoted data: its text is masked, the next ' ends it
+            k = code.find("'", i)
+            i = n if k < 0 else k + 1
+        elif c == '"':
+            stack.append("dq")
+        elif c == "(":
+            stack.append("sub")
+            events.append((j, "open", "sub"))
+        elif c == ")":
+            if top == "sub":
+                stack.pop()
+                events.append((j, "close"))
+        elif c == "`":
+            if top == "bt":
+                stack.pop()
+                events.append((j, "close"))
+            else:
+                stack.append("bt")
+                events.append((j, "open", "bt"))
+        else:
+            events.append((j, "sep"))
+    return events, closers
+
+
+def _grep_files(tool, words):
+    """The files a grep, egrep or rg command names: its operands after the pattern (the first operand, unless -e or
+    -f gives the pattern), and a -f pattern file, which it reads; never an option's value."""
+    short, long_ = GREP[tool]
+    files, operands, given, i = [], [], False, 0
+    while i < len(words):
+        w = words[i]
+        i += 1
+        if w is None or w == "-" or not w.startswith("-"):
+            operands.append(w)
+        elif w == "--":
+            operands += words[i:]
+            break
+        elif w.startswith("--"):
+            name, eq, val = w[2:].partition("=")
+            given = given or name in ("regexp", "file")
+            if name in long_ and not eq:
+                val = words[i] if i < len(words) else None
+                i += 1
+            if name == "file":
+                files.append(val)
+        else:
+            for k, ch in enumerate(w[1:], 2):
+                if ch in short:
+                    given = given or ch in "ef"
+                    val = w[k:]
+                    if not val:
+                        val = words[i] if i < len(words) else None
+                        i += 1
+                    if ch == "f":
+                        files.append(val)
+                    break
+    return files + operands[0 if given else 1:]
+
+
 def bash_paths(cmd, cwd, root=ROOT):
     """The repo-relative paths a shell command line reads, in order: the arguments of each reader command word at a
     command position of its shell code (the System-1 parser: quoted text, heredoc bodies and comments are data, so
-    `echo "cat x"` and `git add x` name nothing). A `cd` at a command position moves the directory the later relative
-    arguments resolve against (a subshell's `cd` is not undone)."""
+    `echo "cat x"` and `git add x` name nothing), a grep's files after its pattern. `cd`, `pushd` and `popd` move the
+    directory the later relative arguments resolve against; a subshell, a substitution or a child shell's script
+    restores it when it ends (an `eval` script shares it). A command under `ssh` or `pc.sh` names nothing."""
     sys1 = s1()
-    code = sys1.shell_code(cmd)
-    out = []
-    for p in sys1.command_positions(code):
+    code, remote_at = _shell(cmd, sys1)
+    events, closers = _frames(code, cmd)
+    words = _Words(code, cmd, closers)
+    stack = [[True, None, None, None]]           # frames: [restores, cwd and dirs to restore, its command's word]
+    dirs = None                                  # the pushd stack, as (directory, rest) pairs
+    out, seen, rels, remote, k = [], set(), {}, 0, 0
+    for p in sys1.command_positions(code) + [len(code) + 1]:
+        while k < len(events) and events[k][0] < p:
+            ev = events[k]
+            k += 1
+            if ev[1] == "sep":
+                stack[-1][3] = None
+                if remote == len(stack):
+                    remote = 0                   # the command run on another host ends here
+            elif ev[1] == "open":
+                stack.append([ev[2] != "script" or stack[-1][3] != "eval", cwd, dirs, None])
+            else:
+                f = stack.pop()
+                if f[0]:
+                    cwd, dirs = f[1], f[2]
+                if remote > len(stack):
+                    remote = 0
+        if remote or p > len(code):
+            continue
         m = WORD_RX.match(code, p)
         word = m.group(0) if m else ""
-        if word != "cd" and word not in READERS:
+        stack[-1][3] = word
+        if p in remote_at:
+            remote = len(stack)                  # this simple command, frames inside it included, runs elsewhere
             continue
-        words = _args(code, cmd, m.end())
+        if word not in READERS and word not in ("cd", "pushd", "popd"):
+            continue
+        args = words.after(m.end())
         if word == "cd":
-            cwd = _cd(words, cwd)
-            continue
-        for w in words:
-            r = None if w.startswith("-") else repo_rel(w, cwd, root)
-            if r and r not in out:
-                out.append(r)
+            cwd = _cd(args, cwd)
+        elif word == "pushd":
+            dirs = (cwd, dirs)
+            cwd = _cd(args, cwd) if len(args) == 1 and args[0] and args[0][0] not in "+-" else None
+        elif word == "popd":
+            if args:
+                cwd = None                       # `popd +N`, `popd -n`: not followed
+            elif dirs:
+                cwd, dirs = dirs
+        else:
+            for w in (_grep_files(word, args) if word in GREP else args):
+                if w is None or w.startswith("-"):
+                    continue
+                if (w, cwd) not in rels:                 # one resolution per word and directory (F3)
+                    rels[w, cwd] = repo_rel(w, cwd, root)
+                r = rels[w, cwd]
+                if r and r not in seen:
+                    seen.add(r)
+                    out.append(r)
+                    if len(out) >= FILES_MAX:
+                        return out
     return out
 
 
@@ -235,13 +457,15 @@ def targets(tool, ti, cwd, root=ROOT):
 # ---------------------------------------------------------------- the reader
 
 class Packs:
-    """The packs one hook call or one replay reads: the tracked list and the build's SHA, each read once."""
+    """The packs one hook call or one replay reads: the tracked list, the blob ids and the build's SHA, each read
+    once."""
 
     def __init__(self, root=ROOT, state=None):
         self.root = Path(root)
         self.state = Path(state) if state else self.root / ".jev"
         self.dir = self.state / "filepacks"
         self._tracked = None
+        self._blobs = None
         self._commit = None
 
     def built(self):
@@ -255,6 +479,19 @@ class Packs:
 
     def tracked(self, rel):
         return self.built() and ("\n%s\n" % rel).encode("utf-8") in self._tracked
+
+    def blob(self, rel):
+        """The file's blob id at the build's commit (BLOBS.txt, an exact `\\n<path>\\t` match), or None: not a blob
+        there, or no BLOBS.txt yet (a build before it existed). A link or another kind of file raises."""
+        if self._blobs is None:
+            try:
+                self._blobs = s1().read_regular(str(self.dir / "BLOBS.txt"))
+            except FileNotFoundError:
+                self._blobs = b""
+        key = ("\n%s\t" % rel).encode("utf-8")
+        i = self._blobs.find(key)
+        j = self._blobs.find(b"\n", i + len(key)) if i >= 0 else -1
+        return self._blobs[i + len(key):j].decode("ascii", "replace") if j >= 0 else None
 
     def commit(self):
         if self._commit is None:
@@ -328,62 +565,76 @@ def _p2_lines(rel, packs):
     return out
 
 
-def _code_part(rel, ti, root):
-    """(status, text, symbol, stale) of the code map's entry for this touch; status None when the file has no code-map
-    pack. An Edit placed in one symbol gives that symbol's entry (a module-level one `<module>`); an Edit that cannot be
-    placed gives the file's entry. A Read with offset and limit gives the enclosing symbol's entry, or the symbols in
-    range when no one symbol holds the range. PackError when the pack exists and cannot be read."""
+def _code_part(rel, ti, packs):
+    """(status, text, symbol, stale, skip) of the code map's entry for this touch; status None when there is none, and
+    skip "blob" when the code-map pack does not describe the file's blob at the build's commit (VERIFY-K2 F1: the code
+    map builds from the working copy, so its pack can hold text no commit holds). The pack is read once, here, and
+    handed to the reader, so the pack checked is the pack shown. An Edit placed in one symbol gives that symbol's entry
+    (a module-level one `<module>`); an Edit that cannot be placed gives the file's entry. A Read with offset and limit
+    gives the enclosing symbol's entry, or the symbols in range when no one symbol holds the range. PackError when the
+    pack exists and cannot be used."""
     cm = codemap()
-    pack = cm.pack_path(root, rel)
+    root = packs.root
+    path = cm.pack_path(root, rel)
     try:
-        st = os.lstat(pack)
+        st = os.lstat(path)
     except FileNotFoundError:
-        return None, "", None, None
-    if not stat.S_ISREG(st.st_mode) or not _inside(pack, Path(root) / cm.PACK_DIR):
+        return None, "", None, None, None
+    if not stat.S_ISREG(st.st_mode) or not _inside(path, Path(root) / cm.PACK_DIR):
         raise PackError("link" if stat.S_ISLNK(st.st_mode) else "unreadable")
     try:
         wst = os.lstat(Path(root) / rel)
         if not stat.S_ISREG(wst.st_mode):
-            return None, "", None, None                  # a link, a FIFO: the code map never reads it
+            return None, "", None, None, None            # a link, a FIFO: the code map never reads it
     except FileNotFoundError:
         pass                                             # gone from the working tree: the code map says STALE
+    try:
+        pack = json.loads(s1().read_regular(str(path)).decode("utf-8"))
+    except FileNotFoundError:
+        raise PackError("gone") from None
+    except OSError:
+        raise PackError("unreadable") from None
+    except ValueError:
+        raise PackError("corrupt") from None
+    if not isinstance(pack, dict) or pack.get("schema") != cm.SCHEMA or not isinstance(pack.get("blob"), str):
+        raise PackError("corrupt")
+    if pack["blob"] != packs.blob(rel):
+        return None, "", None, None, "blob"
 
     def use(r):
-        if r["status"] == "miss":
-            raise PackError("corrupt" if os.path.lexists(pack) else "gone")
-        if r["status"] == "out-of-scope":
-            return None, "", None, None
-        return r["status"], r["text"], None, r.get("stale")
+        if r["status"] in ("out-of-scope", "miss"):
+            return None, "", None, None, None
+        return r["status"], r["text"], None, r.get("stale"), None
 
     old = ti.get("old_string")
     if isinstance(old, str) and old:
-        r = cm.edit_context(str(Path(root) / rel), old, root=root, replace_all=ti.get("replace_all") is True)
+        r = cm.edit_context(str(Path(root) / rel), old, root=root, replace_all=ti.get("replace_all") is True,
+                            pack=pack)
         if r["status"] in ("hit", "module"):
             sym = r["symbol"]["qualname"] if r["status"] == "hit" else "<module>"
-            return r["status"], r["text"], sym, r["stale"]
-        if r["status"] == "miss" and r.get("ranges"):    # placed, and its pack did not load
-            return use(r)
-        return use(cm.file_entry(rel, root=root))       # not placed: the file's own entry
+            return r["status"], r["text"], sym, r["stale"], None
+        return use(cm.file_entry(rel, root=root, pack=pack))     # not placed: the file's own entry
     off, lim = ti.get("offset"), ti.get("limit")
     if type(off) is int and type(lim) is int and off >= 0 and lim >= 1:
         lo = max(off, 1)
-        r = cm.lookup(rel, lo, lo + lim - 1, root=root)
+        r = cm.lookup(rel, lo, lo + lim - 1, root=root, pack=pack)
         if r["status"] == "module":                    # no one symbol holds the range: the symbols in it
-            r = cm.file_entry(rel, lo, lo + lim - 1, root=root)
+            r = cm.file_entry(rel, lo, lo + lim - 1, root=root, pack=pack)
         return use(r)
-    return use(cm.file_entry(rel, root=root))
+    return use(cm.file_entry(rel, root=root, pack=pack))
 
 
 def entry(rel, tool_input, budget=PACK_BUDGET, *, packs=None, p2=True):
     """What the hook injects for one touch of the tracked file `rel`: the code part (see _code_part), then the pack's
     lines (unless `p2` is false), cut at a line boundary within `budget` bytes. A stale code part is never shown without
     its STALE mark: when the mark does not fit, nothing is. Returns {text, symbol (an Edit's), code (the code part's
-    status or None), stale, lines, cut, error (why nothing: link, unreadable, corrupt or gone)}."""
+    status or None), stale, skip (blob: the code part left out, F1), lines, cut, error (why nothing: link, unreadable,
+    corrupt or gone)}."""
     packs = packs or Packs()
     ti = tool_input if isinstance(tool_input, dict) else {}
-    res = {"text": "", "symbol": None, "code": None, "stale": None, "lines": 0, "cut": 0, "error": None}
+    res = {"text": "", "symbol": None, "code": None, "stale": None, "skip": None, "lines": 0, "cut": 0, "error": None}
     try:
-        status, text, sym, stale = _code_part(rel, ti, packs.root)
+        status, text, sym, stale, skip = _code_part(rel, ti, packs)
         lines = text.split("\n") if text else []
         lines += _p2_lines(rel, packs) if p2 else []
     except PackError as e:
@@ -397,7 +648,7 @@ def entry(rel, tool_input, budget=PACK_BUDGET, *, packs=None, p2=True):
         used += cost
     if stale and not any(STALE_MARK in ln for ln in kept):
         kept = []                                        # a stale code part never passes as fresh
-    return dict(res, text="\n".join(kept), symbol=sym, code=status, stale=stale, lines=len(kept),
+    return dict(res, text="\n".join(kept), symbol=sym, code=status, stale=stale, skip=skip, lines=len(kept),
                 cut=len(lines) - len(kept))
 
 
@@ -443,7 +694,7 @@ def plan(payload, rels, seen, packs, budget=PACK_BUDGET, timings=None):
             rec["skipped"].append({"key": key, "why": "duplicate"})
             continue
         if not e["text"]:
-            rec["skipped"].append({"key": key, "why": "budget" if e["cut"] else "no-pack"})
+            rec["skipped"].append({"key": key, "why": "budget" if e["cut"] else e["skip"] or "no-pack"})
             continue
         keys = [key] + ([fkey] if fkey != key and fkey not in taken else [])
         files += fkey not in taken
@@ -456,6 +707,8 @@ def plan(payload, rels, seen, packs, budget=PACK_BUDGET, timings=None):
             inj["cut"] = e["cut"]
         if e["stale"]:
             inj["stale"] = True
+        if e["skip"]:
+            inj["code_skip"] = e["skip"]
         rec["injected"].append(inj)
     text = "\n".join(blocks)
     rec["bytes"] = len(text.encode("utf-8")) if text else 0
@@ -526,7 +779,7 @@ def hook(argv, state):
             packs = Packs(ROOT, state)
             rels = touched(payload, packs)
             if not rels:
-                return 0                                 # no tracked file, or no build yet: nothing decided or created
+                return 0                                 # no tracked file, or no build yet: no log line, no marker
             wid = sys1.window_id(payload)
             marker = str(state / "filepacks-seen" / (wid + ".json"))
             with sys1.WindowLock(marker):
@@ -666,7 +919,7 @@ def _clean(pdir, keep):
         for name in filenames + [d for d in dirnames if os.path.islink(os.path.join(dirpath, d))]:
             full = os.path.join(dirpath, name)
             link = os.path.islink(full)
-            if top and name in ("BUILD.json", "TRACKED.txt") and not link:
+            if top and name in ("BUILD.json", "TRACKED.txt", "BLOBS.txt") and not link:
                 continue
             rel = os.path.relpath(full, pdir)
             if link or not name.endswith(".json") or rel[:-5] not in keep:
@@ -704,8 +957,15 @@ def _build(root, state, sha, t0):
         sha = _git(root, "rev-parse", "--verify", "HEAD^{commit}").decode("ascii").strip()
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("not a full commit id: %r" % sha[:80])
-    tracked = [p for p in _git(root, "ls-tree", "-r", "-z", "--name-only", sha).decode("utf-8", "replace").split("\0")
-               if p and "\n" not in p]
+    tracked, blobs = [], []                              # one ls-tree: the paths and each blob id
+    for item in _git(root, "ls-tree", "-r", "-z", sha).decode("utf-8", "replace").split("\0"):
+        meta, tab, p = item.partition("\t")                # "<mode> <type> <object>\t<path>"
+        if not tab or not p or "\n" in p:
+            continue
+        tracked.append(p)
+        kind, obj = (meta.split(" ") + ["", ""])[1:3]
+        if kind == "blob" and "\t" not in p:
+            blobs.append("%s\t%s" % (p, obj))
     tset = set(tracked)
     line_sources = list(LINE_SOURCES) + [("skill:" + s, ".claude/skills/%s/SKILL.md" % s) for s in SKILLS]
     briefs = sorted(p for p in tracked if p.startswith(BRIEFS) and p.endswith(".md"))
@@ -774,6 +1034,7 @@ def _build(root, state, sha, t0):
             written += 1
         except OSError:
             failed += 1                                  # a path the pack tree cannot hold: that file goes without
+    _write(str(pdir / "BLOBS.txt"), ("\n" + "\n".join(blobs) + "\n").encode("utf-8"))
     _write(str(pdir / "TRACKED.txt"), ("\n" + "\n".join(tracked) + "\n").encode("utf-8"))
     rec = {"schema": SCHEMA, "commit": sha, "tracked": len(tracked), "files": len(packs), "written": written,
            "removed": removed, "failed": failed, "missing": missing, "ms": round((time.monotonic() - t0) * 1000)}

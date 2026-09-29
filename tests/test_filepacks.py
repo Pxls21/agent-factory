@@ -15,6 +15,13 @@ kill). A mutant must fail the same check with the named failure. The code-map pa
 codemap.py's format, its symbols from the file's own AST as the real builder's are (tests/test_codemap.py
 check_pack_fields holds them equal); test_the_planted_code_pack_has_the_real_builders_fields compares its fields with a
 pack the real codemap builder writes. Deterministic and LLM-free.
+
+Round 2 (VERIFY-K2): F1, a file untracked since the last build whose code pack was rebuilt from the working copy with a
+canary, runs three ways: with no build after the untracking commit (check untracked-since-build), with the post-commit
+patch applied to the real hook by `git apply` (its build alone keeps the file out), and with the REAL L2a refresh
+building the pack after a graft re-index (the verifier's probe_p6.py; skipped loudly where graft is absent). The
+verifier's seventeen F14 checks are here under their names, and the parser's F3, F4 and F5 shapes (the wrong files, the
+nested scripts, the remote commands, a 3,000-pair command's time). `run` kills a stalled hook and fails as a stall.
 """
 import ast
 import fcntl
@@ -25,6 +32,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -209,10 +217,19 @@ def build(repo, st):
     return r.stdout
 
 
-def run(repo, st, data, cmd=REG_PRE, timeout=60):
+def run(repo, st, data, cmd=REG_PRE, timeout=60, env=None):
+    """The hook through a shell, as the harness runs it. A run past `timeout` is killed with its process group and
+    fails as a stall (the verifier's bound, VERIFY-K2 F2), never as a hung test."""
     data = data if isinstance(data, bytes) else json.dumps(data).encode()
-    return subprocess.run(["sh", "-c", cmd], input=data, capture_output=True, timeout=timeout, env=env_for(repo, st),
-                          cwd="/")
+    p = subprocess.Popen(["sh", "-c", cmd], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         env=env or env_for(repo, st), cwd="/", start_new_session=True)
+    try:
+        out, err = p.communicate(data, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        p.communicate()
+        raise AssertionError("the hook stalled past %d s" % timeout) from None
+    return subprocess.CompletedProcess(p.args, p.returncode, out, err)
 
 
 def context(r):
@@ -695,6 +712,272 @@ def check_replay(repo, st, ids, tmp):
     assert all(rx.fullmatch(x) for x in out) and len(out) == 5, "the replay printed more than counts: %s" % out
 
 
+# ---------- round 2: VERIFY-K2 F1 (a stale boundary), F2 (a FIFO), F3 (a linear parse), F4 and F5 (the right file) ----
+
+def heads(ctx):
+    """The files whose pack lines an injected text holds, in order."""
+    return [x.split(" @")[0][len("filepack "):] for x in ctx.split("\n") if x.startswith("filepack ")]
+
+
+def untrack_with_a_canary(repo, st, build_first=True):
+    """The verifier's P6 (VERIFY-K2 F1): a build lists scripts/gamma.py; a later commit untracks it, the file stays on
+    disk and no build follows; a canary goes into the file, and its code pack is rebuilt from the working copy (in
+    codemap.py's format, the symbols from the file's AST, as the L2a refresh builds a pack). Returns the canary."""
+    if build_first:
+        build(repo, st)
+    git(repo, "rm", "-q", "--cached", "scripts/gamma.py", k=9)
+    git(repo, "commit", "-q", "-m", "gamma untracked", k=9)
+    canary = "cnry" + secrets.token_hex(6)
+    (repo / "scripts" / "gamma.py").write_text('def leak_%s(token="%s-arg"):\n    return token\n' % (canary, canary),
+                                                encoding="utf-8")
+    plant_code_pack(repo, "scripts/gamma.py", git(repo, "rev-parse", "HEAD").strip())
+    return canary
+
+
+def gamma_probes(repo, sid):
+    return [edit(repo, "scripts/gamma.py", "    return token", sid=sid + "e"), read(repo, "scripts/gamma.py", sid=sid + "r"),
+            bash(repo, "cat scripts/gamma.py", sid=sid + "b")]
+
+
+def check_untracked_since_build(repo, st, ids, tmp):
+    canary = untrack_with_a_canary(repo, st)
+    assert "\nscripts/gamma.py\n" in (st / "filepacks" / "TRACKED.txt").read_text(), "not F1's stale boundary"
+    assert canary in (repo / ".jev" / "codemap" / "scripts" / "gamma.py.json").read_text(), "no canary in the pack"
+    for p in gamma_probes(repo, "p6"):
+        ctx = context(run(repo, st, p))
+        assert canary not in ctx and canary[4:] not in ctx, "the untracked file's text reached the model"
+        assert heads(ctx) == ["scripts/gamma.py"] and ctx.startswith("filepack scripts/gamma.py @"), \
+            "the pack's lines were not shown alone: %r" % ctx[:80]
+        assert records(st)[-1]["injected"][0].get("code_skip") == "blob", records(st)[-1]["injected"]
+
+
+def check_blobs_exact_path(repo, st, ids, tmp):
+    """A code part is checked against its own file's blob: another tracked file whose path ends with this one's (and
+    sorts before it in BLOBS.txt) is never read in its place."""
+    commit(repo, {"harness-ports/scripts/alpha.py": "def other():\n    return 0\n"}, "a path ending like alpha's", 9)
+    build(repo, st)
+    blobs = (st / "filepacks" / "BLOBS.txt").read_text()
+    tree = [(x.split("\t", 1)[1], x.split()[2]) for x in git(repo, "ls-tree", "-r", "HEAD").splitlines()]
+    assert blobs == "\n" + "".join("%s\t%s\n" % t for t in tree), "BLOBS.txt is not git's blob ids at the build"
+    lines = blobs.split("\n")
+    assert lines.index("harness-ports/scripts/alpha.py\t" + git(repo, "rev-parse", "HEAD:harness-ports/scripts/alpha.py"
+                                                                ).strip()) < lines.index(
+        "scripts/alpha.py\t" + git(repo, "rev-parse", "HEAD:scripts/alpha.py").strip()), "BLOBS.txt is not as built"
+    ctx = context(run(repo, st, read(repo, "scripts/alpha.py")))
+    assert ctx.startswith("codemap scripts/alpha.py — "), "a code pack was checked against another file's blob: %r" % (
+        ctx[:80])
+
+
+def check_fifo_working_file(repo, st, ids, tmp):
+    plant_code_pack(repo, "scripts/beta.py", ids["fourth"])
+    build(repo, st)
+    os.unlink(repo / "scripts" / "beta.py")
+    os.mkfifo(repo / "scripts" / "beta.py")
+    t0 = time.monotonic()
+    ctx = context(run(repo, st, read(repo, "scripts/beta.py"), timeout=15))
+    assert time.monotonic() - t0 < 10 and ctx.startswith("filepack scripts/beta.py @"), "a FIFO working file: %r" % (
+        ctx[:80])
+
+
+def check_code_pack_parent_link(repo, st, ids, tmp):
+    build(repo, st)
+    cmd, away = repo / ".jev" / "codemap" / "scripts", tmp / "away-cm"
+    shutil.copytree(cmd, away)
+    shutil.rmtree(cmd)
+    cmd.symlink_to(away)
+    assert context(run(repo, st, read(repo, "scripts/alpha.py"))) == "", "a code pack under a linked directory was read"
+
+
+def check_pack_path_field(repo, st, ids, tmp):
+    build(repo, st)
+    note = st / "filepacks" / "docs" / "NOTE.md.json"
+    note.write_text(json.dumps(dict(json.loads(note.read_text()), path="scripts/beta.py")))
+    assert context(run(repo, st, read(repo, "docs/NOTE.md", sid="pf"))) == "", "a pack naming another file was read"
+
+
+def check_pack_schema(repo, st, ids, tmp):
+    build(repo, st)
+    note = st / "filepacks" / "docs" / "NOTE.md.json"
+    note.write_text(json.dumps(dict(json.loads(note.read_text()), schema=2)))
+    assert context(run(repo, st, read(repo, "docs/NOTE.md", sid="ps"))) == "", "a pack of another schema was read"
+
+
+def check_root_untracked_suffix(repo, st, ids, tmp):
+    build(repo, st)
+    (repo / "alpha.py").write_text("def u():\n    return 1\n")
+    (st / "filepacks" / "alpha.py.json").write_text(json.dumps(dict(pack(st, "scripts/beta.py"), path="alpha.py")))
+    assert context(run(repo, st, read(repo, "alpha.py", sid="rs"))) == "", \
+        "an untracked root file matched a tracked path's tail"
+
+
+def check_window_max_two(repo, st, ids, tmp):
+    build(repo, st)
+    seen = st / "filepacks-seen"
+    seen.mkdir(parents=True, exist_ok=True)
+    (seen / "w63b.main.json").write_text(json.dumps({"keys": ["file:x%d" % i for i in range(63)]}))
+    ctx = context(run(repo, st, bash(repo, "cat docs/NOTE.md scripts/beta.py", sid="w63b")))
+    assert len(heads(ctx)) == 1, "a window at 63 files took two more in one call"
+
+
+def check_cd_variable_dotdot(repo, st, ids, tmp):
+    build(repo, st)
+    assert context(run(repo, st, bash(repo, "cd $NOWHERE/.. && cat scripts/alpha.py", sid="cv"))) == "", \
+        "a cd through an unset variable was followed"
+
+
+def check_tilde(repo, st, ids, tmp):
+    build(repo, st)
+    env = dict(env_for(repo, st), HOME=str(repo.parent))
+    assert "filepack docs/NOTE.md @" in context(run(repo, st, bash(repo, "cat ~/%s/docs/NOTE.md" % repo.name, sid="tl"),
+                                                    env=env)), "a ~/ path was not expanded"
+
+
+def check_replace_all(repo, st, ids, tmp):
+    commit(repo, {"scripts/delta.py": "def twice():\n    x = 1\n    x = 1\n    return x\n"}, "delta", 9)
+    plant_code_pack(repo, "scripts/delta.py", git(repo, "rev-parse", "HEAD").strip())
+    build(repo, st)
+    p = payload(repo, "Edit", {"file_path": "%s/scripts/delta.py" % repo, "old_string": "    x = 1\n", "new_string": "y",
+                               "replace_all": True}, sid="ra")
+    assert "function twice" in context(run(repo, st, p)), "a replace_all Edit was not placed in its symbol"
+
+
+def check_offset_zero(repo, st, ids, tmp):
+    build(repo, st)
+    ctx = context(run(repo, st, read(repo, "scripts/alpha.py", sid="oz", offset=0, limit=5)))
+    assert ctx.startswith("codemap scripts/alpha.py:1-5"), "a Read at offset 0 lost its entry: %r" % ctx[:60]
+
+
+def check_log_rotation(repo, st, ids, tmp):
+    build(repo, st)
+    (st / "filepacks.jsonl").write_bytes(b"x" * 4_000_001)
+    context(run(repo, st, read(repo, "docs/NOTE.md", sid="lr")))
+    assert (st / "filepacks.jsonl.1").exists() and (st / "filepacks.jsonl").stat().st_size < 4_000_000, \
+        "the log did not rotate"
+
+
+def check_long_subject(repo, st, ids, tmp):
+    commit(repo, {"scripts/gamma.py": "def gamma():\n    return 4\n"}, "S" * 300, 9)
+    build(repo, st)
+    subj = [m["subject"] for m in pack(st, "scripts/gamma.py")["mentions"] if m["source"] == "commit"][0]
+    assert len(subj) == 240 and subj.endswith("…"), "a commit subject was not cut at 240 characters"
+
+
+def check_age_prune(repo, st, ids, tmp):
+    build(repo, st)
+    context(run(repo, st, read(repo, "docs/NOTE.md", sid="old-session")))
+    m = st / "filepacks-seen" / "old-session.main.json"
+    old = time.time() - 8 * 86400
+    os.utime(m, (old, old))
+    run(repo, st, start("startup"), cmd=REG_RESET)
+    assert not m.exists(), "a marker idle 8 days was not pruned"
+
+
+def check_reset_no_state(repo, st, ids, tmp):
+    r = run(repo, st, start("compact"), cmd=REG_RESET)
+    assert r.returncode == 0 and not st.exists(), "a reset with no state created one"
+
+
+def check_event_check(repo, st, ids, tmp):
+    build(repo, st)
+    p = dict(read(repo, "docs/NOTE.md", sid="ev"), hook_event_name="PostToolUse")
+    assert context(run(repo, st, p)) == "", "a PostToolUse payload injected"
+
+
+def check_dot_slash(repo, st, ids, tmp):
+    led = (repo / LEDGER).read_text()
+    commit(repo, {LEDGER: led + "a line naming ./scripts/gamma.py only\n"}, "dot slash", 9)
+    build(repo, st)
+    assert pack(st, "scripts/gamma.py")["counts"].get("ledger") == 1, "a ./ mention was not counted"
+
+
+def check_nul_newline(repo, st, ids, tmp):
+    build(repo, st)
+    n = len(records(st))
+    p = payload(repo, "Read", {"file_path": "%s/docs/NOTE.md\nscripts/alpha.py" % repo}, sid="nl")
+    assert context(run(repo, st, p)) == "" and len(records(st)) == n, "a path holding a newline was taken as tracked"
+
+
+def same_name_pair(repo, st):
+    """README.md and deploy/README.md, both tracked, both with a pack (the verifier's wrong-file oracle, F4)."""
+    commit(repo, {"README.md": "# root readme\n", "deploy/README.md": "# deploy readme\n"}, "a same-name pair", 9)
+    build(repo, st)
+
+
+def bash_heads(repo, st, cmd, sid):
+    return heads(context(run(repo, st, bash(repo, cmd, sid=sid))))
+
+
+def check_cd_scope(repo, st, ids, tmp):
+    same_name_pair(repo, st)
+    for k, cmd in enumerate(["(cd deploy && true); cat README.md", "(cd deploy) && cat README.md",
+                             "echo $(cd deploy && pwd); cat README.md", "x=$(cd deploy); cat README.md",
+                             "echo `cd deploy`; cat README.md"]):
+        got = bash_heads(repo, st, cmd, "cs%d" % k)
+        assert got == ["README.md"], "a cd inside ( ) or $( ) leaked out: %r gave %s" % (cmd, got)
+    got = bash_heads(repo, st, "true && (cd scripts && cat alpha.py) && cat README.md", "cs-a")
+    assert got == ["scripts/alpha.py", "README.md"], "a cd inside ( ) or $( ) leaked out: %s" % got
+    assert bash_heads(repo, st, "(cd deploy && cat README.md)", "cs-in") == ["deploy/README.md"], \
+        "the control: a cd holds inside its ( )"
+
+
+def check_pushd_popd(repo, st, ids, tmp):
+    same_name_pair(repo, st)
+    got = bash_heads(repo, st, "pushd deploy >/dev/null && cat README.md", "pu")
+    assert got == ["deploy/README.md"], "pushd was not followed: %s" % got
+    got = bash_heads(repo, st, "pushd deploy >/dev/null && popd >/dev/null && cat README.md", "po")
+    assert got == ["README.md"], "popd was not followed: %s" % got
+
+
+def check_grep_pattern(repo, st, ids, tmp):
+    build(repo, st)
+    for k, cmd in enumerate(["grep scripts/beta.py docs/NOTE.md", "grep -e scripts/beta.py docs/NOTE.md",
+                             "egrep -n scripts/beta.py docs/NOTE.md", "rg -g '*.md' scripts/beta.py docs/NOTE.md",
+                             "grep --regexp=scripts/beta.py docs/NOTE.md", "grep -m 1 scripts/beta.py docs/NOTE.md"]):
+        got = bash_heads(repo, st, cmd, "gp%d" % k)
+        assert got == ["docs/NOTE.md"], "a grep pattern was taken as a file: %r gave %s" % (cmd, got)
+    got = bash_heads(repo, st, "grep -f scripts/beta.py docs/NOTE.md", "gf")
+    assert got == ["scripts/beta.py", "docs/NOTE.md"], "a grep -f pattern file was missed: %s" % got
+
+
+def check_nested_script(repo, st, ids, tmp):
+    same_name_pair(repo, st)
+    for k, (cmd, want) in enumerate([("bash -c 'cat scripts/beta.py'", ["scripts/beta.py"]),
+                                     ('sh -c "cat scripts/beta.py"', ["scripts/beta.py"]),
+                                     ("bash -c 'cat scripts/beta.py scripts/gamma.py'",
+                                      ["scripts/beta.py", "scripts/gamma.py"]),
+                                     ("eval 'cat scripts/gamma.py'", ["scripts/gamma.py"])]):
+        got = bash_heads(repo, st, cmd, "ns%d" % k)
+        assert got == want, "a nested shell's script was not read: %r gave %s" % (cmd, got)
+    got = bash_heads(repo, st, "bash -c 'cd deploy && cat README.md'; cat README.md", "nc")
+    assert got == ["deploy/README.md", "README.md"], "a child shell's cd leaked out: %s" % got
+    got = bash_heads(repo, st, "eval 'cd deploy'; cat README.md", "ne")
+    assert got == ["deploy/README.md"], "an eval script's cd was not kept: %s" % got
+
+
+def check_remote(repo, st, ids, tmp):
+    build(repo, st)
+    for k, cmd in enumerate(["ssh pc 'cat scripts/beta.py'", 'ssh -p 22 pc "cat scripts/beta.py docs/NOTE.md"',
+                             "scripts/pc.sh 'cat scripts/beta.py'", 'bash scripts/pc.sh "cat scripts/beta.py"',
+                             "ssh pc <<'EOF'\ncat scripts/beta.py\nEOF"]):
+        assert bash_heads(repo, st, cmd, "rm%d" % k) == [], "a command run on another host injected: %r" % cmd
+    for k, cmd in enumerate(["ssh pc time cat scripts/beta.py", "ssh pc bash -c 'cat scripts/beta.py'"]):
+        assert bash_heads(repo, st, cmd, "rx%d" % k) == [], "a command under ssh injected: %r" % cmd
+    got = bash_heads(repo, st, "ssh pc 'cat scripts/beta.py' && cat docs/NOTE.md", "rc")
+    assert got == ["docs/NOTE.md"], "the control: a local read after a remote command: %s" % got
+
+
+def check_linear_parse(repo, st, ids, tmp):
+    """F3: 3,000 `time cat` pairs through the wrapper (the verifier's: the 55 s cap). The bound, 3 s, is about ten
+    times the measured time and a third of the uncapped scan's."""
+    build(repo, st)
+    cmd = "echo " + "time cat " * 3000 + "docs/NOTE.md"
+    t0 = time.monotonic()
+    ctx = context(run(repo, st, bash(repo, cmd, sid="lin"), timeout=120))
+    took = time.monotonic() - t0
+    assert took < 3, "the parse is not linear: 3,000 time-cat pairs took %.1f s" % took
+    assert heads(ctx) == ["docs/NOTE.md"], "the control: the reader's file was read: %s" % heads(ctx)
+
+
 CHECKS = {"edit-once-per-symbol": check_edit_once_per_symbol, "read-range": check_read_range,
           "bash-readers": check_bash_readers, "reset": check_reset, "doc-pack-lines": check_doc_pack_lines,
           "build-lines": check_build_lines, "build-briefs-commits": check_build_briefs_commits,
@@ -705,7 +988,18 @@ CHECKS = {"edit-once-per-symbol": check_edit_once_per_symbol, "read-range": chec
           "untracked": check_untracked, "outside-root": check_outside_root, "links": check_links,
           "data-words": check_data_words, "call-and-window-max": check_call_and_window_max,
           "kill-switch": check_kill_switch, "no-input-in-state": check_no_input_in_state,
-          "no-pyc-in-claude": check_no_pyc_in_claude, "replay": check_replay}
+          "no-pyc-in-claude": check_no_pyc_in_claude, "replay": check_replay,
+          # round 2 (VERIFY-K2): F1, the verifier's seventeen (F14), F3, F4 and F5
+          "untracked-since-build": check_untracked_since_build, "blobs-exact-path": check_blobs_exact_path,
+          "fifo-working-file": check_fifo_working_file, "code-pack-parent-link": check_code_pack_parent_link,
+          "pack-path-field": check_pack_path_field, "pack-schema": check_pack_schema,
+          "root-untracked-suffix": check_root_untracked_suffix, "window-max-two": check_window_max_two,
+          "cd-variable-dotdot": check_cd_variable_dotdot, "tilde": check_tilde, "replace-all": check_replace_all,
+          "offset-zero": check_offset_zero, "log-rotation": check_log_rotation, "long-subject": check_long_subject,
+          "age-prune": check_age_prune, "reset-no-state": check_reset_no_state, "event-check": check_event_check,
+          "dot-slash": check_dot_slash, "nul-newline": check_nul_newline, "cd-scope": check_cd_scope,
+          "pushd-popd": check_pushd_popd, "grep-pattern": check_grep_pattern, "nested-script": check_nested_script,
+          "remote": check_remote, "linear-parse": check_linear_parse}
 # one mutation per property: (the check it must fail, old text, new text, the failure it must fail with)
 MUTANTS = {
     "edit-key-per-file": ("edit-once-per-symbol",
@@ -717,7 +1011,7 @@ MUTANTS = {
                       "a Read range did not show the symbols in range"),
     "no-sed": ("bash-readers", '"cat", "head", "tail", "sed", ', '"cat", "head", "tail", ',
                "sed -n 1,40p did not inject the file"),
-    "no-cd": ("bash-readers", "            cwd = _cd(words, cwd)\n", "            pass\n", "a cd was not followed"),
+    "no-cd": ("bash-readers", "            cwd = _cd(args, cwd)\n", "            pass\n", "a cd was not followed"),
     "reset-noop": ("reset", "            if hit or now - os.lstat(path).st_mtime > sys1.MARKER_MAX_AGE_S:",
                    "            if False:", "a compact reset did not re-arm the window"),
     "doc-without-pack-lines": ("doc-pack-lines", "e = entry(rel, ti, budget, packs=packs, p2=fkey not in taken)",
@@ -764,8 +1058,9 @@ MUTANTS = {
     "stale-word-only": ("older-p2-stale-code", "if stale and not any(STALE_MARK in ln for ln in kept):",
                         'if stale and not any("STALE" in ln for ln in kept):',
                         "a stale code part went out without its STALE mark (the word in a symbol's name)"),
-    "corrupt-code-pack-ignored": ("corrupt", 'raise PackError("corrupt" if os.path.lexists(pack) else "gone")',
-                                  'return None, "", None, None', "a corrupt code pack still gave the file's entry"),
+    "corrupt-code-pack-ignored": ("corrupt", '        raise PackError("corrupt") from None\n    if not isinstance(pack, dict)',
+                                  '        return None, "", None, None, None\n    if not isinstance(pack, dict)',
+                                  "a corrupt code pack still gave the file's entry"),
     "corrupt-as-no-pack": ("corrupt", "        return dict(res, error=e.why)", "        return dict(res, error=None)",
                            "a corrupt pack was not logged as corrupt"),
     "state-created": ("missing-state", 'sys1 = s1(state / "pycache" if state.is_dir() else None)',
@@ -795,6 +1090,69 @@ MUTANTS = {
                         "a bytecode cache was written under .claude"),
     "sidechain-counted": ("replay", 'if rec.get("type") != "assistant" or rec.get("isSidechain") or',
                           'if rec.get("type") != "assistant" or', "the replay counted a subagent's call"),
+    # round 2: F1
+    "no-blob-check": ("untracked-since-build", 'if pack["blob"] != packs.blob(rel):', "if False:",
+                      "the untracked file's text reached the model"),
+    "blobs-suffix-match": ("blobs-exact-path", 'key = ("\\n%s\\t" % rel).encode("utf-8")',
+                           'key = ("%s\\t" % rel).encode("utf-8")', "a code pack was checked against another file's blob"),
+    # round 2: the verifier's seventeen (VERIFY-K2 F14), each anchored on this file's text
+    "fifo-working-file-read": ("fifo-working-file", "        if not stat.S_ISREG(wst.st_mode):\n            return None",
+                               "        if False:\n            return None", "a FIFO working file"),
+    "code-pack-parent-link-followed": ("code-pack-parent-link",
+                                       "if not stat.S_ISREG(st.st_mode) or not _inside(path, Path(root) / cm.PACK_DIR):",
+                                       "if not stat.S_ISREG(st.st_mode):", "a code pack under a linked directory was read"),
+    "path-field-unchecked": ("pack-path-field", ' or pack.get("path") != rel:', ":", "a pack naming another file was read"),
+    "schema-unchecked": ("pack-schema", 'pack.get("schema") != SCHEMA or ', "", "a pack of another schema was read"),
+    "tracked-suffix-match": ("root-untracked-suffix", '("\\n%s\\n" % rel)', '("%s\\n" % rel)',
+                             "an untracked root file matched a tracked path's tail"),
+    "window-count-not-incremented": ("window-max-two", "        files += fkey not in taken\n", "",
+                                     "a window at 63 files took two more in one call"),
+    "cd-variable-followed": ("cd-variable-dotdot", '    if "$" in d or "`" in d:\n        return None\n', "",
+                             "a cd through an unset variable was followed"),
+    "tilde-not-expanded": ("tilde", '    if path.startswith("~/"):\n        path = os.path.expanduser(path)\n', "",
+                           "a ~/ path was not expanded"),
+    "replace-all-ignored": ("replace-all", 'replace_all=ti.get("replace_all") is True', "replace_all=False",
+                            "a replace_all Edit was not placed in its symbol"),
+    "offset-zero-not-clamped": ("offset-zero", "        lo = max(off, 1)\n", "        lo = off\n",
+                                "a Read at offset 0 lost its entry"),
+    "log-no-rotation": ("log-rotation", "            if os.path.getsize(path) > sys1.LOG_MAX_BYTES:", "            if False:",
+                        "the log did not rotate"),
+    "commit-subject-uncut": ("long-subject", '"subject": _cut(subj, SNIPPET)', '"subject": subj',
+                             "a commit subject was not cut at 240 characters"),
+    "no-age-prune": ("age-prune", "if hit or now - os.lstat(path).st_mtime > sys1.MARKER_MAX_AGE_S:", "if hit:",
+                     "a marker idle 8 days was not pruned"),
+    "reset-without-state-check": ("reset-no-state", "            if not state.is_dir():\n                return 0",
+                                  "            if False:\n                return 0", "a reset with no state created one"),
+    "no-event-check": ("event-check", 'elif payload.get("hook_event_name") == "PreToolUse":', "elif True:",
+                       "a PostToolUse payload injected"),
+    "dot-slash-ignored": ("dot-slash", '        elif t.startswith("./"):', "        elif False:",
+                          "a ./ mention was not counted"),
+    "no-nul-newline-guard": ("nul-newline", ' or "\\0" in path or "\\n" in path or ', " or ",
+                             "a path holding a newline was taken as tracked"),
+    # round 2: F4 and F5 (the right file) and F3 (a linear parse)
+    "cd-scope-leaks": ("cd-scope", "                if f[0]:\n                    cwd, dirs = f[1], f[2]\n",
+                       "                pass\n", "a cd inside ( ) or $( ) leaked out"),
+    "no-pushd": ("pushd-popd", '            cwd = _cd(args, cwd) if len(args) == 1 and args[0] and args[0][0] not in "+-" '
+                 'else None\n', "            pass\n", "pushd was not followed"),
+    "no-popd": ("pushd-popd", "            elif dirs:\n                cwd, dirs = dirs\n",
+                "            elif dirs:\n                pass\n", "popd was not followed"),
+    "grep-pattern-as-file": ("grep-pattern", "return files + operands[0 if given else 1:]", "return files + operands",
+                             "a grep pattern was taken as a file"),
+    "grep-f-file-missed": ("grep-pattern", '                    if ch == "f":\n                        files.append(val)\n',
+                           '                    if ch == "f":\n                        pass\n',
+                           "a grep -f pattern file was missed"),
+    "no-quote-strip": ("nested-script", " + [(k, k + 1) for k in closers])", ")",
+                       "a nested shell's script was not read"),
+    "bash-c-cd-leaks": ("nested-script", 'stack.append([ev[2] != "script" or stack[-1][3] != "eval", cwd, dirs, None])',
+                        'stack.append([ev[2] != "script", cwd, dirs, None])', "a child shell's cd leaked out"),
+    "eval-scoped": ("nested-script", 'stack.append([ev[2] != "script" or stack[-1][3] != "eval", cwd, dirs, None])',
+                    "stack.append([True, cwd, dirs, None])", "an eval script's cd was not kept"),
+    "remote-read-locally": ("remote", '    if "ssh" not in cmd and "pc.sh" not in cmd:\n        return code, frozenset()',
+                            "    if True:\n        return code, frozenset()", "a command run on another host injected"),
+    "remote-extent-ignored": ("remote", "            remote = len(stack)", "            remote = 0",
+                              "a command under ssh injected"),
+    "no-word-cap": ("linear-parse", "        for s, e in self.toks[i:i + WORDS_MAX]:", "        for s, e in self.toks[i:]:",
+                    "the parse is not linear"),
 }
 
 
@@ -828,6 +1186,124 @@ def test_every_check_has_a_mutant_and_every_mutant_compiles():
     assert set(CHECKS) == {m[0] for m in MUTANTS.values()}, "a property has no mutant, or a mutant no check"
     for name in MUTANTS:
         mutant(name)
+
+
+# ---------- F1 with the post-commit patch applied, and with the real code-map refresh ----------
+
+PATCH = ROOT / "tasks" / "briefs" / "jev-trim" / "K2-post-commit.patch"
+GRAFT = shutil.which("graft")
+
+
+def hook_dir(tmp, patch):
+    """A hooks directory holding the real post-commit hook, the K2 patch applied by `git apply` (as the coordinator
+    applies it) when `patch` is true."""
+    d = tmp / "hookcopy"
+    (d / "scripts" / "hooks").mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts" / "hooks" / "post-commit", d / "scripts" / "hooks" / "post-commit")
+    if patch:
+        r = subprocess.run(["git", "apply", str(PATCH)], cwd=d, capture_output=True, text=True, timeout=60,
+                           env=dict(os.environ, GIT_CEILING_DIRECTORIES=str(tmp)))
+        assert r.returncode == 0, r.stderr
+    return d / "scripts" / "hooks"
+
+
+def patched_scenario(tmp, patch, fp_text=None):
+    """F1 with the post-commit hook in place: a build lists scripts/gamma.py; a commit untracks it (hooks off); a
+    docs-only commit goes through the real hook, which with the patch launches the file-pack build at HEAD (a docs-only
+    commit launches nothing else, so no graph or code-map job leaves the test); once that build is done, the canary
+    goes in and the code pack is rebuilt from the working copy. 0 canary bytes, and nothing, on Edit, Read and cat."""
+    repo, ids = fixture(tmp, fp_text=fp_text)
+    st, pct = tmp / "state", tmp / "pctmp"
+    pct.mkdir()
+    build(repo, st)
+    git(repo, "rm", "-q", "--cached", "scripts/gamma.py", k=9)
+    git(repo, "commit", "-q", "-m", "gamma untracked", k=9)
+    (repo / "docs" / "NOTE.md").write_text("# note\na docs-only line\n", encoding="utf-8")
+    env = dict(env_for(repo, st), AF_POST_COMMIT_TMP=str(pct), GIT_AUTHOR_DATE="@%d +0000" % (EPOCH + 10),
+               GIT_COMMITTER_DATE="@%d +0000" % (EPOCH + 10))
+    r = subprocess.run(["git", "-c", "user.email=k2@test", "-c", "user.name=k2", "-c", "commit.gpgsign=false", "-c",
+                        "core.hooksPath=%s" % hook_dir(tmp, patch), "commit", "-q", "-am", "docs only"], cwd=repo,
+                       env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    head = git(repo, "rev-parse", "HEAD").strip()
+    log = pct / "filepacks-build.log"
+    assert log.exists() and "%s filepacks build launched" % head[:7] in log.read_text(), \
+        "the post-commit hook ran no file-pack build"
+    fd = os.open(pct / "filepacks-build.lock", os.O_RDONLY)        # held until the build and its subshell are gone
+    try:
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                assert time.monotonic() < deadline, "the post-commit build did not finish in 60 s"
+                time.sleep(0.1)
+    finally:
+        os.close(fd)
+    assert json.loads((st / "filepacks" / "BUILD.json").read_text())["commit"] == head, log.read_text()[-300:]
+    assert "filepacks build: %s " % head[:7] in log.read_text(), log.read_text()[-300:]
+    canary = "cnry" + secrets.token_hex(6)
+    (repo / "scripts" / "gamma.py").write_text('def leak_%s(token="%s-arg"):\n    return token\n' % (canary, canary),
+                                                encoding="utf-8")
+    plant_code_pack(repo, "scripts/gamma.py", head)
+    for p in gamma_probes(repo, "pp"):
+        ctx = context(run(repo, st, p))
+        assert canary not in ctx and ctx == "", "the untracked file's text reached the model: %r" % ctx[:80]
+
+
+@pytest.mark.parametrize("fp", ["real", "no-blob-check"])
+def test_untracked_since_build_with_the_post_commit_patch(tmp_path, fp):
+    """F1 with the patch applied: its build alone keeps the file out (so the mutant without the blob check passes
+    too; the blob check is the second guard, for a failed or stalled build)."""
+    patched_scenario(tmp_path, True, None if fp == "real" else mutant(fp))
+
+
+def test_negative_control_the_hook_without_the_patch_runs_no_build(tmp_path):
+    with pytest.raises(AssertionError, match=re.escape("the post-commit hook ran no file-pack build")):
+        patched_scenario(tmp_path, False)
+
+
+@pytest.mark.skipif(not GRAFT, reason="LOUD SKIP: graft is not installed here (scripts/setup.sh installs it); this "
+                                      "test runs the real L2a refresh, which builds from graft's graph")
+@pytest.mark.parametrize("fp", ["real", "no-blob-check"])
+def test_untracked_since_build_with_the_real_code_map_refresh(tmp_path, fp):
+    """The verifier's probe_p6.py exactly: the untracked file's code pack is rebuilt by the REAL refresh
+    (`codemap.py refresh --commit … --graphs graft`, as the post-commit hook runs it) after a graft re-index. The
+    real hook shows 0 canary bytes on Edit, Read and cat; the mutant without the blob check shows the canary on all
+    three (the control: the refresh's pack carries the canary into the entry)."""
+    repo, ids = fixture(tmp_path, fp_text=None if fp == "real" else mutant(fp))
+    st, home, locks = tmp_path / "state", tmp_path / "home", tmp_path / "locks"
+    (home / ".graft").mkdir(parents=True)
+    locks.mkdir()
+    # a fresh update-check answer in graft's private HOME: with none, `graft build` spawns a detached registry check
+    # that outlives the test and writes into this HOME after pytest removed it (and a later test reused the name)
+    (home / ".graft" / "update-check.json").write_text(json.dumps({"latest": None,
+                                                                   "checkedAt": int(time.time() * 1000)}))
+    env = {"PATH": "%s:/usr/bin:/bin" % os.path.dirname(GRAFT), "HOME": str(home), "DO_NOT_TRACK": "1",
+           "LANG": "C.UTF-8"}
+
+    def sh(*argv):
+        r = subprocess.run(list(argv), cwd=repo, env=env, capture_output=True, text=True, timeout=300)
+        assert r.returncode == 0, (argv, r.stdout[-400:], r.stderr[-400:])
+        return r.stdout
+    sh(GRAFT, "build")
+    build(repo, st)
+    git(repo, "rm", "-q", "--cached", "scripts/gamma.py", k=9)
+    git(repo, "commit", "-q", "-m", "gamma untracked", k=9)
+    c9 = git(repo, "rev-parse", "HEAD").strip()
+    canary = "cnry" + secrets.token_hex(6)
+    (repo / "scripts" / "gamma.py").write_text('def leak_%s(token="%s-arg"):\n    return token\n' % (canary, canary),
+                                                encoding="utf-8")
+    sh(GRAFT, "build")
+    out = sh("python3", "scripts/codemap.py", "refresh", "--commit", c9, "--lock-dir", str(locks), "--graphs", "graft",
+             "--wait", "60", "--grace", "5", "--", "scripts/gamma.py")
+    assert canary in (repo / ".jev" / "codemap" / "scripts" / "gamma.py.json").read_text(), out[-300:]
+    leaked = [canary in context(run(repo, st, p)) for p in gamma_probes(repo, "rf")]
+    if fp == "real":
+        assert leaked == [False, False, False], "the untracked file's text reached the model: %s" % leaked
+    else:
+        assert leaked == [True, True, True], "the control: without the blob check the canary reaches the model"
 
 
 # ---------- the registration, the code pack's fields, the speed ----------
