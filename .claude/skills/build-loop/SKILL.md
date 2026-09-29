@@ -157,7 +157,10 @@ never the final gate verdict.
    gets a comment at the decision SITE. Keep commits surgical and cherry-pickable. Commit BEFORE
    any destructive probe or mutation audit touches the same files. **Deterministic-fixture tests
    (seeded RNG, captured trace, golden output): run twice, assert bitwise-identical, before
-   trusting baselines.** **Forced to commit mid-increment:** embed recovery state in the message —
+   trusting baselines.** **A script that changes the tree is tested in a detached worktree of HEAD that the test
+   makes and removes (2026-09-29, task #369):** "it needs a mutable tree" is no reason to leave its ready path
+   untested; `tests/test_skill_bake_finish.py` skipped it for that reason, and the path held a stale-copy bug until it
+   bit. **Forced to commit mid-increment:** embed recovery state in the message —
    (a) the acceptance bar + where the result stands, (b) WHY it falls short, (c) the concrete plan
    — "needs redesign" alone forces a full re-analysis on the successor. **Never chain a scripted
    file mutation (python heredoc replace, sed) with `git commit` in one call: a partial mutation
