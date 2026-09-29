@@ -474,3 +474,313 @@ Run it with `python3 -m pytest -q -p no:cacheprovider --basetemp=<scratch> <file
 - I wrote no bytecode into the repo: nothing in its `__pycache__` directories is newer than my first scratch file.
 - The tracked tree holds none of my changes. The untracked `tasks/briefs/jev-trim/K2-FILE-PACKS-brief.md` and `k2_authoring_probe.py` are not mine.
 - I wrote an `S1-RATE` line for each of the 18 `[S1 …]` injections at the time it arrived.
+
+> Coordinator note (2026-09-29 06:5xZ): round 2's report of record, extracted by `scripts/stack.py harvest` (run s-20260929T065709Z-967cd3). Served model: claude-opus-5-5 on all 436 assistant records of this lane (its two rounds), 0 refusal stops, 1 tool-error cluster. `report_lint`: 0 refs. Local ids: none cited (47acfc0, 08f6eb6, d812c9b and 77e55fd are origin ids). The coordinator's disposition: MERGE-READY-WITH-FOLLOWUPS accepted; K1 closes; the design's §10.6 takes item 6's three corrections and R2-F8's note; the follow-ups are registered as task #362 (backlog).
+
+## Round 2
+
+Written 2026-09-29 from 06:10:10Z (the first `date -u` of this round); last `date -u` 06:54:43Z. VERIFY-K1 round 2 (task #352, D-106), sandbox adversarial verifier, served as claude-opus-5-5. PIN origin 08f6eb6 ("K1 round 2 landed (task #352; GATED-PENDING-VERIFY)…"), checked in a clean detached worktree under `/tmp/vk1`, now removed. No git write in the shared tree, no PC bridge, no subagent, no model or network call.
+
+### Answer first
+
+- **Gate: MERGE-READY-WITH-FOLLOWUPS.** No finding meets the blocking predicate of D-031 with D-034's good-state stop.
+- **The headline reproduces exactly.** My own aggregation matches every field. The Bash parsing is the builder's; the windows, controls, facts, labels, totals and tokens are my code, from the K1-R2 brief. That is 60,716 fields on main and 10,965 on the 16 subagent files, 0 differences.
+  - First 20 requests after a compaction: 38.07 re-fetch calls per 100 against 18.52 / 17.88 / 17.51 (C1 / C2 / C5). That is +3.91 / +4.04 / +4.11 calls and +9,338 / +9,200 / +9,585 tokens per boundary.
+- **Item 1, the direction rules.** Their exclusions at the controls are mostly right. I hand-labeled 144 real commands, 12 per stratum:
+  - Every sampled exclusion from the search shapes is a genuine write or commit, 24 of 24 across both sides.
+  - The strict and loose exclusions are right 75% to 92% of the time. The errors are mixed commands (a read whose output reaches the context, plus a scratch write or a commit). They fall on both sides about equally.
+  - The builder's DISCREPANCY 2 is confirmed, and the error was mine. My round-1 classifier never parsed past the first `<<`. At C1's first 20 requests it counted 22 commit sequences as searches (5 after boundaries). So my round-1 "+2.5 to +3.3 calls" understated the excess, and the builder's figure is the better estimate.
+- **But the precedence rule is untested and material.** A mutant that lets "read" win over write and commit survives the whole test file. On main it moves the first-20 excess to +1.6 to +2.7 calls per boundary.
+  - The committed rule is the better-supported one: a push sequence with a `git log` check is a push.
+  - The requests-20-to-99 excess is fragile. It holds only while commits and scratch writes are excluded.
+- **The C2 tail capture is clean.**
+  - The timeline under the wrapper is identical to a plain build on main and all 16 files; the digest detects planted changes.
+  - `replay._segments` is restored on the normal path and on both exception paths.
+  - The 792 tail items equal replay's own drop count.
+  - A mutant that never restores the wrapper survives the tests (a test gap, not a defect).
+- **Item 3.** v1 regenerates 19 of 19 byte-identical under 3.11.15 and 3.12.3. v2 regenerates 19 of 19 identical to the committed r2 files under both interpreters, so it is deterministic.
+- **Item 5.**
+  - The position-aware rows and the corrected loss rows re-derive exactly (0 cells differ).
+  - The calibration is an interval, not a point: every grid scale from 0.9825 to 0.998 gives 121 at 785k, and the count is not monotone in the scale. The 785k agreement holds by construction.
+- **§10.6's newest item ("500k stays cheap in cache terms, now measured") stands in direction, not as written.**
+  - It holds for cache reads: −33% flat, −35% position-aware.
+  - Cache writes rise +10% / +28%. At the 2.0 write ratio that offsets 12% / 31% of the read saving, so the cost-unit saving is 17% to 21%.
+  - The summarizer's extra calls are priced nowhere.
+  - "Now measured" overstates: the re-fetch excess is measured at about 785k, while the 500k cache terms come from a calibrated model.
+
+### Premise and PIN
+
+- HEAD at the start was 77e55fd. 08f6eb6 is on origin/claude/soundbox-kit-migration-iz1jwf.
+- The tip, 77e55fd, adds only `transcripts/sandbox/chat-2026-09-29.md`. Its parent d812c9b (K2) touches none of the K1 files.
+- In the worktree, the file hashes match the builder's report:
+
+  | file | sha256 (first 16) |
+  |---|---|
+  | compaction.py | e17cc65651796be0 |
+  | tests/test_jev_trim_compaction.py | 1908c684664ed7eb |
+  | replay.py | 73a16e72ed933db5 (unchanged) |
+  | tests/test_jev_trim_replay.py | 841351f042ae62d4 |
+  | accounting.py | 7789b1c8c983f9e6 (unchanged) |
+  | transcript.py | 1e6f77216996d2f5 (unchanged) |
+
+- All 19 r2 output hashes match the report's table.
+
+### Controls on my own instruments (run before any result was used)
+
+- **Mutation driver.** The unmutated base passes 34 of 34 normal tests, with test_mutant_is_killed deselected. The driver records FAILED and ERROR apart, with each failure's exception type and location, and the basetemp parent exists (AF-AP-223). It did catch one invalid mutant as an ERROR, not a kill: my own round-1 N14, below.
+- **Comparator.** I planted two differences in my output; it reported exactly those two.
+- **Timeline digest.** A +0.1 change to one item's size and a +1 change to one request's context both change the digest.
+- **Policy harness.** Policy P0 (the builder's rule) reproduces the committed main JSON with 0 differences over 60,716 fields.
+
+### Gates
+
+At the PIN, Python 3.11, 06:44:24Z to 06:46:08Z. `--basetemp` was a pytest argument under `/tmp/vk1/bt`, `PYTEST_ADDOPTS` unset, `PYTHONDONTWRITEBYTECODE=1`.
+
+```
+1 files set=7f396804fe23
+pytest-summary: 99 passed in 15.41s
+pytest-summary: 99 passed in 15.37s
+1 files set=1bb7608ed22a
+pytest-summary: 68 passed in 8.50s
+pytest-summary: 68 passed in 9.48s
+1 files set=17f6a5adc0c9
+pytest-summary: 42 passed in 26.42s
+pytest-summary: 42 passed in 25.93s
+3 files set=74199ac6b13a
+```
+
+Python 3.12.3, my own offline venv (uv cache, pytest 9.1.1, pyyaml 6.0.3), once each:
+
+```
+1 files set=7f396804fe23
+pytest-summary: 99 passed in 18.07s
+1 files set=1bb7608ed22a
+pytest-summary: 68 passed in 9.38s
+1 files set=17f6a5adc0c9
+pytest-summary: 42 passed in 25.77s
+```
+
+### Item 1: the direction rules, checked on real commands
+
+**The population.** In main's 1M class I took every call the rule decides on: calls matched by a search shape, plus calls that would match a strict or loose label if direction were ignored. They come from the 100-request windows after boundaries and at C1, C2 and C5, deduplicated by call id.
+
+| kind | excluded after a boundary | excluded at the controls |
+|---|---|---|
+| search shapes | 895 of 2,419 (37%) | 833 of 1,668 (50%) |
+| strict shapes | 365 of 1,438 (25%) | 308 of 717 (43%) |
+| loose shapes | 694 of 3,362 (21%) | 352 of 1,774 (20%) |
+
+**The labeled sample.**
+- It holds 144 Bash commands, 12 per stratum (side × excluded or counted × kind), drawn with seed 20260929.
+- I read each command, truncated to 330 characters, and labeled it by hand. A command's text never left memory or reached a file.
+- The secret filter skipped 42 drawn commands (mostly for the word "token") and replaced them. That is a small sampling bias.
+
+| stratum | after a boundary | at the controls |
+|---|---|---|
+| excluded search calls | 12 of 12 right (notes built into scratch files, heredoc ledger edits, commits, `cat >>` into a test) | 12 of 12 right |
+| excluded strict calls | 11 of 12 right (1 mixed: status and detect-changes output, then `cat >` into scratch) | 9 of 12 right (3 mixed: pre-push checks with `> /tmp/dirty.txt`; a `sed -n` view before a `git add`) |
+| excluded loose calls | 9 of 12 right (3 mixed) | 9 of 12 right (3 mixed) |
+| counted search calls | 11 of 12 really read (1 heredoc ledger write) | 11 of 12 really read (1 heredoc ledger write) |
+| counted strict calls | 11 of 12 really read (1 heredoc edit) | 12 of 12 really read |
+
+- In the counted strata, the one miscounted call per side is a ledger or test-file write through a Python heredoc. It reads as a "read" because a `sed` in the stamp idiom (`$(date -u … | sed …)`) or a `git log` precedes it.
+- The counted search calls hold a different problem: K1's markers, not the direction rules. Of the 12 sampled control calls, 6 are monitoring of a background job (`cat …/tasks/<id>.output | tail`) and 3 match only a name inside another command (`test_session_export.py`, an `ls` of `hiccup_scan.py`). After a boundary, 3 of 12 are monitoring.
+
+**Five policies over the whole population** (main, 1M class, refetch_total; excess per 100 over C1 / C2 / C5, with per-boundary calls in the first 20 requests):
+
+| policy | first 20 requests | per-boundary calls, first 20 | requests 20 to 99 | first 100 |
+|---|---|---|---|---|
+| P0, the builder's rule (writes and commits out) | +19.56 / +20.19 / +20.56 | +3.91 / +4.04 / +4.11 | +3.17 [0.53, 5.90] / +3.64 [0.77, 6.51] / +2.93 [0.30, 5.65] | +6.55 / +7.06 / +6.02 |
+| P1, reads only (the brief's literal text) | +18.70 / +19.18 / +19.83 | +3.74 / +3.83 / +3.96 | +3.38 / +3.80 / +3.05 | +6.55 / +6.98 / +6.00 |
+| P4, a redirect into scratch is not a write | +17.50 / +18.60 / +19.92 | +3.50 / +3.72 / +3.98 | +2.86 [−0.20, 5.82] / +3.32 / +2.62 [−0.26, 5.48] | +5.90 / +6.48 / +5.54 |
+| P5, read wins over write and commit (= mutant NM1) | +12.94 / +7.90 / +13.36 | +2.59 / +1.58 / +2.67 | −1.80 / −1.67 / −1.27 | +1.23 / +0.33 / +1.37 |
+| P2, commits counted as reads | +16.84 / +14.83 / +17.41 | +3.37 / +2.97 / +3.48 | −0.50 / +0.26 / +0.23 | +3.07 / +3.27 / +3.25 |
+| P3, no direction at all | +12.51 / +7.02 / +13.31 | +2.50 / +1.40 / +2.66 | −2.42 / −1.79 / −1.06 | +0.65 / +0.05 / +1.59 |
+| My own parser for P0's rules | +19.43 / +21.19 / +21.14 | +3.89 / +4.24 / +4.23 | +3.43 / +3.66 / +3.36 | +6.74 / +7.27 / +6.53 |
+
+**What the policies show.**
+- The first-20 excess is positive under every policy.
+- In tokens it stays between +6.9k and +10.0k per boundary.
+- In calls it holds at +3.5 to +4.2 under the defensible readings (P0, P1, P4 and my own parser). It falls to +1.4 to +2.7 when reads win the precedence or direction is dropped.
+- The requests-20-to-99 excess depends on excluding commits and scratch writes.
+
+**DISCREPANCY 2, re-derived.** I rebuilt my round-1 classifier verbatim and compared it call by call with the builder's, on the search-marker Bash calls:
+
+| window | round-1 counted, builder excluded | builder counted, round-1 excluded |
+|---|---|---|
+| C1, first 20 requests | 22 of 103 (all 22 commit or write after a heredoc) | 1 |
+| after a boundary, first 20 requests | 5 of 558 | 15 |
+
+So the builder's lower control rates are the correct reading. Its INFERRED cause is now VERIFIED.
+
+### Item 2: red tests and mutants
+
+**R1 and R2.** I ran them against scratch copies:
+
+| code | result |
+|---|---|
+| round 1 (47acfc0; compaction.py 95e16062) | `2 failed`, at exactly my assertions: line 1068 `assert (4, 1) == (1, 0)` and line 1079 `assert 0 == 2` |
+| round 2 | `2 passed` |
+
+**The builder's 65 mutants**, run through my driver:
+- All 65 fail, and in each case the named check's test is among the failed tests.
+- There are 0 setup errors.
+- One kill comes from production code: N06, at the runtime guard `compaction.py:782`, as the builder says.
+
+**My own N01–N22 definitions, applied to round-2 code.**
+- 21 of 22 fail real tests at the assertion written for them. The lines are `tests/test_jev_trim_compaction.py` 132 to 137, 147, 150, 202, 204, 256, 259, 276, 303, 336 and 598. N06 fails at the production guard.
+- My N14 is not a valid mutant on round-2 code. Its round-1 anchor leaves an IndentationError, so pytest reports 1 collection ERROR and no FAILED test. My driver kept it apart from the kills. The builder's port (`steps.append(0.0)` → `pass`) is the valid one, and it is killed.
+- Two of my definitions differ from the builder's ports:
+  - My N19 targets R-C's rerun folding; the builder's N19 targets R-B's rerun key. Both clauses are killed now.
+  - My N21 targets `_post_tokens`; the builder's targets the row field. Both are killed.
+
+**New mutants** on round-2 clauses no row covers. Each replaces one exact line of the PIN's compaction.py:
+
+| id | the change | result | live effect on main |
+|---|---|---|---|
+| NM1 | `_RANK` read 2 → 5 (read beats write and commit) | **survives** | material: first-20 excess +7.9 to +13.4 per 100 (+1.6 to +2.7 calls); 20–99 and 100 fall to about 0 |
+| NM2 | `_RANK` commit 3 → 5 (commit beats write) | survives | equivalent for every total; only the write and commit tallies swap |
+| NM3 | `_paired`: `< 2 * PSEUDO_GAP` → `< PSEUDO_GAP` | survives | C2 points 26 → 104; C2's 20–99 excess +3.64 → +5.90 |
+| NM4 | `_rate_lines`: `by_segment=cname == "C5"` → `False` | survives | 30 SUMMARY lines change; C5's clustered intervals narrow, and "K1's shapes, 100" over C5 flips from [−0.77, +3.96] to [+0.25, +3.27] |
+| NM5 | `_tails_kept`: `finally: replay._segments = original` → `pass` | survives | none by construction: the wrapper preserves behavior; a process-level leak only |
+| NM6 | tail `it.offset >= last` → `>` | killed (`test_the_windows_and_the_three_controls`, `assert (1, 110, 0) == (1, 110, 1)`) | — |
+| NM7 | the descriptor pop in `_simple_commands` → `if False` | survives | about +0.5 per 100 in the first-20 excess |
+| NM8 | drop the `//` folding in `_norm` | survives | none on this data: equivalent |
+
+### Item 3: byte identity and determinism
+
+My regeneration script ran `select` over a mirror of symlinks to the pinned files, with round 1's measured sizes; for v2 the mirror adds `agent-a038a373e43037a56.jsonl`, the builder's DISCREPANCY 17. It then ran 17 `run`s and `summary` with each round's stamp (03:07:18Z and 05:40:02Z), and hashed every file against the committed ones:
+
+| run | result |
+|---|---|
+| v1, Python 3.11.15 | 19 SAME |
+| v1, Python 3.12.3 | 19 SAME |
+| v2, Python 3.11.15 | 19 SAME |
+| v2, Python 3.12.3 | 19 SAME |
+
+### Item 4: the C2 tail capture
+
+- **Timeline identity.** On main and on all 16 subagent files, the full timeline digest under `timeline(…, "v2")` equals a plain `replay.build`. The digest covers requests, boundaries, stats, params, and each segment's fixed set, estimates and every item field.
+- **Restore.** After the call, `replay._segments` is the original function.
+- **The tail.** It holds exactly replay's own drop count: 792 on main, and 4 to 15 per file on the subagents. None of its items sits before its segment's last request, and none is also inside a segment.
+- **Exception paths.**
+  - A missing file leaves the original restored.
+  - An exception raised inside the wrapped call propagates, and the function that was installed before is restored.
+- **The one gap** is NM5: no test detects a wrapper left installed, because the wrapper preserves behavior.
+
+### Item 5: the cost model
+
+- My own re-derivation matches:
+  - K 119,624.9;
+  - growth means 6,201.7 / 4,309.7 / 2,830.3;
+  - the actual usage (20,586 requests; reads 9,552,612,747; writes 124,444,652).
+- At the builder's scale 0.993736131, all six position-aware rows match. The counts are exact (586 / 353 / 246 / 186 / 146 / 121, unscaled 589 / 354 / 247 / 187 / 146 / 122). Mean fill, reads and writes differ only by 1 or 2 tokens, from summation order.
+- The corrected loss rows equal compactions times the per-boundary excess: 0 cells differ.
+- **Calibration.** The count at 785k is not monotone in the scale. Across 0.970 to 1.010 it takes the values 118 to 124, and 17 of 81 grid scales from 0.9825 to 0.998 give 121. So the scale is one point of an interval, and the 500k count within that interval runs from about 243 to 247.
+- **`calibrate()`** returns without asserting that its count equals the target. Asked for an unreachable target of 50 on the hand fixture, it returns scale 1,048,576 with count 24. The JSON would show the mismatch beside the target, but nothing stops the run.
+
+### Item 6: §10.6's newest item, recomputed from the committed rows
+
+| model | compactions, 785k → 500k | extra re-fetched tokens, first 20 | extra re-fetched tokens, first 100 | cache reads | cache writes | cost units (reads 0.05, writes 2.0) | summarizer reads |
+|---|---|---|---|---|---|---|---|
+| flat | 119 → 206 (+87) | 0.80M to 0.83M | 1.12M to 1.23M | 9.245B → 6.193B (−33.0%) | +9.9% | 648.6M → 514.5M (−20.7%); the writes' rise offsets 12% of the read saving | 92.3M → 101.5M |
+| position-aware | 121 → 246 (+125) | 1.15M to 1.20M | 1.61M to 1.76M | 9.956B → 6.508B (−34.6%) | +28.4% | 688.6M → 570.4M (−17.2%); the writes' rise offsets 31% | 94.3M → 121.3M |
+
+- The item's own arithmetic is right: "0.8 to 1.2 million", "1.1 to 1.8 million", "3.1 to 3.4 billion".
+- But it compares tokens counted once with cache reads counted on every request. The model's growth already carries the re-fetched tokens forward. Estimated separately, their later re-reads are about 90M to 101M cache-read tokens, about 3% of the read saving.
+- **Verdict: the reading stands in direction ("cheap in cache terms"), with three corrections.**
+  1. Priced with writes, 500k saves about 17% to 21% of cache cost, not "a third".
+  2. "Now measured" applies only to the re-fetch excess, measured at about 785k. The 500k side is a model calibrated at 785k, and the loss per compaction is assumed not to depend on X.
+  3. "Requests 20 to 99 carry +2.9 to +3.6 per 100" is weak evidence. Its intervals barely exclude 0, and it disappears under two of the rule variants above.
+- "About four extra calls per compaction" holds under the defensible direction rules (+3.5 to +4.2). It would be +1.6 to +2.7 if reads won the precedence, and nothing in the tests pins that choice.
+
+### Finding inventory (no severity filter)
+
+Each finding lists its evidence level, contract mapping, canonical-path status, material effect, reproduction and suggested fix.
+
+**R2-F1. INFO: the aggregation, v1 identity, v2 determinism and gates reproduce.**
+- VERIFIED.
+- Contract: K1-R2 items 3 to 10. Canonical path.
+- Effect: none.
+- Reproduction: my aggregation `k1v2.py --parser builder` against each run JSON, 0 differences; `regen.sh` four times, 19 SAME each.
+
+**R2-F2. INFO: the direction rule's exclusions at the controls are right in the main.**
+- VERIFIED on the 144-command sample.
+- Contract: item 4. The builder's NOT-done item (no labeled sample) is now done.
+- Effect: none by itself. The mixed errors are about 8% to 25% of strict and loose exclusions and similar on both sides.
+
+**R2-F3. FOLLOW-UP: the direction precedence is untested, and it is material.**
+- VERIFIED.
+- Contract: item 4's rule, per the builder's docstring and Deviation 3. The item-level requirement "a test and a named mutant" is met, so no contract criterion fails.
+- Canonical path: NM1 survives all 34 tests; its live effect is +1.6 to +2.7 calls against +3.9 to +4.1.
+- Not blocking under D-034: the committed rule is the better-supported one (R2-F2), and the headline is not fake.
+- Fix: add DIRECTION_CASES that mix a read with a write and with a commit across simple commands, for example `git log -3 && bash scripts/safe_commit.sh …` → commit and `sed -n 1p f && cp a b` → write.
+
+**R2-F4. FOLLOW-UP: the wrapper's restore has no test.**
+- VERIFIED: the restore is correct in fact (item 4); NM5 survives.
+- Fix: assert `replay._segments is original` after `timeline()`, and after an exception raised inside it.
+
+**R2-F5. FOLLOW-UP: three more untested clauses change outputs.**
+- VERIFIED by live differential: C2 eligibility (NM3), C5 cluster resampling (NM4) and the descriptor pop (NM7). NM8 is equivalent on this data; NM2 is equivalent for every total.
+- Fix: one fixture case each: a pre segment of 150 requests (no C2 point); an interval for C5 with two points in one segment; `git log 2>/dev/null`.
+
+**R2-F6. FOLLOW-UP, rule level: a Python heredoc that writes counts as a read or a script.**
+- VERIFIED: 1 of 12 sampled counted search calls on each side; the stamp idiom makes such a write a "read".
+- Contract: item 4 says "heredoc bodies excluded", and the builder's DIRECTION_CASES assert this as "script". So it is per contract, and a limit of the brief's rule.
+- Effect: small and symmetric.
+
+**R2-F7. FOLLOW-UP, K1 round 1's markers: `search_transcript` counts background-job monitoring and file-name mentions.**
+- VERIFIED: 6 of 12 sampled counted control calls are monitoring and 3 are name-only matches; after a boundary, 3 of 12 are monitoring.
+- Effect: it inflates the control's transcript rate more, so the excess is understated for this shape.
+- Fix: exclude `/tasks/<id>.output` of background commands, or split them into their own shape.
+
+**R2-F8. INFO: the builder's DISCREPANCY 2 is confirmed.**
+- VERIFIED: my round-1 classifier's heredoc defect (22 C1 commit sequences counted as searches).
+- My round-1 "+2.5 to +3.3 calls, about +7k tokens" is understated. §10.6's "VERIFY-K1's correction" bullet still quotes it; the next bullet supersedes it, and a one-line note there would close the gap.
+
+**R2-F9. INFO, for the design: the 20–99 excess is fragile.**
+- VERIFIED: the policy table above.
+- Effect: it changes how §10.6 should read the 20–99 number (see item 6).
+
+**R2-F10. INFO / FOLLOW-UP: the calibration is an interval; `calibrate()` does not refuse a target it cannot reach.**
+- VERIFIED: item 5.
+- Fix: assert that the count equals the target, or record `calibrated: false`.
+
+**R2-F11. INFO: the per-boundary excess divides by every boundary, including those with an empty window.**
+- VERIFIED.
+- Effect: it is a per-compaction expectation. On main it is almost the same (+2.44 against my per-reaching-boundary +2.46 over C1 at 20–99). For the pooled subagents it is lower: +7.91 / +8.66 / +6.66 calls against +10.38 / +11.37 / +8.75.
+- Fix: name the convention in the summary.
+
+**R2-F12. INFO: Deviation 2 (script and other counted as reads) is immaterial.**
+- VERIFIED: P1 against P0.
+
+**R2-F13. INFO: hostile inputs are handled.**
+- VERIFIED on the new code (`_bash`, the calibration, the options): no hang and no crash. A 200,000-line heredoc parses in 0.05 s. Deep nesting, a NUL byte, an unbalanced quote and an empty command are all handled.
+- `--shapes v3` is refused by argparse, and `compaction_loss(tl, "v3")` raises a named ValueError.
+- A stderr redirect into a file makes a read a write (the target-agnostic rule).
+- An unterminated heredoc swallows the rest of the command, which matches bash.
+
+**R2-F14. INFO: the report's counts check out.**
+- VERIFIED: the builder's F9 shares (2.02%, 1.18%, 1.36%, 1.31%), "117 of 638 excluded (110 write, 7 commit)", 792 tail items, and control points 27 / 26 / 386 all match.
+
+### Gate recommendation
+
+**MERGE-READY-WITH-FOLLOWUPS.** Nothing depends on an unreproduced step. Follow-ups: R2-F3, R2-F4 and R2-F5 (test gaps on material clauses); R2-F6 and R2-F7 (limits of the rule and the markers); R2-F10 (the calibration guard); the §10.6 wording in item 6 and R2-F8.
+
+### Reproduced, reviewed statically, skipped
+
+**Reproduced this round:** everything above: the aggregation, labels, controls, tails, cost rows, byte identity on both interpreters, gates, 65 + 22 + 8 mutants, and the policy sensitivity.
+
+**Reviewed statically:** all 2,017 lines of compaction.py and all 1,079 lines of its test file.
+
+**Not done:**
+- **The counted loose strata** of the sample were drawn but not labeled. The loose set is not in refetch_total.
+- **No PC run.** The PC bridge is outside my boundary.
+- **Causality.** That the excess is caused by the compaction remains INFERRED: this is a control comparison, not an intervention.
+
+### Cleanup
+
+- The worktree was removed with `git worktree remove` and pruned. `/tmp/vk1` is deleted.
+- No process of mine remains. Nothing I wrote is in the shared tree (`git status --porcelain` is empty; no new bytecode).
+- I touched none of VERIFY-K2's files.
+- I rated every `[S1 …]` injection with an S1-RATE line when it arrived.

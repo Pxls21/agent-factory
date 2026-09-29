@@ -379,6 +379,8 @@ VERIFY-K1 attacks them).
   cache-read cut. K1 round 2 (`tasks/briefs/jev-trim/K1-R2-brief.md`) re-measures with the corrected shapes. Until
   then the first live arm stays 500000 on that inference, not on the struck reason. For §10.3: the dominant re-fetch
   after a boundary is a Bash view of a known file, which is what K2's file packs trigger on.
+  Its +2.5 to +3.3 calls per boundary undercounts: its classifier stopped at the first heredoc and counted commit
+  sequences as searches (VERIFY-K1 round 2's R2-F8); K1 round 2's +3.9 to +4.1, below, is the better figure.
 - **K1 round 2 (2026-09-29 06:0xZ; `tasks/briefs/jev-trim/K1-R2-report.md`, outputs under `compaction-2026-09-29-r2/`;
   GATED-PENDING-VERIFY).** Measured with the corrected shapes (writes and commits out, the strict set in, the loose set
   apart) against three controls. Main, 1M class: the first 20 requests after a compaction carry 38.07 re-fetch calls per
@@ -388,6 +390,11 @@ VERIFY-K1 attacks them).
   5.00) and a ledger read (8.89 against 1.92 to 2.54). The position-aware cost model, calibrated to the observed 121 at
   785k, gives 246 compactions at 500k (the flat model 206). Moving from 785k to 500k adds about 0.8 to 1.2 million
   re-fetched tokens over the first 20 requests after each compaction (1.1 to 1.8 million over 100), against 3.1 to 3.4
-  billion fewer cache-read tokens. So 500k stays cheap in cache terms, now measured; the extra calls (about four per
-  compaction) are the live test's to weigh. The builder's excess is larger than VERIFY-K1's because its direction rules
-  exclude more writes and commits at the controls (its DISCREPANCIES 1 to 8); the resumed verifier checks that.
+  billion fewer cache-read tokens. So 500k stays cheap in cache terms; the extra calls (about four per compaction) are the
+  live test's to weigh. VERIFY-K1 round 2 (2026-09-29 06:5xZ, the same report, "Round 2") corrects three things: priced with
+  cache writes (which rise 10% to 28%), 500k saves 17% to 21% of the cache cost, not a third; only the re-fetch excess is
+  measured (at about 785k), while the 500k side is a model calibrated at 785k; and the requests 20 to 99 excess is weak
+  (it vanishes under two direction-rule variants). The first-20 excess holds at +3.5 to +4.2 calls under every defensible
+  rule, and +1.6 to +2.7 if a read were to win over a write or a commit, a choice no test pins yet (task #362). The builder's excess is larger than VERIFY-K1's because its direction rules
+  exclude more writes and commits at the controls (its DISCREPANCIES 1 to 8); VERIFY-K1 round 2 confirmed that reading
+  on a hand-labeled sample of 144 real commands (its R2-F2 and R2-F8).
