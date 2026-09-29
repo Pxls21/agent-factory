@@ -1,0 +1,1110 @@
+diff --git a/docs/HARNESS-PORTS.md b/docs/HARNESS-PORTS.md
+index 1f90fac..219ceb7 100644
+--- a/docs/HARNESS-PORTS.md
++++ b/docs/HARNESS-PORTS.md
+@@ -400,6 +400,97 @@ starting a second one. Keyed on the STATE it intends to create, not on mutual ex
+ | `HERMES_PROFILE` | per-lane `aflane…` clone | explicit logged profile override |
+ | `LANE_BRANCH` | `claude/soundbox-kit-migration-iz1jwf` | branch to fetch |
+ | `LANE_ID` | derived from the brief | lane directory name |
++| `LANE_CONTEXT_ENGINE` | unset | `lcm-x` = the LCM-X lane mode below; any other value fails (rc 64) |
++| `LCM_X_DIR` | `$HOME/lcm-x` | the pinned LCM-X clone (lcm-x mode only) |
++| `LCM_X_DEPS_DIR` | `$HOME/lcm-x-deps` | LCM-X's runtime import, `pip install --target` (lcm-x mode only) |
++| `LCM_X_TIKTOKEN_DIR` | `$HOME/lcm-x-tiktoken` | the pre-seeded tokenizer cache (lcm-x mode only) |
++| `LCM_X_PYTHON` | read from `HERMES_BIN`'s shebang | the lane's Python for `verify`'s import check; `scripts/pc_lane.sh` does not forward it |
++
++### LCM-X lane mode (task #365, H1; off by default)
++
++`LANE_CONTEXT_ENGINE=lcm-x` gives ONE lane's profile the LCM-X context engine (plugin `hermes-lcm-x`, engine
++`lcm-x`) at the commit pinned in `upstream.lock.yaml` (`lane_context_plugins.hermes-lcm-x`: 601a9cc, v0.24.3, MIT).
++It is the H1 trial of D-108 item 7: one lane with LCM-X beside a control lane without it. Unset or empty, nothing
++changes: `lane-profile.sh` writes the bytes it wrote before this mode (`test_lane_profile.sh` pins them on its
++fixtures), and `pc-lane.sh` runs the same hermes command. `scripts/pc_lane.sh` forwards the mode and the three
++`LCM_X_*` paths to the PC runner as it forwards `HERMES_MODEL`. All line numbers below are at Hermes b3399c1 and
++LCM-X 601a9cc.
++
++**What `create` adds (lcm-x only).**
++- `<profile>/plugins/hermes-lcm-x`, a symlink to `LCM_X_DIR`. Hermes scans `<HERMES_HOME>/plugins/<dir>/plugin.yaml`
++  (`hermes_cli/plugins_discovery.py:102-131`, 151), and `hermes -p <profile>` makes the profile its HERMES_HOME
++  (`hermes_cli/profiles.py:1680-1704`).
++- In `config.yaml`: `plugins.enabled` gains `hermes-lcm-x` (other entries kept) and `context.engine` becomes `lcm-x`.
++  Hermes loads a user plugin only when `plugins.enabled` names it (`plugins_discovery.py:213`; `plugins.disabled`
++  wins, 192) and takes the engine from `context.engine` (`agent/agent_init.py:1746-1787`). A relaunch without the
++  mode re-derives the standard config, so the plugin is not loaded; the link and `lcm-x.env` stay, unread.
++- `<profile>/lcm-x.env`: five settings that `pc-lane.sh` gives the lane's hermes process as environment. They never
++  go into the profile's `.env` (a copy of the owner's secrets file), which Hermes loads with `override=True`
++  (`hermes_cli/env_loader.py:349-350`). The runner also drops every inherited `LCM_*` setting (not `LCM_X_*`, which
++  LCM-X never reads).
++
++| Setting | Value | Condition |
++|---|---|---|
++| `LCM_DISABLED_TOOLS` | the 12 tools below | cross-session tools off: removed from the schemas and refused on call (`engine.py:4283-4320`; `__init__.py:549-554`) |
++| `LCM_DATABASE_PATH` | `<profile>/lcm.db` | the store inside the profile (`engine.py:787-793`) |
++| `LCM_EMBEDDINGS_ENABLED` | `false` | embeddings off; the pin's default is off (`config.py:768`); this pins it (`config.py:89-99`, 496) |
++| `TIKTOKEN_CACHE_DIR` | `LCM_X_TIKTOKEN_DIR` | no download at start: tiktoken reads `<dir>/9b5ad71b2ce5302211f9c61530b329a4922fc6a4` (sha1 of the cl100k_base URL, `tiktoken/load.py:35-58`) and checks sha256 `223921b7…e865b2a7` (`tiktoken_ext/openai_public.py:75-79`); a file that fails the check is deleted and fetched again (`load.py:60-66`) |
++| `PYTHONPATH` | `LCM_X_DEPS_DIR`, then any inherited value | `tiktoken==0.14.0` from a `pip --target` directory, never the Hermes venv |
++
++**The tools off.** A tool is off when it can read another session's rows: `lcm_grep` (`session_scope: all`),
++`lcm_recall` ("across ALL conversations"), `lcm_load_session` (any `session_id`), `lcm_describe` (another session's
++DAG), `lcm_expand` (`store_id` "works across sessions"), `lcm_expand_query` (up to 20 `session_ids`) (`schemas.py`);
++`lcm_evidence_pack` and `lcm_compile_evidence`, which call `lcm_recall` directly, around the list (`tools.py:1021-1087`);
++`lcm_compute`, which grounds any `store_id` with no session check (`reasoning.py:792`); `lcm_query_state` (the
++profile-wide assertion store) and `lcm_retrieve` (reads `store_id` rows unscoped, `adaptive_retrieval.py:452`), both
++off by default anyway; `lcm_doctor` (counts over the whole database). On: `lcm_status` and `lcm_inspect` (the current
++session) and `lcm_recent` (the current conversation's sessions). The cost: with `lcm_grep`, `lcm_describe` and
++`lcm_expand` off the model cannot open its own summaries either, yet the note LCM-X adds at the first compaction still
++names those three tools (`engine.py:6679-6694`). LCM-X still compacts; the trial measures that.
++
++**Summaries go through OmniRoute.** LCM-X calls `call_llm(task="compression")` with no provider (`escalation.py:303-340`).
++With `auxiliary.compression` on `auto`, Hermes routes it to the main runtime: the lane's OmniRoute provider and model
++(`agent/auxiliary_client.py:4097-4168`, 4195-4220). On an auth, payment, exhausted-429, connection,
++model-incompatible or malformed-response error the ladder walks the task's `fallback_chain`, then `fallback_providers`
++and `fallback_model`, then the discovery chain (OpenRouter, Nous, a custom endpoint, the API-key providers) with any
++credential it finds (`auxiliary_client.py:6835-6908`, 3790-3822, 2882-2890). The lane profile removes
++`fallback_providers`; `verify` refuses `fallback_model` and any `auxiliary.compression` provider, `base_url`, `api_key`
++or `fallback_chain`, and names (never shows) the other credentials in `.env` and in the runner's environment. The live
++check is the coordinator's egress watch on the PC.
++
++**`verify` (lcm-x) checks, and names the failed item.** Before any clone or write, `create` and `verify` refuse a
++relative `LCM_X_*` path and a `:` in `LCM_X_DEPS_DIR`. (a) `plugins/` is a real directory and `plugins/hermes-lcm-x` a
++symlink whose target is exactly `LCM_X_DIR` (`create` repoints a link to another directory); `LCM_X_DIR`'s
++`plugin.yaml` names `hermes-lcm-x`; its HEAD is the lock's `revision` and it has no changes; no second LCM plugin sits
++in `plugins/`. (b) `plugins.enabled` lists the plugin, `plugins.disabled` does not, `context.engine` is `lcm-x`, and
++`compression.enabled` is not false. (c) `lcm-x.env` is a regular file holding exactly the five settings (the runner
++also refuses a file with a line unexpected or missing before hermes starts); the profile's `.env` sets no
++`LCM_*` or `TIKTOKEN_CACHE_DIR` (names only); the tokenizer file exists with the lock's digest; under the Python in
++`HERMES_BIN`'s shebang (refused when it runs with `-I` or `-E`) `tiktoken` imports from `LCM_X_DEPS_DIR` at the lock's
++version and loads `cl100k_base` with `requests` blocked, so a cache miss fails instead of downloading. (d) as above.
++The pins come from `upstream.lock.yaml` only; without the lock entry `verify` refuses.
++
++**On the PC before the first lcm-x launch** (each step skips what is done; the pinned values are in the lock entry):
++
++```bash
++cd ~/agent-factory && git fetch --quiet origin claude/soundbox-kit-migration-iz1jwf && git merge --ff-only FETCH_HEAD   # the mode's commit
++[ -d ~/lcm-x/.git ] || git clone --quiet https://github.com/electricsheephq/lcm-x ~/lcm-x
++git -C ~/lcm-x -c advice.detachedHead=false checkout --quiet --detach 601a9ccb3d5fefbe242a453e57ed2c8196bf33c3
++printf 'tiktoken==0.14.0 --hash=sha256:f5e7665f6624e052e5e7f6a36919ab69279decdc976d7b16b4fa15e1897d0513\n' > /tmp/lcm-x-deps.req
++[ -f ~/lcm-x-deps/tiktoken-0.14.0.dist-info/METADATA ] || ~/venv-agent-factory/bin/python -m pip install --quiet \
++  --no-deps --no-compile --target ~/lcm-x-deps --only-binary=:all: --platform manylinux_2_28_x86_64 \
++  --python-version 3.11 --implementation cp --abi cp311 --require-hashes -r /tmp/lcm-x-deps.req
++mkdir -p ~/lcm-x-tiktoken; T=~/lcm-x-tiktoken/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
++[ -f "$T" ] || { curl -fsSL -o "$T.tmp" https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken && mv "$T.tmp" "$T"; }
++echo "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7  $T" | sha256sum -c -
++LANE_CONTEXT_ENGINE=lcm-x bash harness-ports/bin/lane-profile.sh create h1-preflight \
++  && bash harness-ports/bin/lane-profile.sh remove aflaneh1preflight   # create runs the full verify
++```
++
++**NOT done.** Nothing ran on the PC: no clone, no install, no launch, no load of LCM-X in Hermes. `verify` is static:
++it cannot see a load failure, after which Hermes falls back to its built-in compressor with only a warning
++(`hermes_cli/plugins_loader.py:283-289`, 321; `agent/agent_init.py:1789-1792`); the proof that LCM-X ran is rows for the lane's session in `<profile>/lcm.db`. Production
++use is a later decision with its own proof (standing rules 10 and 11; T1 report section 5 row 7).
+ 
+ ### The local build-lane model on the PC — `qwen-builder` (2026-09-14)
+ 
+diff --git a/harness-ports/bin/lane-profile.sh b/harness-ports/bin/lane-profile.sh
+index 3829b5d..5e85d9e 100755
+--- a/harness-ports/bin/lane-profile.sh
++++ b/harness-ports/bin/lane-profile.sh
+@@ -17,6 +17,21 @@ SOURCE="$HERMES_PROFILES_DIR/$HERMES_SOURCE_PROFILE"
+ # The local lane models (HCTX1): OmniRoute tells Hermes 200,000 for the two combos (128,000 for the raw node), but the
+ # vLLM behind them serves the quadlet's MAX_LEN, so each lane profile states that value per model.
+ CONTEXT_MODELS=(agentfactory-build-local agentfactory-verify-local qwen-local/qwen3.8-27b-local)
++# LANE_CONTEXT_ENGINE (task #365, H1; docs/HARNESS-PORTS.md §7 "LCM-X lane mode"). Unset or empty: every profile this
++# script writes is byte-identical to the rule above. lcm-x: the profile also gets the LCM-X plugin pinned in
++# upstream.lock.yaml (lane_context_plugins.hermes-lcm-x), its engine, and lcm-x.env, the settings pc-lane.sh exports
++# to the lane's hermes; verify checks all of it. Any other value fails.
++ENGINE="${LANE_CONTEXT_ENGINE:-}"
++case "$ENGINE" in
++  ''|lcm-x) ;;
++  *) fail "unknown LANE_CONTEXT_ENGINE (lcm-x, or unset): $(printf '%s' "$ENGINE" | head -c 40)";;
++esac
++: "${LCM_X_DIR:=$HOME/lcm-x}"
++: "${LCM_X_DEPS_DIR:=$HOME/lcm-x-deps}"
++: "${LCM_X_TIKTOKEN_DIR:=$HOME/lcm-x-tiktoken}"
++# The tools that can reach another session's rows (the tool-by-tool read is in docs/HARNESS-PORTS.md §7).
++LCM_X_TOOLS_OFF="lcm_grep,lcm_recall,lcm_load_session,lcm_describe,lcm_expand,lcm_expand_query,lcm_evidence_pack"
++LCM_X_TOOLS_OFF="$LCM_X_TOOLS_OFF,lcm_compile_evidence,lcm_compute,lcm_query_state,lcm_retrieve,lcm_doctor"
+ 
+ profile_name() {
+   local lane clean
+@@ -74,21 +89,293 @@ print(int(value))
+ PY
+ }
+ 
++# lcm-x mode only. The paths go into lcm-x.env as they are, and the lane's hermes runs in the lane tree, so each must
++# be absolute and one line; PYTHONPATH splits on ':'.
++lcm_x_paths_ok() {
++  local v
++  for v in LCM_X_DIR LCM_X_DEPS_DIR LCM_X_TIKTOKEN_DIR HERMES_PROFILES_DIR; do
++    case "${!v}" in /*) ;; *) fail "lcm-x: $v is not an absolute path";; esac
++    case "${!v}" in *$'\n'*) fail "lcm-x: $v holds a newline";; esac
++  done
++  case "$LCM_X_DEPS_DIR" in *:*) fail "lcm-x: LCM_X_DEPS_DIR holds a ':' (the PYTHONPATH separator)";; esac
++}
++
++# The exact bytes of <profile>/lcm-x.env: the settings pc-lane.sh gives the lane's hermes process as environment. Never
++# written into the profile's .env, which Hermes loads with override=True (hermes_cli/env_loader.py:349-350 at b3399c1).
++lcm_x_settings() {
++  printf 'LCM_DISABLED_TOOLS=%s\nLCM_DATABASE_PATH=%s\nLCM_EMBEDDINGS_ENABLED=false\nTIKTOKEN_CACHE_DIR=%s\nPYTHONPATH=%s\n' \
++    "$LCM_X_TOOLS_OFF" "$1/lcm.db" "$LCM_X_TIKTOKEN_DIR" "$LCM_X_DEPS_DIR"
++}
++
++# lcm-x mode only: the plugin link and the settings file, each written only when it differs (a relaunch writes none).
++lcm_x_install() {
++  local target="$1" name="$2" link tmp
++  if [ -L "$target/plugins" ] || { [ -e "$target/plugins" ] && [ ! -d "$target/plugins" ]; }; then
++    fail "lcm-x (a): $name/plugins is not a real directory"
++  fi
++  mkdir -p "$target/plugins" || fail "lcm-x (a): cannot create $name/plugins"
++  link="$target/plugins/hermes-lcm-x"
++  if [ -L "$link" ]; then
++    [ "$(readlink "$link")" = "$LCM_X_DIR" ] || ln -sfn "$LCM_X_DIR" "$link" \
++      || fail "lcm-x (a): cannot repoint $name/plugins/hermes-lcm-x"
++  elif [ -e "$link" ]; then
++    fail "lcm-x (a): $name/plugins/hermes-lcm-x exists and is not a symlink"
++  else
++    ln -s "$LCM_X_DIR" "$link" || fail "lcm-x (a): cannot link $name/plugins/hermes-lcm-x"
++  fi
++  [ ! -L "$target/lcm-x.env" ] || fail "lcm-x (c): $name/lcm-x.env is a symlink"
++  if ! cmp -s <(lcm_x_settings "$target") "$target/lcm-x.env"; then
++    tmp="$(mktemp "$target/lcm-x.env.XXXXXX")" || fail "lcm-x (c): cannot write $name/lcm-x.env"
++    { lcm_x_settings "$target" > "$tmp" && mv -f "$tmp" "$target/lcm-x.env"; } \
++      || { rm -f "$tmp"; fail "lcm-x (c): cannot write $name/lcm-x.env"; }
++  fi
++}
++
++# Conditions a to d of task #365 (D-108 item 7); each failure names its item. The pins come from upstream.lock.yaml.
++verify_lcm_x() {
++  local target="$1" verdict rc
++  verdict="$(python3 - "$target" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" "$LCM_X_DIR" "$LCM_X_DEPS_DIR" \
++    "$LCM_X_TIKTOKEN_DIR" "$HERMES_BIN" "${LCM_X_PYTHON:-}" "$(lcm_x_settings "$target")" <<'PY'
++import hashlib
++import json
++import os
++import re
++import shutil
++import subprocess
++import sys
++import yaml
++
++target, root, plugin_dir, deps_dir, tokenizer_dir, hermes_bin, lane_python, settings = sys.argv[1:9]
++settings += "\n"  # the shell's $(...) dropped the file's final newline
++plugin_name, engine_name = "hermes-lcm-x", "lcm-x"  # plugin_identity.py:24-25 at the pin
++
++
++def refuse(item, why):
++    print(f"lcm-x ({item}): {why}")
++    raise SystemExit(2)
++
++
++def git(*args):
++    try:
++        done = subprocess.run(["git", "-C", plugin_dir, *args], capture_output=True, text=True, timeout=30,
++                              env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
++    except (OSError, subprocess.SubprocessError) as exc:
++        refuse("a", f"git in LCM_X_DIR failed: {type(exc).__name__}")
++    if done.returncode != 0:
++        refuse("a", f"git {args[0]} in LCM_X_DIR failed (rc {done.returncode})")
++    return done.stdout
++
++
++def dotenv_names(path):
++    """KEY names a dotenv file assigns, by Hermes's own scanner (hermes_cli/env_loader.py:49-68); values are never kept."""
++    try:
++        text = open(path, encoding="utf-8", errors="replace").read()
++    except OSError:
++        return set()
++    names = set()
++    for line in text.splitlines():
++        line = line.strip()
++        if line and not line.startswith("#") and "=" in line:
++            name = line.removeprefix("export ").split("=", 1)[0].strip()
++            if name:
++                names.add(name)
++    return names
++
++
++# The pins: upstream.lock.yaml, lane_context_plugins.hermes-lcm-x. Never a second copy.
++try:
++    with open(os.path.join(root, "upstream.lock.yaml"), encoding="utf-8") as stream:
++        pin = yaml.safe_load(stream)["lane_context_plugins"]["hermes-lcm-x"]
++    revision = pin["revision"]
++    runtime = {entry["name"]: entry for entry in pin["runtime_imports"]}
++    tokenizer = pin["tokenizer"]
++    cache_file, tokenizer_digest = tokenizer["cache_file"], tokenizer["digest"]
++except Exception:
++    refuse("a", "upstream.lock.yaml has no readable lane_context_plugins.hermes-lcm-x entry")
++if not re.fullmatch(r"[0-9a-f]{40}", str(revision)):
++    refuse("a", "the lock's revision is not 40 lowercase hex")
++if cache_file != hashlib.sha1(str(tokenizer["url"]).encode()).hexdigest():
++    refuse("c", "the lock's tokenizer cache_file is not sha1(url) (tiktoken/load.py:51)")
++
++# (a) The plugin: <profile>/plugins/hermes-lcm-x is a symlink to LCM_X_DIR, a clean clone at the lock's revision.
++plugins = os.path.join(target, "plugins")
++link = os.path.join(plugins, plugin_name)
++if os.path.islink(plugins) or not os.path.isdir(plugins):
++    refuse("a", "the profile's plugins directory is missing or a symlink")
++if not os.path.islink(link):
++    refuse("a", f"plugins/{plugin_name} is not a symlink to LCM_X_DIR")
++if os.readlink(link) != plugin_dir:
++    refuse("a", f"plugins/{plugin_name} points somewhere other than LCM_X_DIR")
++for child in sorted(os.listdir(plugins)):
++    manifest = os.path.join(plugins, child, "plugin.yaml")
++    if child != plugin_name and os.path.isfile(manifest):
++        try:
++            other = (yaml.safe_load(open(manifest, encoding="utf-8")) or {}).get("name")
++        except Exception:
++            other = None
++        if other in (plugin_name, "hermes-lcm"):
++            refuse("a", f"plugins/{child} is a second LCM plugin ({other})")
++try:
++    with open(os.path.join(plugin_dir, "plugin.yaml"), encoding="utf-8") as stream:
++        manifest_name = (yaml.safe_load(stream) or {}).get("name")
++except Exception:
++    manifest_name = None
++if manifest_name != plugin_name:
++    refuse("a", f"LCM_X_DIR has no plugin.yaml naming {plugin_name}")
++head = git("rev-parse", "HEAD").strip()
++if head != revision:
++    refuse("a", f"LCM_X_DIR is at {head[:12] or '<none>'}, not the lock's revision {revision[:12]}")
++if git("status", "--porcelain", "--untracked-files=all").strip():
++    refuse("a", "LCM_X_DIR has changes against its revision")
++
++# (b) The config: plugins.enabled lists the plugin, plugins.disabled does not, context.engine is the engine, and
++# compression is not off (Hermes calls the engine only when it is on, agent/agent_init.py:1860).
++try:
++    with open(os.path.join(target, "config.yaml"), encoding="utf-8") as stream:
++        config = yaml.safe_load(stream)
++except Exception:
++    refuse("b", "config.yaml unreadable")
++config = config if isinstance(config, dict) else {}
++plugin_cfg = config.get("plugins") if isinstance(config.get("plugins"), dict) else {}
++enabled, disabled = plugin_cfg.get("enabled"), plugin_cfg.get("disabled")
++if not isinstance(enabled, list) or plugin_name not in enabled:
++    refuse("b", f"plugins.enabled does not list {plugin_name}")
++if isinstance(disabled, list) and plugin_name in disabled:
++    refuse("b", f"plugins.disabled lists {plugin_name}, and the deny-list wins")
++context = config.get("context")
++engine = context.get("engine") if isinstance(context, dict) else None
++if engine != engine_name:
++    refuse("b", f"context.engine is {'absent' if engine is None else repr(engine)[:40]}, not {engine_name}")
++compression = config.get("compression")
++if isinstance(compression, dict) and compression.get("enabled") is False:
++    refuse("b", "compression.enabled is false, so Hermes never calls the engine")
++
++# (c) The settings: lcm-x.env holds exactly the expected lines, .env sets none of them, the tokenizer file is the
++# pinned one, and the runtime imports come from LCM_X_DEPS_DIR under the Python the lane's hermes runs on.
++settings_path = os.path.join(target, "lcm-x.env")
++if os.path.islink(settings_path) or not os.path.isfile(settings_path):
++    refuse("c", "lcm-x.env is missing or a symlink")
++got = open(settings_path, encoding="utf-8", errors="replace").read()
++want_pairs = dict(line.split("=", 1) for line in settings.splitlines())
++got_pairs = {}
++for line in got.splitlines():
++    key, eq, value = line.partition("=")
++    if not eq or key not in want_pairs or key in got_pairs:
++        refuse("c", f"lcm-x.env has an unexpected line: {key[:40]}")
++    got_pairs[key] = value
++left_on = sorted(set(want_pairs["LCM_DISABLED_TOOLS"].split(",")) - set(got_pairs.get("LCM_DISABLED_TOOLS", "").split(",")))
++if left_on:
++    refuse("c", f"a cross-session tool is left on: {','.join(left_on)}")
++for key in want_pairs:
++    if got_pairs.get(key) != want_pairs[key]:
++        refuse("c", f"lcm-x.env sets {key} {'to another value' if key in got_pairs else 'nowhere'}")
++if got != settings:
++    refuse("c", "lcm-x.env differs from the expected bytes")
++shadowed = sorted(name for name in dotenv_names(os.path.join(target, ".env"))
++                  if name.startswith("LCM_") or name == "TIKTOKEN_CACHE_DIR")
++if shadowed:
++    refuse("c", f"the profile's .env sets {', '.join(shadowed)}, and Hermes loads it with override=True")
++cache_path = os.path.join(tokenizer_dir, cache_file)
++if not os.path.isfile(cache_path):
++    refuse("c", f"the tokenizer file {cache_file} is absent from LCM_X_TIKTOKEN_DIR")
++with open(cache_path, "rb") as stream:
++    if "sha256:" + hashlib.sha256(stream.read()).hexdigest() != tokenizer_digest:
++        refuse("c", f"the tokenizer file {cache_file} is altered (sha256 differs from the lock)")
++if not lane_python:
++    found = shutil.which(hermes_bin)
++    first = b""
++    if found:
++        with open(os.path.realpath(found), "rb") as stream:
++            first = stream.readline(512)
++    words = first[2:].decode("utf-8", "replace").split() if first.startswith(b"#!") else []
++    if words and os.path.basename(words[0]) == "env":
++        words = words[1:]
++        while words and words[0].startswith("-"):  # env's own options (-S); the interpreter's follow its name
++            words = words[1:]
++    if not words or not os.path.basename(words[0]).startswith("python"):
++        refuse("c", "HERMES_BIN is not a Python script, so its interpreter is unknown; set LCM_X_PYTHON")
++    if any(word.startswith("-") and not word.startswith("--") and set(word[1:]) & set("IE") for word in words[1:]):
++        refuse("c", "HERMES_BIN's interpreter runs with -I or -E, which ignore PYTHONPATH")
++    lane_python = words[0] if "/" in words[0] else (shutil.which(words[0]) or words[0])
++probe = (
++    "import json, os, sys\n"
++    "sys.modules['requests'] = None  # a cache miss fails here instead of downloading (tiktoken/load.py:15)\n"
++    "sys.modules['blobfile'] = None\n"
++    "import importlib.metadata as metadata\n"
++    "import tiktoken\n"
++    "tiktoken.get_encoding('cl100k_base').encode('lcm-x verify')\n"
++    "print(json.dumps({'file': os.path.realpath(tiktoken.__file__), 'version': metadata.version('tiktoken')}))\n"
++)
++inherited = os.environ.get("PYTHONPATH", "")
++env = {**os.environ, "PYTHONPATH": deps_dir + (":" + inherited if inherited else ""),
++       "TIKTOKEN_CACHE_DIR": tokenizer_dir, "PYTHONDONTWRITEBYTECODE": "1"}
++try:
++    done = subprocess.run([lane_python, "-c", probe], capture_output=True, text=True, timeout=120, env=env)
++except (OSError, subprocess.SubprocessError) as exc:
++    refuse("c", f"the lane's Python {lane_python} did not run: {type(exc).__name__}")
++try:
++    seen = json.loads(done.stdout.strip().splitlines()[-1]) if done.returncode == 0 else None
++except (ValueError, IndexError):
++    seen = None
++why = (done.stderr.strip().splitlines() or ["no output"])[-1][:160]
++if seen is None:
++    refuse("c", f"tiktoken does not import and load cl100k_base from LCM_X_DEPS_DIR under {lane_python}: {why}")
++deps_real = os.path.realpath(deps_dir) + os.sep
++if not seen["file"].startswith(deps_real):
++    refuse("c", "tiktoken imports from outside LCM_X_DEPS_DIR under the lane's Python")
++if seen["version"] != str(runtime["tiktoken"]["version"]):
++    refuse("c", f"tiktoken {seen['version'][:20]} is in LCM_X_DEPS_DIR, not the lock's {runtime['tiktoken']['version']}")
++
++# (d) Summaries through OmniRoute only. LCM-X calls call_llm(task="compression") with no provider (escalation.py:303-340
++# at the pin); with auxiliary.compression on auto that is the main OmniRoute route, and on a failure Hermes walks the task's
++# fallback_chain, then fallback_providers and fallback_model, then the discovery chain (agent/auxiliary_client.py:
++# 4195-4220, 6835-6908 at b3399c1). The first three must be absent; the discovery chain's credentials are reported by
++# name, never by value.
++if config.get("fallback_providers") or config.get("fallback_model"):
++    refuse("d", "a fallback_providers or fallback_model entry would carry a summary off OmniRoute")
++auxiliary = config.get("auxiliary")
++task = auxiliary.get("compression") if isinstance(auxiliary, dict) else None
++if task is not None and not isinstance(task, dict):
++    refuse("d", "auxiliary.compression is not a mapping")
++task = task or {}
++if str(task.get("provider") or "auto").strip().lower() != "auto":
++    refuse("d", "auxiliary.compression.provider is not auto (the main OmniRoute route)")
++for key in ("base_url", "api_key", "fallback_chain"):
++    if task.get(key):
++        refuse("d", f"auxiliary.compression.{key} is set")
++main_route = json.dumps(config.get("providers"), default=str) + json.dumps(config.get("model"), default=str)
++credential = re.compile(r"[A-Z0-9_]+(?:_API_KEY|_TOKEN|_KEY_ID|_ACCESS_KEY|_SECRET_KEY|_CREDENTIALS)|AWS_PROFILE")
++names = {"the profile's .env": dotenv_names(os.path.join(target, ".env")), "the environment": set(os.environ)}
++report = []
++for where, found in names.items():
++    other = sorted(n for n in found if credential.fullmatch(n) and n not in main_route)
++    if other:
++        report.append(f"{where}: {', '.join(other)}")
++if os.path.exists(os.path.join(target, "auth.json")):
++    report.append("auth.json (stored provider logins)")
++print("lcm-x (d) note: credentials the auxiliary fallback chain can reach: " + ("; ".join(report) or "none found"),
++      file=sys.stderr)
++PY
++)"; rc=$?
++  [ "$rc" -eq 0 ] || fail "${verdict:-lcm-x: verify failed}"
++}
++
+ verify_lane() {
+   local lane="$1" name target source_sha target_sha verdict rc
+   name="$(profile_name "$lane")" || exit $?
+   target="$HERMES_PROFILES_DIR/$name"
+   [ -f "$target/config.yaml" ] && [ -f "$target/.env" ] || fail "profile missing $name"
+   [ -f "$SOURCE/.env" ] || fail "source env missing"
++  [ "$ENGINE" != lcm-x ] || verify_lcm_x "$target"
+ 
+   verdict="$(python3 - "$target/config.yaml" "$lane" "$SOURCE/config.yaml" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" \
+-    "$CONTEXT_LENGTH" "${CONTEXT_MODELS[@]}" <<'PY'
++    "$ENGINE" "$CONTEXT_LENGTH" "${CONTEXT_MODELS[@]}" <<'PY'
+ import copy
+ import sys
+ import yaml
+ 
+-path, lane, source_path, root, context = sys.argv[1:6]
+-context_length, context_models = int(context), sys.argv[6:]
++path, lane, source_path, root, engine, context = sys.argv[1:7]
++context_length, context_models = int(context), sys.argv[7:]
+ 
+ 
+ def lane_provider(conf):
+@@ -168,6 +455,18 @@ gate = {"command": f"python3 {helper} gate", "timeout": 20}
+ expected_gate = copy.deepcopy(expected)
+ expected_gate.setdefault("hooks", {}).setdefault("post_tool_call", []).append(record)
+ expected_gate["hooks"]["pre_verify"] = [gate]
++if engine == "lcm-x":  # the create rule's two keys; every other key stays the source's
++    for conf in (expected, expected_gate):
++        plugins = {} if conf.get("plugins") is None else conf["plugins"]
++        context = {} if conf.get("context") is None else conf["context"]
++        enabled = plugins.get("enabled") if isinstance(plugins, dict) else None
++        enabled = [] if enabled is None else enabled
++        if not isinstance(plugins, dict) or not isinstance(context, dict) or not isinstance(enabled, list):
++            print("source plugins, plugins.enabled or context has the wrong shape")
++            raise SystemExit(3)
++        plugins["enabled"] = enabled + [name for name in ["hermes-lcm-x"] if name not in enabled]
++        context["engine"] = "lcm-x"
++        conf["plugins"], conf["context"] = plugins, context
+ if config not in (expected, expected_gate):
+     print("unexpected semantic config delta")
+     raise SystemExit(3)
+@@ -217,9 +516,10 @@ create_lane() {
+   # Rewrite config.yaml from $from, preserving every untouched byte of it. Parse before and
+   # after, and refuse unless the semantic delta is exactly chain removal, this lane's request
+   # header, the local models' context_length under the lane provider, and, when enabled, the
+-  # two lane done-gate hooks. A result equal to the lane's current bytes is not written.
++  # two lane done-gate hooks and the lcm-x engine's two keys. A result equal to the lane's
++  # current bytes is not written.
+   python3 - "$from" "$target/config.yaml" "$lane" "${LANE_DONE_GATE:-0}" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" \
+-    "$CONTEXT_LENGTH" "${CONTEXT_MODELS[@]}" <<'PY' || fail "config rewrite failed"
++    "$ENGINE" "$CONTEXT_LENGTH" "${CONTEXT_MODELS[@]}" <<'PY' || fail "config rewrite failed"
+ import copy
+ import os
+ from pathlib import Path
+@@ -233,7 +533,8 @@ src, path = Path(sys.argv[1]), Path(sys.argv[2])
+ lane = sys.argv[3]
+ gate_enabled = sys.argv[4] == "1"
+ root = Path(sys.argv[5])
+-context_length, context_models = int(sys.argv[6]), sys.argv[7:]
++lcm_x = sys.argv[6] == "lcm-x"
++context_length, context_models = int(sys.argv[7]), sys.argv[8:]
+ 
+ 
+ def lane_provider(conf):
+@@ -298,6 +599,20 @@ if gate_enabled:
+         "command": f"python3 {helper} gate",
+         "timeout": 20,
+     }]
++if lcm_x:
++    # Hermes b3399c1 loads a user plugin only when plugins.enabled names it (hermes_cli/plugins_discovery.py:213,
++    # plugins.disabled wins at 192) and selects the engine from context.engine (agent/agent_init.py:1746-1752).
++    plugins = {} if expected.get("plugins") is None else expected["plugins"]
++    context = {} if expected.get("context") is None else expected["context"]
++    enabled = plugins.get("enabled") if isinstance(plugins, dict) else None
++    enabled = [] if enabled is None else enabled
++    if not isinstance(plugins, dict) or not isinstance(context, dict) or not isinstance(enabled, list):
++        raise SystemExit("lcm-x needs plugins and context to be mappings and plugins.enabled a list")
++    if isinstance(plugins.get("disabled"), list) and "hermes-lcm-x" in plugins["disabled"]:
++        raise SystemExit("plugins.disabled lists hermes-lcm-x, and the deny-list wins")
++    plugins["enabled"] = enabled + [name for name in ["hermes-lcm-x"] if name not in enabled]
++    context["engine"] = "lcm-x"
++    expected["plugins"], expected["context"] = plugins, context
+ 
+ lines = text.splitlines(keepends=True)
+ top = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*:")
+@@ -431,12 +746,30 @@ if gate_enabled:
+         )
+         lines[hook_span[0]:hook_span[1]] = [replacement]
+ 
++if lcm_x:
++    # Re-emit (or append) the two top-level blocks the lcm-x rule changes; trailing blank and comment lines stay
++    # outside the re-emitted block. The semantic equality guard below rejects any collateral change.
++    for key in ("plugins", "context"):
++        rendered = yaml.safe_dump({key: expected[key]}, default_flow_style=False, sort_keys=False, allow_unicode=True)
++        span = top_block(key)
++        if span is None:
++            if lines and not lines[-1].endswith("\n"):
++                lines[-1] += "\n"
++            lines.append(rendered)
++        else:
++            start, end = span
++            while end > start + 1 and (not lines[end - 1].strip() or lines[end - 1].lstrip().startswith("#")):
++                end -= 1
++            lines[start:end] = [rendered]
++
+ updated = "".join(lines)
+ after = yaml.safe_load(updated)
+ if after != expected:
+     raise SystemExit("unexpected semantic config delta")
+ removed = {"fallback_providers"} if "fallback_providers" in before else set()
+ added = {"hooks"} if gate_enabled and "hooks" not in before else set()
++if lcm_x:
++    added |= {key for key in ("plugins", "context") if key not in before}
+ if set(before) - set(after) != removed:
+     raise SystemExit("unexpected removed top-level key")
+ if set(after) - set(before) != added:
+@@ -458,6 +791,7 @@ finally:
+         os.unlink(tmp_name)
+ PY
+ 
++  [ "$ENGINE" != lcm-x ] || lcm_x_install "$target" "$name"
+   verify_lane "$lane"
+   printf '%s\n' "$name"
+ }
+@@ -474,6 +808,8 @@ remove_profile() {
+   [ ! -e "$HERMES_PROFILES_DIR/$name" ] || fail "delete left profile $name"
+ }
+ 
++# lcm-x mode: the paths are checked before create or verify clones or writes anything.
++case "$ACTION" in create|verify) [ "$ENGINE" != lcm-x ] || lcm_x_paths_ok;; esac
+ # Resolved once per run: create's own verify reuses it, so a fallback prints one line.
+ case "$ACTION" in
+   create) CONTEXT_LENGTH="$(quadlet_context_length)" || exit $?; create_lane "$VALUE";;
+diff --git a/harness-ports/bin/pc-lane.sh b/harness-ports/bin/pc-lane.sh
+index 623c5e7..edafa21 100755
+--- a/harness-ports/bin/pc-lane.sh
++++ b/harness-ports/bin/pc-lane.sh
+@@ -24,6 +24,8 @@
+ #                  the one 262k slot. Cloud routes stay one env away (agentfactory-build / -verify).
+ #   HERMES_REASONING  Hermes effort      default: by ROLE (medium for build, xhigh for verify, high otherwise);
+ #                  on a local route ultra/max/high are CLAMPED to xhigh (the Qwen3.8 template's ceiling)
++#   LANE_CONTEXT_ENGINE  default: unset (Hermes's built-in compressor). lcm-x: the LCM-X lane mode (task #365);
++#                  lane-profile.sh also reads LCM_X_DIR, LCM_X_DEPS_DIR, LCM_X_TIKTOKEN_DIR (docs/HARNESS-PORTS.md §7)
+ #   LANE_BRANCH    branch to fetch       default: claude/soundbox-kit-migration-iz1jwf
+ #   LANE_ID        override the lane id  default: derived from the brief
+ #   PC_LANE_FAKE_HARNESS
+@@ -445,6 +447,11 @@ else
+   # lane id as OmniRoute's request correlation header. An explicit HERMES_PROFILE is the
+   # operator escape hatch and is logged instead of cloned.
+   LANE_PROFILE_HELPER="$AF_REPO/harness-ports/bin/lane-profile.sh"
++  case "${LANE_CONTEXT_ENGINE:-}" in
++    '') ;;
++    lcm-x) [ -z "${HERMES_PROFILE:-}" ] || die "LANE_CONTEXT_ENGINE=lcm-x needs the per-lane profile; unset HERMES_PROFILE";;
++    *) die "unknown LANE_CONTEXT_ENGINE (lcm-x, or unset)";;
++  esac
+   if [ -n "${HERMES_PROFILE:-}" ]; then
+     LANE_PROFILE="$HERMES_PROFILE"
+     echo "pc-lane: profile override $LANE_PROFILE" >&2
+@@ -455,9 +462,30 @@ else
+   fi
+   printf '%s\n' "$LANE_PROFILE" > "$LANE_DIR/profile.txt" || die "cannot record lane profile"
+   export HERMES_PROFILE="$LANE_PROFILE"
++  # LCM-X lane mode (task #365): the lane's hermes gets the settings in the profile's lcm-x.env, which lane-profile.sh
++  # wrote and verified above, and no inherited LCM-X setting (LCM_*; our LCM_X_* paths are not read by the plugin).
++  # PYTHONPATH puts LCM_X_DEPS_DIR first and keeps an inherited value after it. Off, LCM_ENV is empty and the command
++  # below is the one this runner ran before the mode existed.
++  LCM_ENV=()
++  if [ "${LANE_CONTEXT_ENGINE:-}" = lcm-x ]; then
++    lcm_file="${HERMES_PROFILES_DIR:-$HOME/.hermes/profiles}/$LANE_PROFILE/lcm-x.env"; lcm_n=0
++    LCM_ENV=(env)
++    while IFS= read -r v; do
++      case "$v" in LCM_X_*) ;; LCM_*) LCM_ENV+=(-u "$v");; esac
++    done < <(compgen -e)
++    while IFS= read -r line || [ -n "$line" ]; do
++      case "$line" in
++        PYTHONPATH=*) LCM_ENV+=("$line${PYTHONPATH:+:$PYTHONPATH}");;
++        LCM_DISABLED_TOOLS=*|LCM_DATABASE_PATH=*|LCM_EMBEDDINGS_ENABLED=*|TIKTOKEN_CACHE_DIR=*) LCM_ENV+=("$line");;
++        *) die "lcm-x.env has an unexpected line: ${line%%=*}";;
++      esac
++      lcm_n=$((lcm_n + 1))
++    done < "$lcm_file" || die "cannot read $lcm_file"
++    [ "$lcm_n" -eq 5 ] || die "lcm-x.env holds $lcm_n settings, not 5"
++  fi
+ 
+   TERMINAL_CWD="$TREE" \
+-  "$HERMES_BIN" -p "$LANE_PROFILE" --in "$TREE" --no-restore-cwd -z "$(cat "$PROMPT_RUN")" \
++  "${LCM_ENV[@]}" "$HERMES_BIN" -p "$LANE_PROFILE" --in "$TREE" --no-restore-cwd -z "$(cat "$PROMPT_RUN")" \
+       -m "$RUN_MODEL" \
+       --reasoning "$RUN_EFFORT" \
+       --accept-hooks \
+diff --git a/harness-ports/tests/test_lane_profile.sh b/harness-ports/tests/test_lane_profile.sh
+index 4b757bd..a27cd7e 100755
+--- a/harness-ports/tests/test_lane_profile.sh
++++ b/harness-ports/tests/test_lane_profile.sh
+@@ -5,6 +5,7 @@ set -uo pipefail
+ 
+ # Hermetic: a caller's runtime/test overrides cannot redirect this suite to real profiles.
+ unset HERMES_BIN HERMES_PROFILES_DIR HERMES_SOURCE_PROFILE FAKE_HERMES_CALLS LANE_DONE_GATE QWEN_QUADLET 2>/dev/null || true
++unset LANE_CONTEXT_ENGINE LCM_X_DIR LCM_X_DEPS_DIR LCM_X_TIKTOKEN_DIR LCM_X_PYTHON 2>/dev/null || true
+ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ HELPER="$HERE/../bin/lane-profile.sh"
+ # The repo root from this file's own known place, <repo>/harness-ports/tests: a literal suffix, never the helper's `..`
+@@ -139,6 +140,30 @@ providers:
+     models:
+     - agentfactory-build-local
+ YAML
++# LCM-X (task #365): a base profile that already has plugins and context blocks (their other entries must stay), and one
++# whose .env holds a second provider credential (verify names it, never its value; the value is a fake made here).
++make_source agentfactorylcm <<'YAML'
++model:
++  default: auto/best-coding-fast
++  provider: custom:omniroute-fedora
++  base_url: http://127.0.0.1:20128/v1
++providers:
++  omniroute-fedora:
++    api: http://127.0.0.1:20128/v1
++    key_env: OMNIROUTE_API_KEY
++plugins:
++  enabled:
++  - owner-plugin
++  disabled: []
++context:
++  engine: compressor
++# the owner's note after the context block
++compression:
++  enabled: true
++YAML
++make_source agentfactorycred < "$SOURCE/config.yaml"
++FAKE_CRED="fake-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"; FAKE_CRED2="fake-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
++printf 'OPENROUTER_API_KEY=%s\n' "$FAKE_CRED" >> "$PROFILES/agentfactorycred/.env"
+ base_hashes() { (cd "$PROFILES" && sha256sum agentfactory*/config.yaml agentfactory*/.env); }
+ base_hashes > "$TMP/base-hashes.before"
+ 
+@@ -649,6 +674,285 @@ tree_state "$PROFILES/aflanenoconfig" > "$TMP/noconfig.after"
+ check "create refuses an existing profile with no config.yaml with its reason, before any clone or write" $? \
+   "rc=$NC_RC stderr=$(cat "$TMP/noconfig.err") config_made=$([ -e "$PROFILES/aflanenoconfig/config.yaml" ] && echo yes || echo no)"
+ 
++# --- LANE_CONTEXT_ENGINE (task #365). Off is byte-identical; lcm-x gives the profile conditions a to d; verify names
++# the failed item. Off first: an empty value writes the bytes the unset runs above wrote, each pinned earlier in this
++# suite to a golden (the gate-off reconstruction, the models-kept literal, the gate-on clone).
++cp "$GATE_OFF" "$TMP/gateoff-golden.yaml"; tree_state "$PROFILES/aflanegateoff" > "$TMP/gateoff-tree.golden"
++reset_lane gateoff
++LANE_CONTEXT_ENGINE= LANE_DONE_GATE=0 bash "$HELPER" create gateoff >/dev/null; OFF1_RC=$?
++cmp -s "$TMP/gateoff-golden.yaml" "$GATE_OFF"; OFF1_BYTES=$?
++tree_state "$PROFILES/aflanegateoff" | cmp -s - "$TMP/gateoff-tree.golden"; OFF1_TREE=$?
++reset_lane modelskept
++LANE_CONTEXT_ENGINE= HERMES_SOURCE_PROFILE=agentfactorymodels bash "$HELPER" create models-kept >/dev/null; OFF2_RC=$?
++cmp -s "$TMP/models-kept.expected" "$PROFILES/aflanemodelskept/config.yaml"; OFF2_BYTES=$?
++reset_lane idemgate
++LANE_CONTEXT_ENGINE= LANE_DONE_GATE=1 bash "$HELPER" create idemgate >/dev/null; OFF3_RC=$?
++cmp -s "$TMP/idemgate-current.yaml" "$IG"; OFF3_BYTES=$?
++LANE_CONTEXT_ENGINE= run_verify gateoff
++OFF_LCM="$(find "$PROFILES/aflanegateoff" "$PROFILES/aflanemodelskept" "$PROFILES/aflaneidemgate" \( -name plugins -o -name lcm-x.env \) | wc -l)"
++[ "$OFF1_RC" -eq 0 ] && [ "$OFF1_BYTES" -eq 0 ] && [ "$OFF1_TREE" -eq 0 ] && [ "$OFF2_RC" -eq 0 ] && [ "$OFF2_BYTES" -eq 0 ] \
++  && [ "$OFF3_RC" -eq 0 ] && [ "$OFF3_BYTES" -eq 0 ] && [ "$VERIFY_RC" -eq 0 ] && [ -z "$VERIFY_OUT" ] && [ "$OFF_LCM" -eq 0 ]
++check "LANE_CONTEXT_ENGINE empty writes the unset run's golden bytes (both base profiles, gate off and on), and no LCM file" $? \
++  "rc=$OFF1_RC/$OFF2_RC/$OFF3_RC bytes=$OFF1_BYTES/$OFF2_BYTES/$OFF3_BYTES tree=$OFF1_TREE verify_rc=$VERIFY_RC lcm_files=$OFF_LCM"
++
++UK_CREATES="$(grep -c '^profile create ' "$FAKE_HERMES_CALLS")"
++UK_OUT="$(LANE_CONTEXT_ENGINE=lcm bash "$HELPER" create unknownengine 2>&1)"; UK_RC=$?
++UKV_OUT="$(LANE_CONTEXT_ENGINE='lcm-x ' bash "$HELPER" verify gateoff 2>&1)"; UKV_RC=$?
++[ "$UK_RC" -eq 64 ] && [ "$UK_OUT" = 'lane-profile: unknown LANE_CONTEXT_ENGINE (lcm-x, or unset): lcm' ] \
++  && [ ! -e "$PROFILES/aflaneunknownengine" ] && [ "$(grep -c '^profile create ' "$FAKE_HERMES_CALLS")" = "$UK_CREATES" ] \
++  && [ "$UKV_RC" -eq 64 ] && [ "$UKV_OUT" = 'lane-profile: unknown LANE_CONTEXT_ENGINE (lcm-x, or unset): lcm-x ' ]
++check "an unknown LANE_CONTEXT_ENGINE fails create and verify with its reason, before any clone" $? \
++  "create: rc=$UK_RC $UK_OUT | verify: rc=$UKV_RC $UKV_OUT"
++
++# The lcm-x fixture. The helper runs as a byte copy beside a lock made from the REAL upstream.lock.yaml with two values
++# swapped for the fixtures': the revision (a throwaway clone) and the tokenizer digest (a throwaway file). The fake
++# tiktoken is a labelled TEST DOUBLE for the wheel; verify runs the real wheel on the PC.
++LCM_ROOT="$TMP/lcmrepo"; mkdir -p "$LCM_ROOT/harness-ports/bin" "$TMP/lcmhome"
++cp "$HELPER" "$LCM_ROOT/harness-ports/bin/lane-profile.sh"; HELPER_LCM="$LCM_ROOT/harness-ports/bin/lane-profile.sh"
++CLONE="$TMP/lcm-x-clone"; mkdir -p "$CLONE"; git -C "$CLONE" init -q
++printf 'name: hermes-lcm-x\nversion: 0.24.3\n' > "$CLONE/plugin.yaml"; printf '# fixture: never imported\n' > "$CLONE/__init__.py"
++git -C "$CLONE" add -A && git -C "$CLONE" -c user.email=t@t -c user.name=t -c core.hooksPath=/dev/null commit -qm fixture
++FIX_REV="$(git -C "$CLONE" rev-parse HEAD)"
++TOK="$TMP/lcm-tok"; TOK_FILE="$TOK/9b5ad71b2ce5302211f9c61530b329a4922fc6a4"; mkdir -p "$TOK"
++printf 'fixture tokenizer bytes\n' > "$TOK_FILE"; TOK_SHA="$(sha256sum "$TOK_FILE" | cut -c1-64)"; cp "$TOK_FILE" "$TMP/tok.good"
++DEPS="$TMP/lcm-deps"; mkdir -p "$DEPS/tiktoken" "$DEPS/tiktoken-0.14.0.dist-info"
++cat > "$DEPS/tiktoken/__init__.py" <<'PY'
++# TEST DOUBLE for the tiktoken 0.14.0 wheel (labelled): it imports from LCM_X_DEPS_DIR, and cl100k_base only opens the
++# pre-seeded cache file under TIKTOKEN_CACHE_DIR, named sha1(url) as tiktoken/load.py:51 names it.
++import hashlib
++import os
++_URL = "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
++
++
++class _Encoding:
++    def encode(self, text):
++        return list(text.encode())
++
++
++def get_encoding(name):
++    assert name == "cl100k_base", name
++    with open(os.path.join(os.environ["TIKTOKEN_CACHE_DIR"], hashlib.sha1(_URL.encode()).hexdigest()), "rb"):
++        return _Encoding()
++PY
++printf 'Metadata-Version: 2.1\nName: tiktoken\nVersion: 0.14.0\n' > "$DEPS/tiktoken-0.14.0.dist-info/METADATA"
++python3 - "$REPO_ROOT/upstream.lock.yaml" "$LCM_ROOT/upstream.lock.yaml" "$FIX_REV" "$TOK_SHA" <<'PY'
++import sys
++src, dst, rev, digest = sys.argv[1:]
++text = open(src, encoding="utf-8").read()
++for old, new in (('revision: "601a9ccb3d5fefbe242a453e57ed2c8196bf33c3"', f'revision: "{rev}"'),
++                 ('digest: "sha256:223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7"', f'digest: "sha256:{digest}"')):
++    assert text.count(old) == 1, old
++    text = text.replace(old, new)
++open(dst, "w", encoding="utf-8").write(text)
++PY
++LOCK_FIX_RC=$?
++LCM_ENVS=(PATH="$PATH" HOME="$TMP/lcmhome" HERMES_BIN="$BIN/hermes" HERMES_PROFILES_DIR="$PROFILES" HERMES_SOURCE_PROFILE=agentfactory
++  QWEN_QUADLET="$TMP/qwen.container" FAKE_HERMES_CALLS="$FAKE_HERMES_CALLS" LANE_CONTEXT_ENGINE=lcm-x
++  LCM_X_DIR="$CLONE" LCM_X_DEPS_DIR="$DEPS" LCM_X_TIKTOKEN_DIR="$TOK" LCM_X_PYTHON=python3)
++lcm_run() {  # lcm_run <action> <lane> [VAR=value ...]: the helper copy in lcm-x mode, in an environment of only these names
++  local action="$1" lane="$2"; shift 2
++  LCM_OUT="$(env -i "${LCM_ENVS[@]}" "$@" bash "$HELPER_LCM" "$action" "$lane" 2>"$TMP/lcm.err")"; LCM_RC=$?
++  LCM_ERR="$(cat "$TMP/lcm.err")"
++}
++NOTE_NONE='lcm-x (d) note: credentials the auxiliary fallback chain can reach: none found'
++TOOLS_OFF='lcm_grep,lcm_recall,lcm_load_session,lcm_describe,lcm_expand,lcm_expand_query,lcm_evidence_pack,lcm_compile_evidence,lcm_compute,lcm_query_state,lcm_retrieve,lcm_doctor'
++
++reset_lane lcmon
++lcm_run create lcmon; C1_RC=$LCM_RC; C1_OUT=$LCM_OUT; C1_ERR=$LCM_ERR
++LCMON="$PROFILES/aflanelcmon"
++printf 'LCM_DISABLED_TOOLS=%s\nLCM_DATABASE_PATH=%s\nLCM_EMBEDDINGS_ENABLED=false\nTIKTOKEN_CACHE_DIR=%s\nPYTHONPATH=%s\n' \
++  "$TOOLS_OFF" "$LCMON/lcm.db" "$TOK" "$DEPS" > "$TMP/lcm-x.env.expected"
++cmp -s "$TMP/lcm-x.env.expected" "$LCMON/lcm-x.env"; C1_ENV=$?
++python3 - "$TMP/source-config.yaml" "$LCMON/config.yaml" <<'PY'
++import copy, sys, yaml
++source, target = sys.argv[1:]
++with open(source, encoding="utf-8") as f: before = yaml.safe_load(f)
++with open(target, encoding="utf-8") as f: after = yaml.safe_load(f)
++expected = copy.deepcopy(before)
++expected.pop("fallback_providers", None)
++expected["model"].setdefault("default_headers", {})["x-omniroute-session-id"] = "lcmon"
++expected["providers"]["omniroute-fedora"]["models"] = {
++    m: {"context_length": 98304}
++    for m in ("agentfactory-build-local", "agentfactory-verify-local", "qwen-local/qwen3.8-27b-local")
++}
++expected["plugins"] = {"enabled": ["hermes-lcm-x"]}
++expected["context"] = {"engine": "lcm-x"}
++assert after == expected, (after, expected)
++PY
++C1_SEM=$?
++lcm_run verify lcmon
++[ "$LOCK_FIX_RC" -eq 0 ] && [ "$C1_RC" -eq 0 ] && [ "$C1_OUT" = aflanelcmon ] && [ "$C1_ERR" = "$NOTE_NONE" ] \
++  && [ "$C1_ENV" -eq 0 ] && [ "$C1_SEM" -eq 0 ] && [ -L "$LCMON/plugins/hermes-lcm-x" ] \
++  && [ "$(readlink "$LCMON/plugins/hermes-lcm-x")" = "$CLONE" ] && [ "$LCM_RC" -eq 0 ] && [ -z "$LCM_OUT" ] && [ "$LCM_ERR" = "$NOTE_NONE" ]
++check "lcm-x: the plugin links to the pinned clone, plugins.enabled and context.engine are set, lcm-x.env holds the five settings, verify passes" $? \
++  "lock_rc=$LOCK_FIX_RC create_rc=$C1_RC out=$C1_OUT env_cmp=$C1_ENV semantic=$C1_SEM verify_rc=$LCM_RC stderr=$LCM_ERR"
++
++# The paths are checked before any clone or write: a relative LCM_X_DIR would leave a dangling plugin link, and a ':' in
++# LCM_X_DEPS_DIR would split PYTHONPATH.
++reset_lane lcmpath; PATH_CREATES="$(grep -c '^profile create ' "$FAKE_HERMES_CALLS")"
++lcm_run create lcmpath LCM_X_DIR=relative/lcm-x; REL_RC=$LCM_RC; REL_ERR=$LCM_ERR
++lcm_run create lcmpath LCM_X_DEPS_DIR="$DEPS:$TMP/elsewhere"; COLON_RC=$LCM_RC; COLON_ERR=$LCM_ERR
++[ "$REL_RC" -eq 64 ] && [ "$REL_ERR" = 'lane-profile: lcm-x: LCM_X_DIR is not an absolute path' ] \
++  && [ "$COLON_RC" -eq 64 ] && [ "$COLON_ERR" = "lane-profile: lcm-x: LCM_X_DEPS_DIR holds a ':' (the PYTHONPATH separator)" ] \
++  && [ ! -e "$PROFILES/aflanelcmpath" ] && [ "$(grep -c '^profile create ' "$FAKE_HERMES_CALLS")" = "$PATH_CREATES" ]
++check "lcm-x refuses a relative path, or a ':' in LCM_X_DEPS_DIR, before any clone or write" $? \
++  "relative: rc=$REL_RC $REL_ERR | colon: rc=$COLON_RC $COLON_ERR"
++
++reset_lane lcmkept
++lcm_run create lcmkept HERMES_SOURCE_PROFILE=agentfactorylcm; KEPT_RC=$LCM_RC
++python3 - "$PROFILES/aflanelcmkept/config.yaml" <<'PY'
++import sys, yaml
++with open(sys.argv[1], encoding="utf-8") as f: after = yaml.safe_load(f)
++assert after["plugins"] == {"enabled": ["owner-plugin", "hermes-lcm-x"], "disabled": []}, after["plugins"]
++assert after["context"] == {"engine": "lcm-x"} and after["compression"] == {"enabled": True}, after
++PY
++KEPT_SEM=$?
++lcm_run verify lcmkept HERMES_SOURCE_PROFILE=agentfactorylcm
++[ "$KEPT_RC" -eq 0 ] && [ "$KEPT_SEM" -eq 0 ] && grep -Fxq "# the owner's note after the context block" "$PROFILES/aflanelcmkept/config.yaml" \
++  && [ "$LCM_RC" -eq 0 ]
++check "lcm-x keeps the base profile's other plugins entries and its comment, and replaces only context.engine" $? \
++  "create_rc=$KEPT_RC semantic=$KEPT_SEM verify_rc=$LCM_RC stderr=$LCM_ERR"
++
++ON_CFG_INODE="$(stat -c %i "$LCMON/config.yaml")"; ON_ENV_INODE="$(stat -c %i "$LCMON/lcm-x.env")"
++lcm_run create lcmon
++[ "$LCM_RC" -eq 0 ] && [ "$(stat -c %i "$LCMON/config.yaml")" = "$ON_CFG_INODE" ] && [ "$(stat -c %i "$LCMON/lcm-x.env")" = "$ON_ENV_INODE" ] \
++  && cmp -s "$TMP/lcm-x.env.expected" "$LCMON/lcm-x.env" && [ "$(readlink "$LCMON/plugins/hermes-lcm-x")" = "$CLONE" ]
++check "a second lcm-x create writes nothing (the same inodes, the same link)" $? "rc=$LCM_RC"
++cp "$LCMON/config.yaml" "$TMP/lcmon-good.yaml"; cp "$LCMON/.env" "$TMP/lcmon-good.env"
++
++lcm_refuses() {  # lcm_refuses <label> <the exact stderr> [VAR=value ...]: verify of aflanelcmon exits 64 with that line only
++  local label="$1" want="$2"; shift 2
++  lcm_run verify lcmon "$@"
++  [ "$LCM_RC" -eq 64 ] && [ -z "$LCM_OUT" ] && [ "$LCM_ERR" = "$want" ]
++  check "lcm-x verify refuses $label" $? "rc=$LCM_RC stderr=$(printf '%s' "$LCM_ERR" | tr '\n' '|')"
++}
++git -C "$CLONE" -c user.email=t@t -c user.name=t -c core.hooksPath=/dev/null commit -q --allow-empty -m moved
++MOVED="$(git -C "$CLONE" rev-parse HEAD)"
++lcm_refuses "(a) the clone at another commit" "lane-profile: lcm-x (a): LCM_X_DIR is at ${MOVED:0:12}, not the lock's revision ${FIX_REV:0:12}"
++git -C "$CLONE" reset -q --hard "$FIX_REV"
++printf 'x = 1\n' >> "$CLONE/__init__.py"
++lcm_refuses "(a) a clone with changes" "lane-profile: lcm-x (a): LCM_X_DIR has changes against its revision"
++git -C "$CLONE" checkout -q -- __init__.py
++rm "$LCMON/plugins/hermes-lcm-x"; cp -a "$CLONE" "$LCMON/plugins/hermes-lcm-x"
++lcm_refuses "(a) a plugin copy where the link to the pinned clone belongs" "lane-profile: lcm-x (a): plugins/hermes-lcm-x is not a symlink to LCM_X_DIR"
++lcm_run create lcmon
++[ "$LCM_RC" -eq 64 ] && [ "$LCM_ERR" = 'lane-profile: lcm-x (a): aflanelcmon/plugins/hermes-lcm-x exists and is not a symlink' ] \
++  && [ -d "$LCMON/plugins/hermes-lcm-x" ] && [ ! -L "$LCMON/plugins/hermes-lcm-x" ]
++check "lcm-x create refuses a real directory where the plugin link belongs, and leaves it" $? "rc=$LCM_RC stderr=$LCM_ERR"
++rm -rf "$LCMON/plugins/hermes-lcm-x"; ln -s "$CLONE" "$LCMON/plugins/hermes-lcm-x"
++mkdir -p "$LCMON/plugins/old-lcm"; printf 'name: hermes-lcm\n' > "$LCMON/plugins/old-lcm/plugin.yaml"
++lcm_refuses "(a) a second LCM plugin in the profile" "lane-profile: lcm-x (a): plugins/old-lcm is a second LCM plugin (hermes-lcm)"
++rm -rf "$LCMON/plugins/old-lcm"
++# A link to another clone at the same commit passes the revision check on LCM_X_DIR, so the link's target is checked
++# itself; create repoints such a link.
++cp -a "$CLONE" "$TMP/lcm-x-other"; rm "$LCMON/plugins/hermes-lcm-x"; ln -s "$TMP/lcm-x-other" "$LCMON/plugins/hermes-lcm-x"
++lcm_refuses "(a) a link to another clone at the same commit" "lane-profile: lcm-x (a): plugins/hermes-lcm-x points somewhere other than LCM_X_DIR"
++lcm_run create lcmon
++[ "$LCM_RC" -eq 0 ] && [ "$(readlink "$LCMON/plugins/hermes-lcm-x")" = "$CLONE" ] && [ "$LCM_ERR" = "$NOTE_NONE" ]
++check "lcm-x create repoints a plugin link that names another directory to LCM_X_DIR" $? \
++  "rc=$LCM_RC stderr=$LCM_ERR link=$(readlink "$LCMON/plugins/hermes-lcm-x")"
++# A plugins directory that is a symlink (say, to a shared plugins directory) would put the plugin link outside the
++# lane's profile.
++mv "$LCMON/plugins" "$TMP/plugins.lane"; mkdir -p "$TMP/shared-plugins"; ln -s "$TMP/shared-plugins" "$LCMON/plugins"
++lcm_refuses "(a) a plugins directory that is a symlink" "lane-profile: lcm-x (a): the profile's plugins directory is missing or a symlink"
++lcm_run create lcmon
++[ "$LCM_RC" -eq 64 ] && [ "$LCM_ERR" = 'lane-profile: lcm-x (a): aflanelcmon/plugins is not a real directory' ] \
++  && [ -z "$(ls -A "$TMP/shared-plugins")" ] && [ -L "$LCMON/plugins" ]
++check "lcm-x create refuses a plugins symlink and writes nothing through it" $? "rc=$LCM_RC stderr=$LCM_ERR"
++rm "$LCMON/plugins"; mv "$TMP/plugins.lane" "$LCMON/plugins"
++mutate_config "$LCMON/config.yaml" "del data['context']['engine']"
++lcm_refuses "(b) the engine key absent" "lane-profile: lcm-x (b): context.engine is absent, not lcm-x"
++cp "$TMP/lcmon-good.yaml" "$LCMON/config.yaml"; mutate_config "$LCMON/config.yaml" "data['plugins']['enabled'] = []"
++lcm_refuses "(b) the plugin missing from plugins.enabled" "lane-profile: lcm-x (b): plugins.enabled does not list hermes-lcm-x"
++cp "$TMP/lcmon-good.yaml" "$LCMON/config.yaml"; mutate_config "$LCMON/config.yaml" "data['plugins']['disabled'] = ['hermes-lcm-x']"
++lcm_refuses "(b) the plugin on the deny-list" "lane-profile: lcm-x (b): plugins.disabled lists hermes-lcm-x, and the deny-list wins"
++cp "$TMP/lcmon-good.yaml" "$LCMON/config.yaml"; mutate_config "$LCMON/config.yaml" "data['compression'] = {'enabled': False}"
++lcm_refuses "(b) compression turned off" "lane-profile: lcm-x (b): compression.enabled is false, so Hermes never calls the engine"
++cp "$TMP/lcmon-good.yaml" "$LCMON/config.yaml"
++sed -i 's/lcm_recall,//' "$LCMON/lcm-x.env"
++lcm_refuses "(c) a cross-session tool left on" "lane-profile: lcm-x (c): a cross-session tool is left on: lcm_recall"
++cp "$TMP/lcm-x.env.expected" "$LCMON/lcm-x.env"; printf 'LCM_EXTRA=1\n' >> "$LCMON/lcm-x.env"
++lcm_refuses "(c) an extra setting" "lane-profile: lcm-x (c): lcm-x.env has an unexpected line: LCM_EXTRA"
++cp "$TMP/lcm-x.env.expected" "$LCMON/lcm-x.env"
++# lcm-x.env as a symlink: its bytes are right, so only the file-type checks see it.
++mv "$LCMON/lcm-x.env" "$TMP/lcm-x.env.linked"; ln -s "$TMP/lcm-x.env.linked" "$LCMON/lcm-x.env"
++lcm_refuses "(c) lcm-x.env as a symlink" "lane-profile: lcm-x (c): lcm-x.env is missing or a symlink"
++lcm_run create lcmon
++[ "$LCM_RC" -eq 64 ] && [ "$LCM_ERR" = 'lane-profile: lcm-x (c): aflanelcmon/lcm-x.env is a symlink' ] && [ -L "$LCMON/lcm-x.env" ]
++check "lcm-x create refuses a symlink where lcm-x.env belongs, and leaves it" $? "rc=$LCM_RC stderr=$LCM_ERR"
++rm "$LCMON/lcm-x.env"; cp "$TMP/lcm-x.env.expected" "$LCMON/lcm-x.env"
++printf 'LCM_SUMMARY_MODEL=elsewhere/model\n' >> "$LCMON/.env"
++lcm_refuses "(c) an LCM setting in the profile's .env" "lane-profile: lcm-x (c): the profile's .env sets LCM_SUMMARY_MODEL, and Hermes loads it with override=True"
++cp "$TMP/lcmon-good.env" "$LCMON/.env"
++rm "$TOK_FILE"
++lcm_refuses "(c) the tokenizer file absent" "lane-profile: lcm-x (c): the tokenizer file 9b5ad71b2ce5302211f9c61530b329a4922fc6a4 is absent from LCM_X_TIKTOKEN_DIR"
++cp "$TMP/tok.good" "$TOK_FILE"; printf 'x' >> "$TOK_FILE"
++lcm_refuses "(c) the tokenizer file altered" "lane-profile: lcm-x (c): the tokenizer file 9b5ad71b2ce5302211f9c61530b329a4922fc6a4 is altered (sha256 differs from the lock)"
++cp "$TMP/tok.good" "$TOK_FILE"
++mkdir -p "$TMP/elsewhere"; mv "$DEPS/tiktoken" "$DEPS/tiktoken-0.14.0.dist-info" "$TMP/elsewhere/"
++lcm_refuses "(c) tiktoken found only outside LCM_X_DEPS_DIR" "lane-profile: lcm-x (c): tiktoken imports from outside LCM_X_DEPS_DIR under the lane's Python" \
++  PYTHONPATH="$TMP/elsewhere"
++lcm_run verify lcmon
++[ "$LCM_RC" -eq 64 ] && [ -z "$LCM_OUT" ] && case "$LCM_ERR" in 'lane-profile: lcm-x (c): tiktoken '*) true;; *) false;; esac
++check "lcm-x verify refuses (c) no tiktoken in LCM_X_DEPS_DIR" $? "rc=$LCM_RC stderr=$LCM_ERR"
++mv "$TMP/elsewhere/tiktoken" "$TMP/elsewhere/tiktoken-0.14.0.dist-info" "$DEPS/"
++printf 'Metadata-Version: 2.1\nName: tiktoken\nVersion: 0.13.0\n' > "$DEPS/tiktoken-0.14.0.dist-info/METADATA"
++lcm_refuses "(c) another tiktoken version" "lane-profile: lcm-x (c): tiktoken 0.13.0 is in LCM_X_DEPS_DIR, not the lock's 0.14.0"
++printf 'Metadata-Version: 2.1\nName: tiktoken\nVersion: 0.14.0\n' > "$DEPS/tiktoken-0.14.0.dist-info/METADATA"
++printf '#!%s -I\n' "$(command -v python3)" > "$TMP/pyhermes-isolated"; printf '#!/usr/bin/env python3\n' > "$TMP/pyhermes-env"
++chmod +x "$TMP/pyhermes-isolated" "$TMP/pyhermes-env"  # executable, as the real hermes is: verify resolves it on PATH
++lcm_refuses "(c) a hermes whose interpreter ignores PYTHONPATH" "lane-profile: lcm-x (c): HERMES_BIN's interpreter runs with -I or -E, which ignore PYTHONPATH" \
++  HERMES_BIN="$TMP/pyhermes-isolated" LCM_X_PYTHON=
++lcm_refuses "(c) a hermes that is not a Python script" "lane-profile: lcm-x (c): HERMES_BIN is not a Python script, so its interpreter is unknown; set LCM_X_PYTHON" \
++  LCM_X_PYTHON=
++lcm_run verify lcmon HERMES_BIN="$TMP/pyhermes-env" LCM_X_PYTHON=
++[ "$LCM_RC" -eq 0 ] && [ "$LCM_ERR" = "$NOTE_NONE" ]
++check "lcm-x verify finds the lane's Python from the hermes shebang (#!/usr/bin/env python3)" $? "rc=$LCM_RC stderr=$LCM_ERR"
++mutate_config "$LCMON/config.yaml" "data['fallback_model'] = {'provider': 'openrouter', 'model': 'x/y'}"
++lcm_refuses "(d) a legacy fallback_model" "lane-profile: lcm-x (d): a fallback_providers or fallback_model entry would carry a summary off OmniRoute"
++cp "$TMP/lcmon-good.yaml" "$LCMON/config.yaml"
++mutate_config "$LCMON/config.yaml" "data['auxiliary'] = {'compression': {'provider': 'auto', 'base_url': 'http://127.0.0.1:9/v1'}}"
++lcm_refuses "(d) a compression base_url" "lane-profile: lcm-x (d): auxiliary.compression.base_url is set"
++cp "$TMP/lcmon-good.yaml" "$LCMON/config.yaml"
++mutate_config "$LCMON/config.yaml" "data['auxiliary'] = {'compression': {'provider': 'openrouter'}}"
++lcm_refuses "(d) a compression provider other than auto" "lane-profile: lcm-x (d): auxiliary.compression.provider is not auto (the main OmniRoute route)"
++cp "$TMP/lcmon-good.yaml" "$LCMON/config.yaml"
++cp "$LCM_ROOT/upstream.lock.yaml" "$TMP/lock.fixture"
++python3 - "$LCM_ROOT/upstream.lock.yaml" <<'PY'
++import sys, yaml
++p = sys.argv[1]
++with open(p, encoding="utf-8") as f: lock = yaml.safe_load(f)
++del lock["lane_context_plugins"]
++with open(p, "w", encoding="utf-8") as f: yaml.safe_dump(lock, f)
++PY
++lcm_refuses "(a) with no lock entry (fails closed)" "lane-profile: lcm-x (a): upstream.lock.yaml has no readable lane_context_plugins.hermes-lcm-x entry"
++cp "$TMP/lock.fixture" "$LCM_ROOT/upstream.lock.yaml"
++lcm_run verify lcmon
++[ "$LCM_RC" -eq 0 ] && [ -z "$LCM_OUT" ] && [ "$LCM_ERR" = "$NOTE_NONE" ]
++check "lcm-x verify passes again once every fixture is restored" $? "rc=$LCM_RC stderr=$LCM_ERR"
++
++reset_lane lcmcred
++lcm_run create lcmcred HERMES_SOURCE_PROFILE=agentfactorycred ANTHROPIC_API_KEY="$FAKE_CRED2"
++CRED_WANT="lcm-x (d) note: credentials the auxiliary fallback chain can reach: the profile's .env: OPENROUTER_API_KEY; the environment: ANTHROPIC_API_KEY"
++[ "$LCM_RC" -eq 0 ] && [ "$LCM_ERR" = "$CRED_WANT" ] && ! grep -Fq -e "$FAKE_CRED" -e "$FAKE_CRED2" "$TMP/lcm.err" \
++  && ! printf '%s' "$LCM_OUT" | grep -Fq -e "$FAKE_CRED" -e "$FAKE_CRED2"
++check "lcm-x verify names the other credentials the fallback chain can reach (not the main route's), never a value" $? \
++  "rc=$LCM_RC stderr=$LCM_ERR"
++
++# Back to off: a relaunch without the opt-in re-derives the standard config (no plugins or context key), so Hermes does
++# not load the plugin; the link and lcm-x.env stay, unread.
++bash "$HELPER" create lcmon >/dev/null; BACK_RC=$?
++run_verify lcmon
++python3 - "$LCMON/config.yaml" <<'PY'
++import sys, yaml
++with open(sys.argv[1], encoding="utf-8") as f: after = yaml.safe_load(f)
++assert "plugins" not in after and "context" not in after, after
++PY
++BACK_SEM=$?
++[ "$BACK_RC" -eq 0 ] && [ "$VERIFY_RC" -eq 0 ] && [ -z "$VERIFY_OUT" ] && [ "$BACK_SEM" -eq 0 ]
++check "a relaunch with the mode off drops plugins.enabled and context.engine, and the off verify passes" $? \
++  "create_rc=$BACK_RC verify_rc=$VERIFY_RC semantic=$BACK_SEM"
++
+ base_hashes > "$TMP/base-hashes.after"
+ cmp -s "$TMP/base-hashes.before" "$TMP/base-hashes.after"
+ check "no create, verify or remove in this suite wrote a base profile's config.yaml or .env" $? \
+diff --git a/harness-ports/tests/test_pc_lane.sh b/harness-ports/tests/test_pc_lane.sh
+index c4c64d6..6508e20 100755
+--- a/harness-ports/tests/test_pc_lane.sh
++++ b/harness-ports/tests/test_pc_lane.sh
+@@ -16,6 +16,7 @@ set -uo pipefail
+ # Hermetic: clear env vars that a parent lane or caller might export, so the
+ # suite's own values are never shadowed by the caller's environment.
+ unset LANE_ID LANE_REPORT_DRAFT TERMINAL_CWD HERMES_MODEL HERMES_REASONING HERMES_PROFILE HERMES_PROFILES_DIR HERMES_SOURCE_PROFILE 2>/dev/null || true
++unset LANE_CONTEXT_ENGINE LCM_X_DIR LCM_X_DEPS_DIR LCM_X_TIKTOKEN_DIR 2>/dev/null || true
+ 
+ # Self-test mode: the hermetic-cleanup test below spawns THIS SCRIPT from a
+ # poisoned parent.  If the unset above worked, LANE_ID is gone; if the unset
+@@ -54,10 +55,22 @@ mkdir -p "$REPO/scripts"; echo "LINT-AT-PIN" > "$REPO/scripts/report_lint.py"
+ echo hello > "$REPO/file.txt"
+ # A labelled fake lane-profile helper for this plumbing suite. Its own config/env
+ # transformation contract is exercised by test_lane_profile.sh; here we isolate argv/profile wiring.
++# In the LCM-X mode (task #365) it records what it was handed and writes the profile's lcm-x.env as the real one does.
+ cat > "$REPO/harness-ports/bin/lane-profile.sh" <<'EOF'
+ #!/usr/bin/env bash
++name="aflane$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]' | cut -c1-40)"
++[ -z "${FAKE_PROFILE_ENV_LOG:-}" ] \
++  || printf '%s LANE_CONTEXT_ENGINE=%s LCM_X_DIR=%s\n' "${1:-}" "${LANE_CONTEXT_ENGINE-<unset>}" "${LCM_X_DIR-<unset>}" >> "$FAKE_PROFILE_ENV_LOG"
+ case "${1:-}" in
+-  create) printf 'aflane%s\n' "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]' | cut -c1-40)";;
++  create)
++    if [ "${LANE_CONTEXT_ENGINE:-}" = lcm-x ]; then
++      mkdir -p "$HERMES_PROFILES_DIR/$name"
++      printf 'LCM_DISABLED_TOOLS=lcm_recall\nLCM_DATABASE_PATH=%s/lcm.db\nLCM_EMBEDDINGS_ENABLED=false\nTIKTOKEN_CACHE_DIR=/pc/tok\nPYTHONPATH=/pc/deps\n' \
++        "$HERMES_PROFILES_DIR/$name" > "$HERMES_PROFILES_DIR/$name/lcm-x.env"
++      [ -z "${FAKE_LCM_EXTRA:-}" ] || printf '%s\n' "$FAKE_LCM_EXTRA" >> "$HERMES_PROFILES_DIR/$name/lcm-x.env"
++      [ -z "${FAKE_LCM_DROP:-}" ] || sed -i "/^$FAKE_LCM_DROP=/d" "$HERMES_PROFILES_DIR/$name/lcm-x.env"
++    fi
++    printf '%s\n' "$name";;
+   verify) exit 0;;
+   *) exit 64;;
+ esac
+@@ -529,6 +542,7 @@ cat > "$FAKE_HERMES" <<'EOF'
+ #!/usr/bin/env bash
+ # TEST DOUBLE. Captures Hermes argv so route/effort selection can be asserted.
+ printf '%s\n' "$@" > "${HERMES_ARGS_FILE:?}"
++[ -z "${HERMES_ENV_FILE:-}" ] || env | LC_ALL=C sort > "$HERMES_ENV_FILE"
+ usage_file=""
+ while [ "$#" -gt 0 ]; do
+   if [ "$1" = --usage-file ] && [ "$#" -ge 2 ]; then usage_file="$2"; shift 2; else shift; fi
+@@ -680,6 +694,54 @@ awk 'prev=="-p" && $0=="operatorprofile" {f=1} {prev=$0} END {exit f?0:1}' "$HER
+ check "an explicit HERMES_PROFILE bypasses cloning, is logged, recorded, and passed to Hermes" $? \
+   "stderr=$(tr '\n' ';' < "$TMP/profile-override.err") profile=$(cat "$REPO/.lanes/profile-override/profile.txt" 2>/dev/null)"
+ 
++# --- LANE_CONTEXT_ENGINE (task #365): the mode and its paths reach the profile helper; in lcm-x mode the hermes process
++# gets exactly lcm-x.env's settings (PYTHONPATH first, the inherited value after it) and no inherited LCM_* setting;
++# off, the environment passes through as it did before the mode existed.
++LCM_PROFILES="$TMP/lcm-profiles"; mkdir -p "$LCM_PROFILES"
++export HERMES_ARGS_FILE="$TMP/hermes-args-lcmx" HERMES_ENV_FILE="$TMP/hermes-env-lcmx"
++LANE_ID="lcmx-on" HERMES_BIN="$FAKE_HERMES" HERMES_PROFILES_DIR="$LCM_PROFILES" LANE_CONTEXT_ENGINE=lcm-x LCM_X_DIR=/pc/lcm-x \
++  LCM_SUMMARY_MODEL=poison/elsewhere PYTHONPATH=/inherited/path FAKE_PROFILE_ENV_LOG="$TMP/profile-env-lcmx" \
++  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/lcmx-on.err"; LCMX_RC=$?
++[ "$LCMX_RC" -eq 0 ] && grep -Fxq 'LCM_DISABLED_TOOLS=lcm_recall' "$HERMES_ENV_FILE" \
++  && grep -Fxq "LCM_DATABASE_PATH=$LCM_PROFILES/aflanelcmxon/lcm.db" "$HERMES_ENV_FILE" \
++  && grep -Fxq 'LCM_EMBEDDINGS_ENABLED=false' "$HERMES_ENV_FILE" && grep -Fxq 'TIKTOKEN_CACHE_DIR=/pc/tok' "$HERMES_ENV_FILE" \
++  && grep -Fxq 'PYTHONPATH=/pc/deps:/inherited/path' "$HERMES_ENV_FILE" && ! grep -q '^LCM_SUMMARY_MODEL=' "$HERMES_ENV_FILE" \
++  && grep -Fxq 'LCM_X_DIR=/pc/lcm-x' "$HERMES_ENV_FILE" && grep -Fxq 'LANE_CONTEXT_ENGINE=lcm-x' "$HERMES_ENV_FILE" \
++  && grep -Fxq 'create LANE_CONTEXT_ENGINE=lcm-x LCM_X_DIR=/pc/lcm-x' "$TMP/profile-env-lcmx" \
++  && grep -Fxq 'verify LANE_CONTEXT_ENGINE=lcm-x LCM_X_DIR=/pc/lcm-x' "$TMP/profile-env-lcmx" \
++  && awk 'prev=="-p" && $0=="aflanelcmxon" {f=1} {prev=$0} END {exit f?0:1}' "$HERMES_ARGS_FILE"
++check "lcm-x: the helper gets the mode and LCM_X_DIR; hermes gets lcm-x.env's settings and no inherited LCM_* setting" $? \
++  "rc=$LCMX_RC env=$(grep -E '^(LCM_|TIKTOKEN|PYTHONPATH|LANE_CONTEXT)' "$HERMES_ENV_FILE" 2>/dev/null | tr '\n' ' ') helper=$(tr '\n' ';' < "$TMP/profile-env-lcmx" 2>/dev/null)"
++
++export HERMES_ARGS_FILE="$TMP/hermes-args-lcmoff" HERMES_ENV_FILE="$TMP/hermes-env-lcmoff"
++LANE_ID="lcmx-off" HERMES_BIN="$FAKE_HERMES" HERMES_PROFILES_DIR="$LCM_PROFILES" LCM_X_DIR=/pc/lcm-x \
++  LCM_SUMMARY_MODEL=poison/elsewhere PYTHONPATH=/inherited/path FAKE_PROFILE_ENV_LOG="$TMP/profile-env-lcmoff" \
++  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/lcmx-off.err"; LCMOFF_RC=$?
++[ "$LCMOFF_RC" -eq 0 ] && ! grep -Eq '^(LCM_DISABLED_TOOLS|LCM_DATABASE_PATH|LCM_EMBEDDINGS_ENABLED|TIKTOKEN_CACHE_DIR)=' "$HERMES_ENV_FILE" \
++  && grep -Fxq 'LCM_SUMMARY_MODEL=poison/elsewhere' "$HERMES_ENV_FILE" && grep -Fxq 'PYTHONPATH=/inherited/path' "$HERMES_ENV_FILE" \
++  && [ ! -e "$LCM_PROFILES/aflanelcmxoff/lcm-x.env" ] \
++  && grep -Fxq 'create LANE_CONTEXT_ENGINE=<unset> LCM_X_DIR=/pc/lcm-x' "$TMP/profile-env-lcmoff"
++check "off: the hermes environment passes through as before the mode (no setting added, nothing stripped)" $? \
++  "rc=$LCMOFF_RC env=$(grep -E '^(LCM_|TIKTOKEN|PYTHONPATH|LANE_CONTEXT)' "$HERMES_ENV_FILE" 2>/dev/null | tr '\n' ' ')"
++
++export HERMES_ARGS_FILE="$TMP/hermes-args-lcmbad"; rm -f "$HERMES_ARGS_FILE"
++LANE_ID="lcmx-bad" HERMES_BIN="$FAKE_HERMES" LANE_CONTEXT_ENGINE=lcm \
++  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/lcmx-bad.err"; LCMBAD_RC=$?
++LANE_ID="lcmx-override" HERMES_BIN="$FAKE_HERMES" LANE_CONTEXT_ENGINE=lcm-x HERMES_PROFILE=operatorprofile \
++  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/lcmx-override.err"; LCMOVR_RC=$?
++LANE_ID="lcmx-extra" HERMES_BIN="$FAKE_HERMES" HERMES_PROFILES_DIR="$LCM_PROFILES" LANE_CONTEXT_ENGINE=lcm-x FAKE_LCM_EXTRA='PYTHONHOME=/x' \
++  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/lcmx-extra.err"; LCMEXTRA_RC=$?
++LANE_ID="lcmx-short" HERMES_BIN="$FAKE_HERMES" HERMES_PROFILES_DIR="$LCM_PROFILES" LANE_CONTEXT_ENGINE=lcm-x FAKE_LCM_DROP=LCM_DISABLED_TOOLS \
++  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/lcmx-short.err"; LCMSHORT_RC=$?
++[ "$LCMBAD_RC" -eq 64 ] && grep -Fxq 'pc-lane: unknown LANE_CONTEXT_ENGINE (lcm-x, or unset)' "$TMP/lcmx-bad.err" \
++  && [ "$LCMOVR_RC" -eq 64 ] && grep -Fxq 'pc-lane: LANE_CONTEXT_ENGINE=lcm-x needs the per-lane profile; unset HERMES_PROFILE' "$TMP/lcmx-override.err" \
++  && [ "$LCMEXTRA_RC" -eq 64 ] && grep -Fxq 'pc-lane: lcm-x.env has an unexpected line: PYTHONHOME' "$TMP/lcmx-extra.err" \
++  && [ "$LCMSHORT_RC" -eq 64 ] && grep -Fxq 'pc-lane: lcm-x.env holds 4 settings, not 5' "$TMP/lcmx-short.err" \
++  && [ ! -e "$HERMES_ARGS_FILE" ]
++check "an unknown engine, lcm-x with a HERMES_PROFILE override, or an lcm-x.env line unexpected or missing stops the lane (rc 64) before hermes runs" $? \
++  "rc=$LCMBAD_RC/$LCMOVR_RC/$LCMEXTRA_RC/$LCMSHORT_RC stderr=$(cat "$TMP/lcmx-bad.err" "$TMP/lcmx-override.err" "$TMP/lcmx-extra.err" "$TMP/lcmx-short.err" 2>/dev/null | grep 'pc-lane:' | tr '\n' ';')"
++unset HERMES_ENV_FILE
++
+ # --- MUTATION-KILLING: parent-environment poison for LANE_ID -----------------
+ # pc-lane.sh adopts inherited LANE_ID by design (the sandbox launcher sets it).
+ # These tests launch pc-lane.sh under real subprocess environments using `env`,
+diff --git a/harness-ports/tests/test_pc_lane_dispatcher.sh b/harness-ports/tests/test_pc_lane_dispatcher.sh
+index 4500739..2682bfa 100755
+--- a/harness-ports/tests/test_pc_lane_dispatcher.sh
++++ b/harness-ports/tests/test_pc_lane_dispatcher.sh
+@@ -6,6 +6,7 @@
+ # must show NO mkdir -p (the guard runs before the write, AF-AP-79).
+ set -uo pipefail
+ unset HERMES_MODEL HERMES_REASONING HERMES_PROFILE LANE_SERVER_EFFORT ROLE PC_LANE_TEST_POLL_STATE PC_LANE_TEST_PROVIDER_MIX PC_LANE_TEST_PROVIDER_MIX_RC PC_LANE_TEST_SQL_CAPTURE PC_LANE_TEST_RESUME PC_LANE_TEST_EVAL_PREMISE PC_LANE_TEST_PREMISE_ERROR PC_LANE_TEST_LANE_PID PC_LANE_TEST_AF_REPO 2>/dev/null || true
++unset LANE_CONTEXT_ENGINE LCM_X_DIR LCM_X_DEPS_DIR LCM_X_TIKTOKEN_DIR 2>/dev/null || true
+ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"
+ TMP="$(mktemp -d)"; FIXTURE_PIDS=()
+ cleanup() {
+@@ -235,6 +236,21 @@ PC_LANE_TEST_TERMINAL=applied run_dispatch HERMES_MODEL=agentfactory-build; rc=$
+ [ "$rc" -eq 75 ] && ! grep -q 'restart-when-idle' "$BRIDGE_CALLS" && grep -q 'setsid env LANE_ID=' "$BRIDGE_CALLS"
+ check "cloud route skips deferred effort step" $? "rc=$rc calls=$(tr '\n' ';' < "$BRIDGE_CALLS")"
+ 
++# LANE_CONTEXT_ENGINE (task #365): the mode and its three paths travel on the launch line as HERMES_MODEL does; unset,
++# the launch line carries none of them (the line pc_lane.sh sent before the mode existed). The three spaces before
++# `bash` are the LAUNCH string's backslash-newline continuation.
++PC_LANE_TEST_TERMINAL=applied run_dispatch HERMES_MODEL=agentfactory-build LANE_CONTEXT_ENGINE=lcm-x LCM_X_DIR=/pc/lcm-x \
++  LCM_X_DEPS_DIR=/pc/lcm-x-deps 'LCM_X_TIKTOKEN_DIR=/pc/tok dir'; rc=$?
++LCM_LAUNCH="$(grep 'setsid env LANE_ID=' "$BRIDGE_CALLS")"
++[ "$rc" -eq 75 ] && [ "$(printf '%s\n' "$LCM_LAUNCH" | grep -c .)" -eq 1 ] \
++  && printf '%s' "$LCM_LAUNCH" | grep -Fq ' HERMES_MODEL=agentfactory-build LANE_CONTEXT_ENGINE=lcm-x LCM_X_DIR=/pc/lcm-x LCM_X_DEPS_DIR=/pc/lcm-x-deps LCM_X_TIKTOKEN_DIR=/pc/tok\ dir   bash harness-ports/bin/pc-lane.sh '
++check "the LCM-X mode and its paths travel on the launch line, quoted" $? "rc=$rc launch=$LCM_LAUNCH"
++PC_LANE_TEST_TERMINAL=applied run_dispatch HERMES_MODEL=agentfactory-build; rc=$?
++OFF_LAUNCH="$(grep 'setsid env LANE_ID=' "$BRIDGE_CALLS")"
++[ "$rc" -eq 75 ] && printf '%s' "$OFF_LAUNCH" | grep -q 'setsid env LANE_ID=[^ ]* HERMES_MODEL=agentfactory-build   bash harness-ports/bin/pc-lane.sh ' \
++  && ! printf '%s' "$OFF_LAUNCH" | grep -Eq 'LANE_CONTEXT_ENGINE|LCM_X_'
++check "without the opt-in the launch line carries no LCM-X variable" $? "rc=$rc launch=$OFF_LAUNCH"
++
+ # T90-R1 premise gate. Every refusal asserts no ship write; every probe is one
+ # command and contains both the liveness check and this lane id.
+ assert_first_refusal() {
+diff --git a/scripts/pc_lane.sh b/scripts/pc_lane.sh
+index cbb3618..3163231 100755
+--- a/scripts/pc_lane.sh
++++ b/scripts/pc_lane.sh
+@@ -343,7 +343,9 @@ fi
+ FWD=""
+ # 2026-09-08: the capacity-retry knobs travel too — under route contention the PC default (3 retries, 60 s doubling)
+ # gave up in ~7 min while the admitted sibling lanes were still refusing to yield a slot.
+-for v in HERMES_MODEL HERMES_REASONING HERMES_PROFILE HERMES_TOOLSETS LANE_BRANCH LANE_CAPACITY_RETRIES LANE_CAPACITY_BACKOFF LANE_CAPACITY_MAX_WAIT; do
++# The LCM-X lane mode (task #365) travels the same way; unset, nothing is added and the launch line is unchanged.
++for v in HERMES_MODEL HERMES_REASONING HERMES_PROFILE HERMES_TOOLSETS LANE_BRANCH LANE_CAPACITY_RETRIES LANE_CAPACITY_BACKOFF LANE_CAPACITY_MAX_WAIT \
++    LANE_CONTEXT_ENGINE LCM_X_DIR LCM_X_DEPS_DIR LCM_X_TIKTOKEN_DIR; do
+   [ -n "${!v:-}" ] && FWD="$FWD $v=$(printf %q "${!v}")"
+ done
+ if [ -n "$_launch_epoch" ]; then
+diff --git a/upstream.lock.yaml b/upstream.lock.yaml
+index 6960009..01e06ea 100644
+--- a/upstream.lock.yaml
++++ b/upstream.lock.yaml
+@@ -350,3 +350,35 @@ container_provided:
+     measured_version: 2.4.4
+   python3.12:
+     measured_version: 3.12.3
++
++# A context-engine plugin for ONE PC lane profile (task #365, D-108 item 7; the H1 trial). NOT production: production is a
++# later decision with its own proof (standing rules 10 and 11). Read only in the opt-in lane mode
++# (LANE_CONTEXT_ENGINE=lcm-x): harness-ports/bin/lane-profile.sh verify takes the revision, the runtime import and the
++# tokenizer from this entry, never from a second copy (docs/HARNESS-PORTS.md §7). The key names avoid
++# `repository`/`commit`/`*_sha256` on purpose, as advisory_jev_runtimes does (parse_lock reads those for the SBOM
++# pin-diff). Used from a clone at this revision, linked into the lane profile, never vendored into this repository.
++lane_context_plugins:
++  hermes-lcm-x:
++    source: https://github.com/electricsheephq/lcm-x
++    revision: "601a9ccb3d5fefbe242a453e57ed2c8196bf33c3"
++    version: 0.24.3
++    license: MIT
++    committed: "2026-09-28T11:20:45+09:00 (02:20:45Z): Merge pull request #577 from electricsheephq/docs/release-status-v0.24.3"
++    names: "plugin hermes-lcm-x, context engine lcm-x (plugin_identity.py:24-25; plugin.yaml:1-2)"
++    role: "the H1 trial on one PC lane profile, beside a control lane; not production"
++    hermes_pins_tested_upstream: "none of ours: its CI builds against a stub ContextEngine ABC (.github/workflows/ci.yml, 'Stub hermes-agent ABC'); its nightly hosts are NousResearch/hermes-agent f97608f (0.21.5), electricsheephq/evaOS-hermes-desktop-app-adapter 2d10969 (0.21.2) and NousResearch/hermes-agent 6f7a799 (bench/instruments/reliability/hosts.ci.json); our lane runtime b3399c1 (0.21.1) and proof runtime 527da60 (0.21.0) are not among them (T1 report section 5 row 2)"
++    runtime_imports:  # pip install --target LCM_X_DEPS_DIR, never into the Hermes venv; on the lane's PYTHONPATH only
++      - name: tiktoken
++        version: 0.14.0
++        wheel: tiktoken-0.14.0-cp311-cp311-manylinux_2_28_x86_64.whl
++        wheel_digest: "sha256:f5e7665f6624e052e5e7f6a36919ab69279decdc976d7b16b4fa15e1897d0513"
++        sdist_digest: "sha256:231dec90efcdccf1b565a1416107736f1e09b1a08fe736ef9d6363e626d03874"
++        published: "2026-08-17T19:48:44Z on PyPI, not yanked"
++        why: "tokens.py:39-42 imports it lazily, in a daemon thread, for every session's first token count; without it LCM-X counts by a character estimate (tokens.py:92-111)"
++    absent_by_design: "regex (message_patterns.py:16-19 and ingest_protection.py:434-440 fall back; tiktoken's _special_token_regex falls back to re, core.py:431-438), requests (tiktoken/load.py:15 imports it only on a tokenizer cache miss), numpy and fastembed (vector_store.py:198, trajectory_store.py:2174 and 2217, embedding_provider.py:1519: embeddings only, off); yaml is in the Hermes venv (6.0.3) and guarded (config.py:8-11)"
++    tokenizer:
++      url: https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken
++      cache_file: 9b5ad71b2ce5302211f9c61530b329a4922fc6a4
++      digest: "sha256:223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7"
++      from: "tiktoken 0.14.0 tiktoken_ext/openai_public.py:75-79 (the URL and expected_hash); the cache file is sha1(url) under TIKTOKEN_CACHE_DIR (tiktoken/load.py:35-58); an altered file is deleted and fetched again (load.py:60-66)"
++    adopted: "2026-09-29 (owner, D-108 item 7: LCM-X for Hermes, H1)"
