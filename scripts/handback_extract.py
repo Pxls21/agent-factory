@@ -162,12 +162,18 @@ def local_ids(paths):
         rng = "origin/%s..HEAD" % branch
         log = git_out("log", "--format=%H%x00%s", rng, "--")
         subject = dict(ln.split("\0", 1) for ln in log.splitlines() if "\0" in ln)
+        off = {}                             # token -> (full id, subject) of a local commit origin does not hold
         hits = []
         for path in dict.fromkeys(paths):    # a path given twice is read once
             with open(path, encoding="utf-8", errors="replace") as fh:
                 for num, line in enumerate(fh, 1):
                     found = stale_ids.stale_in(line, subject)
                     hits += [(path, num, tok, full, line.rstrip("\n")) for tok, full in found]
+                    for tok in stale_ids.HEX.findall(line):
+                        if tok not in off:
+                            off[tok] = off_origin(tok, branch, subject)
+                        if off[tok] and tok not in {t for t, _ in found}:
+                            hits.append((path, num, tok, off[tok][0], line.rstrip("\n")))
     except (ImportError, OSError) as e:
         print("local ids: not checked — %s" % e)
         return 2
@@ -175,12 +181,39 @@ def local_ids(paths):
     if not hits:
         print("local ids: none cited (%s)" % held)
         return 0
-    print("local ids: %d cited — %s; push_clean.sh rewrites them, so cite each by its subject (or by its origin id "
-          "after the push)" % (len(hits), held))
+    n_off = sum(1 for h in hits if h[3] not in subject)
+    if n_off:
+        print("local ids: %d cited — %s; %d not on origin (an id an earlier push rewrote, or another branch's): cite "
+              "each by its subject or its origin id" % (len(hits), held, n_off))
+    else:
+        print("local ids: %d cited — %s; push_clean.sh rewrites them, so cite each by its subject (or by its origin "
+              "id after the push)" % (len(hits), held))
     for path, num, tok, full, text in hits:
-        print("%s:%d: %s is local %s \"%s\" · %s" % (path, num, tok, full[:12], subject[full],
-                                                   text if len(text) <= 200 else text[:200] + "…"))
+        kind, subj = ("is local", subject[full]) if full in subject else ("is not on origin", off[tok][1])
+        print("%s:%d: %s %s %s \"%s\" · %s" % (path, num, tok, kind, full[:12], subj,
+                                              text if len(text) <= 200 else text[:200] + "…"))
     return 1
+
+
+def off_origin(tok, branch, local):
+    """(full id, subject) when TOK names a commit that is neither in the local range nor held by origin/<branch>:
+    the local id of a commit an EARLIER push rewrote (the LS-B10 report's d6caa37, 2026-09-29), or another branch's.
+    None for a token that names no commit (a content hash) or names one origin holds. A git failure raises OSError."""
+    r = subprocess.run(["git", "rev-parse", "--verify", "-q", "--end-of-options", tok + "^{commit}"],
+                       capture_output=True, timeout=60)
+    if r.returncode != 0:
+        return None                          # no such commit, or an ambiguous prefix
+    full = r.stdout.decode("ascii", "replace").strip()
+    if full in local:
+        return None                          # the range check reports it
+    a = subprocess.run(["git", "merge-base", "--is-ancestor", full, "origin/" + branch], capture_output=True, timeout=60)
+    if a.returncode == 0:
+        return None
+    err = a.stderr.decode("utf-8", "replace")
+    if a.returncode != 1 or "error:" in err or "fatal:" in err:     # AF-AP-141: exit 1 with an error line is not a no
+        raise OSError("git merge-base --is-ancestor %s origin/%s cannot tell (exit %d)" % (full[:12], branch,
+                                                                                         a.returncode))
+    return full, git_out("log", "-1", "--format=%s", full, "--").strip()
 
 
 def main(argv=None):

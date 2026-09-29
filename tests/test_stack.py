@@ -2254,6 +2254,56 @@ def test_local_ids_lists_a_cited_local_commit_with_its_line(tmp_path):
     assert (r.returncode, r.stdout) == (0, "local ids: none cited (origin/main..HEAD holds 1 local commit)\n")
 
 
+def test_local_ids_lists_an_id_an_earlier_push_rewrote(tmp_path):
+    """2026-09-29, the LS-B10 report: the lane cited d6caa37, the local id of a commit that an EARLIER push had already
+    rewritten (to 164bf49), so the id sat neither in origin/<branch>..HEAD nor on origin, and the check said "none
+    cited". An id that resolves to a local commit origin does not hold is listed too; a control citing the rewritten
+    commit's origin id lists nothing. Mutant: the range-only check (the old id missed, exit 0)."""
+    tree, pushed, local = origin_tree(tmp_path)
+    git(tree, "commit", "-q", "--amend", "--no-verify", "-m", "the local one, rewritten")   # push_clean's rewrite
+    new = git(tree, "rev-parse", "HEAD")
+    git(tree, "push", "-q", "origin", "main")
+    hb = tmp_path / "handback.md"
+    hb.write_text("# report\nHEAD has since moved to %s.\n" % local[:7])
+    r = local_ids(tree, hb)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert r.stdout.splitlines() == [
+        "local ids: 1 cited — origin/main..HEAD holds 0 local commits; 1 not on origin (an id an earlier push "
+        "rewrote, or another branch's): cite each by its subject or its origin id",
+        '%s:2: %s is not on origin %s "the local one" · HEAD has since moved to %s.' % (hb, local[:7], local[:12],
+                                                                                    local[:7])]
+    control = tmp_path / "control.md"
+    control.write_text("HEAD has since moved to %s, on top of %s.\n" % (new[:7], pushed[:7]))
+    r = local_ids(tree, control)
+    assert (r.returncode, r.stdout) == (0, "local ids: none cited (origin/main..HEAD holds 0 local commits)\n")
+
+
+def test_local_ids_never_reads_a_missing_object_as_not_on_origin(tmp_path):
+    """AF-AP-141: `merge-base --is-ancestor` exits 1 with `error: Could not read <id>` when the walk meets a missing
+    object (measured 2026-09-29), the same code as a plain no. With a commit of origin's history gone, a cited
+    dangling id is "not checked" (exit 2, naming the walk), never "not on origin". Mutant: exit 1 read as a no (the id
+    listed, exit 1)."""
+    tree, pushed, local = origin_tree(tmp_path)
+    (tree / "d.txt").write_text("d\n")
+    git(tree, "add", "d.txt")
+    git(tree, "commit", "-q", "--no-verify", "-m", "the top one")
+    git(tree, "push", "-q", "origin", "main")                         # origin: pushed <- local <- top
+    git(tree, "checkout", "-q", "-b", "side", pushed)
+    (tree / "x.txt").write_text("x\n")
+    git(tree, "add", "x.txt")
+    git(tree, "commit", "-q", "--no-verify", "-m", "a side one")
+    side = git(tree, "rev-parse", "HEAD")
+    git(tree, "checkout", "-q", "main")
+    git(tree, "branch", "-q", "-D", "side")                           # side is now a dangling commit
+    (tree / ".git" / "objects" / local[:2] / local[2:]).unlink()      # a commit of origin's history is gone
+    hb = tmp_path / "handback.md"
+    hb.write_text("the fix is %s\n" % side[:7])
+    r = local_ids(tree, hb)
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert r.stdout.startswith("local ids: not checked — git merge-base --is-ancestor %s origin/main cannot tell"
+                               % side[:12]), r.stdout
+
+
 def test_local_ids_says_why_when_it_cannot_check(tmp_path):
     """Not checked is never read as none cited: a detached HEAD, and a branch origin does not hold, exit 2 with the
     reason. Mutant: a git failure read as an empty range (exit 0, "none cited")."""
