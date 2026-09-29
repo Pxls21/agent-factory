@@ -1,0 +1,1260 @@
+diff --git a/docs/research/findings/laya-ft-labels/2026-09-25-recorded/dataset-manifest.json b/docs/research/findings/laya-ft-labels/2026-09-25-recorded/dataset-manifest.json
+index 88f85d3..cbe4bf0 100644
+--- a/docs/research/findings/laya-ft-labels/2026-09-25-recorded/dataset-manifest.json
++++ b/docs/research/findings/laya-ft-labels/2026-09-25-recorded/dataset-manifest.json
+@@ -7,7 +7,7 @@
+   "scripts/laya_ft/build_dataset.py": "c78d695fbc41476e5a25b1aa839d9873be28a472e34b6a07bbe927f833b7e0ae",
+   "scripts/laya_ft/common.py": "a7ad1838fce325dbe492343e6a9259532ca9256bacf185ae1ef9bd2b90281703",
+   "scripts/laya_ft/fit.py": "1f262ccad009ed828350cbcd39f08512d1c927a3b5acac517bc85e8939434542",
+-  "scripts/transcript_export.py": "6ad316dccfca01474c7da0f716e4788407dd8e4c2699d2368e41ea96e5195f42"
++  "scripts/transcript_export.py": "8c0b66b6fa41f8c8c18e432023ecebc1177748560d104b4f3d05bec4dafabfd2"
+  },
+  "commit": "434b727dfd2b6daa5aa3cf4d638e706f5dfa59cb",
+  "commit_time": 1790299156,
+diff --git a/scripts/session_export.py b/scripts/session_export.py
+index 256db40..8ba9a11 100644
+--- a/scripts/session_export.py
++++ b/scripts/session_export.py
+@@ -134,9 +134,10 @@ ARCHIVE_NAME = re.compile(r"bash-([A-Za-z][A-Za-z0-9_\-]*)\.txt\Z")   # the prun
+ CWD = re.compile(rb'"cwd":"((?:[^"\\]|\\.)*)"')
+ PSEUDO = re.compile(r"\[opaque:[0-9a-f]{12}\]")
+ PATTERN_NAMES = ("private-key", "private-key-malformed", "credential", "bearer", "cookie", "authorization-scheme", "pwd",
+-                 "credentials", "sk-key", "github-token", "google-key", "slack-token", "bridge-link", "opaque-run",
+-                 "bridge-host", "bearer-tail", "basic-auth", "escaped-credential", "url-password", "bearer-lower", "curl-user",
+-                 "pass-name", "url-token-user")
++                 "credentials", "sk-key", "github-token", "google-key", "slack-token", "bridge-link",
++                 "authorization-negotiate", "stage2-cookie", "stage2-authorization-scheme", "stage2-pwd",
++                 "stage2-credentials", "opaque-run", "bridge-host", "bearer-tail", "basic-auth", "escaped-credential",
++                 "url-password", "bearer-lower", "curl-user", "pass-name", "url-token-user")
+ 
+ 
+ def _z(tag):
+diff --git a/scripts/transcript_export.py b/scripts/transcript_export.py
+index 2c09a5e..85bcff6 100755
+--- a/scripts/transcript_export.py
++++ b/scripts/transcript_export.py
+@@ -66,8 +66,124 @@ def _redact_run(m):
+ # JSON escape's own letter; after it no ASCII letter or digit.
+ _KEY_L = r"(?:(?<![A-Za-z0-9])|(?<=\\[nrtbf])|(?<=\\u[0-9A-Fa-f]{4}))"
+ _KEY_R = r"(?![A-Za-z0-9])"
+-
+-SECRET_PATTERNS = [
++# The Cookie, pwd and credentials rules read a raw JSON text (a raw JSON writer's view, or chat that pastes JSON) and a
++# decoded text with one set of classes (SCRUB2-R1; VERIFY-SCRUB2 F1, F5, F15; VERIFY-SCRUB2-R1 B1, V4). Before the name:
++# _KEY_L. A quote beside the name or before the value may be escaped to any depth (_Q), as the payload rules take it. In
++# a value a run of backslashes is read whole, by its length, not again at each pair (B1: a lookahead that read the rest of
++# a run again at each pair of it took quadratic time, 29 s on 64,000 backslashes). A run before a quote is never value: an
++# odd run there is an escaped quote, so the value ends before the run and the JSON stays valid at any depth (F5, M17). An
++# even run elsewhere (escaped backslashes) is value. An odd run before n, r, t or f is an escape (_ESC): a line end or a
++# tab in raw JSON, but a backslash and a letter in decoded text (a Windows path, a regex). It stays in a value only when a
++# value unit follows it, so the decoded `pwd=ab\n<secret>` and `Cookie: path=C:\new\x; sid=<secret>` stay hidden as they
++# were before SCRUB2-R1 (V4), while a value in raw JSON that is followed by a line end and whitespace ends there. Any
++# other odd run (`\x`, `\u00e9`, `\b`) is value.
++_Q = r"(?:\\*[\"'])?"
++_PAIRS = r"(?:\\\\)+(?![\\\"'])"              # an even run of backslashes, not before a quote
++_ODD = r"(?:\\\\)*\\(?![\\\"'nrtf])"          # an odd run before a character that is neither a quote nor n, r, t, f
++_ESC = r"(?:(?:\\\\)*\\[nrtf])+"              # escapes: an odd run and n, r, t or f; one or more
++_LODD = r"(?:\\\\)*\\(?![\\\"'nr])"           # the same two for a Cookie line, where a tab or a form feed stays
++_LESC = r"(?:(?:\\\\)*\\[nr])+"
++_VF = r"(?:[^\s\"'&,;\\]|" + _PAIRS + r"|" + _ODD + r")"       # a pwd or credentials value unit that is no escape
++_VU = r"(?:" + _VF + r"|" + _ESC + r"(?=" + _VF + r"))"         # a pwd or credentials value unit
++_LF = r"(?:[^\r\n\"'\\]|" + _PAIRS + r"|" + _LODD + r")"        # a Cookie header line unit that is no line end
++_CL = r"(?:" + _LF + r"|" + _LESC + r"(?=" + _LF + r"))"        # a Cookie header line unit
++_COOKIE = _KEY_L + r"(?i:(?:set-)?cookie)" + _Q + r"\s*:"           # a Cookie head, to its colon
++# A later Cookie head whose own head reads past the end of an earlier head's line: a quote or a real line end after its name,
++# or after its colon, whitespace and escaped line ends or tabs (B2), then a quote or a real line end. An escaped line end
++# before a line unit does not end a line (_CL), so a head followed by one reads no further than the earlier head's line.
++_COOKIE_X = (_KEY_L + r"(?i:(?:set-)?cookie)(?:\\*[\"']|[^\S\r\n]*[\r\n]|\s*:(?:[^\S\r\n]|\\[nrt])*"
++             r"(?:[\r\n]|\\*[\"']))")
++# Where another named rule's head starts: its name, then `:` or `=` (the Negotiate token stops before it). _APART: the same
++# head when it stands apart from a value (_SEP: a quote or whitespace before its `:` or `=`, or no value character after
++# them); a stage-2 pwd or credentials value never starts there, while `pwd=token=abc` keeps `token=abc` as its value
++# (AF-AP-157: a value that began at the next rule's head hid that head, and its value stayed; VERIFY-SCRUB2-R1's
++# differential). Stage 1's values start where the PIN's did (the rules' comment below says why).
++_NAMES = r"(?i:" + _WORD + r"|(?:set-)?cookie|pwd|credentials)"
++_OTHER_HEAD = _NAMES + _Q + r"\s*[:=]"
++_SEP = r"(?:\\*[\"']\s*[:=]|\s+[:=]|[:=](?![^\s\"'&,;]))"
++_APART = _NAMES + _SEP
++# A later pwd or credentials head that stands apart (_SEP), where its rule reads a head (_KEY_L). In stage 2 (below) a pwd
++# value stops before a later pwd or credentials head (_LATER_PWD), a credentials value before a later credentials head
++# (_LATER_CRED): the heads a stage-2 rule still reads after that value (stage 2's Cookie and scheme rules ran before).
++# The name shows, as D6's names do, and that head's rule hides its value. These stops guard only the heads stage 2 reads:
++# a head that a stage-1 or PAYLOAD rule reads (R1, PASS and curl's among them) has its value hidden before stage 2 runs,
++# so a stage-2 value that runs over that head runs over a marker (VERIFY-SCRUB2-R1-R3 R3V-1: round 3's stops named the
++# rules before these values and missed the PAYLOAD rules after them).
++_LATER_PWD = _KEY_L + r"(?i:pwd|credentials)" + _SEP
++_LATER_CRED = _KEY_L + r"(?i:credentials)" + _SEP
++_SCHEME = r"(?i:token|basic|bearer|digest|negotiate|ntlm|apikey|api-key|key|ssws)"    # the scheme rule's schemes
++# The Cookie head as the rule before SCRUB2-R1 read it (VERIFY-SCRUB2-R1-R2 N2): the name after a word boundary (or
++# `set-cookie`, whose `cookie` that rule read), a bare quote, and after the colon a bare quote, or whitespace and escaped
++# line ends or tabs with no quote after them (that rule's value began at them, and its floor read on over them). From
++# such a head that rule's value covered the rest of the line, later heads too, and so does stage 1's Cookie rule, which
++# reads these heads alone. Any other head (an escaped quote, `my_cookie:`, a head after a literal `\t` or an escaped line
++# end) that rule never read: stage 2's Cookie rule reads it after every stage-1 and PAYLOAD rule, so each value those
++# rules hide is a marker by then. Its value runs up to a later head that stands apart (_APART) or a later Cookie head
++# (_COOKIE), which the stage-2 rules read, and its floor (_COOKIE_FLOOR) is searched in that segment alone.
++_COOKIE_PIN = (_KEY_L + r"(?:(?i:set-cookie)|\b(?i:cookie))[\"']?\s*:\s*(?:[\"']|(?:[^\S\r\n]|\\[nrt])*"
++               r"(?![\s\"']|\\[nrt]|\\+[\"']))")
++_COOKIE_FLOOR = re.compile(r"=[^\s;\"']{8}")
++# The pwd and credentials floors count characters, as the rule before SCRUB2-R1 did (VERIFY-SCRUB2-R1-R2 N1: round 2
++# counted a backslash pair, an odd run or a group of escapes as one unit, so a value of 8 characters with such content
++# showed). The credentials floor counts only the characters before the value's first escape (a backslash that ends an odd
++# run, then n, r, t or f): among its first 8 characters none is such a backslash. The value starts with no backslash, so
++# a run among its first 8 characters has 7 at most, and the lookbehinds that find an even run before one count to 6.
++_PWD_FLOOR = r"(?=[^\s\"'&,;]{8})"
++_CRED_FLOOR = (r"(?=[^\s\"'&,;]{8})(?![^\s\"'&,;]{0,7}(?:(?<!\\)|(?<=[^\\]\\\\)|(?<=[^\\](?:\\\\){2})"
++               r"|(?<=[^\\](?:\\\\){3}))\\[nrtf])")
++
++
++def _key_block_or_same(m):
++    """The lenient key-block rule's replacement. Group 2 is the first END line after the head's closing dashes: the block
++    is the marker. Else group 1 is an END line that shares the head's closing run of dashes (six or more, then END: SCRUB2's
++    rule reached it by backtracking): the block up to it is the marker, the rest stays. Else no END follows the head, the
++    match runs to the end of the text and stays as it is: no later head can reach an END either, so the rule's scan ends
++    there instead of reading the rest of the text again from every later head (AF-AP-152)."""
++    if m.group(2) is not None:
++        return "<private-key-redacted>"
++    if m.group(1) is not None:
++        return "<private-key-redacted>" + m.string[m.end(1):m.end()]
++    return m.group(0)
++
++
++def _cookie_or_same(m):
++    """The replacement of both Cookie rules (stage 1's and stage 2's): the head and the marker when a `name=value` of 8+
++    characters follows it on its line. From a head the rule before SCRUB2-R1 read (_COOKIE_PIN), the lookahead found one
++    (group `value`). A head with none matches to the end of its line and stays as it is (so a line of heads is read a
++    bounded number of times, not once per head: AF-AP-152); that match stops before a later head that _COOKIE_X names,
++    which the next match reads. From any other head (group `new`, stage 2's rule only) the match is the segment up to the
++    next stop (group `seg`), and the floor is searched here, in that segment alone: a line of such heads is read once, not
++    once per head."""
++    if m.groupdict().get("new") is not None:
++        return m.group(1) + "<redacted>" if _COOKIE_FLOOR.search(m.group("seg")) else m.group(0)
++    return m.group(1) + "<redacted>" if m.group("value") is not None else m.group(0)
++
++
++def _credentials_or_same(m):
++    """Stage 1's credentials replacement: the head and the marker when the value passes the credentials floor (group
++    `value`). A value the floor refuses and the PIN's floor takes (D1; F15's shapes in raw JSON) stays as it is, and the
++    match covers the PIN's value, so the rule's next match starts where the PIN's did: a credentials head inside that
++    value is not read here, as the PIN never read it (its value, read here, ran over a later head whose value the PIN
++    hid). Stage 2's credentials rule reads it, after every stage-1 and PAYLOAD rule."""
++    return m.group(1) + "<redacted>" if m.group("value") is not None else m.group(0)
++
++
++# SCRUB2-R1 round 4 (VERIFY-SCRUB2-R1-R3 R3V-1): the rules run in two stages. A head the rule list before SCRUB2-R1
++# (the PIN) never read -- an escaped quote, `my_cookie:`, a head after a literal `\t` or `\r`, a Cookie line after an
++# escaped line end, the Negotiate token, a head that a stop or a marker's `>` left free -- starts a value the PIN never
++# took. Run before a rule that reads a head the PIN reads, such a value ran over that head, and the head's value showed.
++# Rounds 2 and 3 stopped the value before the later heads they named, and each round's verifier found one they missed
++# (round 3's: the heads of the PAYLOAD rules, R1, PASS and curl, which run after them in scrub_payload). An order needs
++# no list. Stage 1 (STAGE1_PATTERNS) is the PIN's rules for the heads it reads, in its order, with the changes ruled
++# since (the floors count characters; F15's value extent, with D1); scrub_payload runs the PAYLOAD rules after it.
++# Stage 2 (STAGE2_PATTERNS) runs after both: round 3's rules for the Negotiate token and the Cookie, scheme, pwd and
++# credentials heads, each of which reads the heads the PIN never read and the PIN's own again. By then every value a
++# stage-1 or PAYLOAD rule hides is a marker: a stage-2 value that runs over a head runs over that marker too. So a value
++# the PIN hid shows only through stage 1's ruled changes: a credentials value the floor refuses (D1; F15's shapes) shows,
++# and a head inside it that another stage-1 or PAYLOAD rule reads (the PIN never read it) can take a value that runs
++# over a later head whose value the PIN hid (the credentials floor counting escapes would hide it: D1's K class; the
++# SCRUB2-R1 round-4 report measures it). The opaque rule runs last, in scrub and in scrub_payload, as before.
++STAGE1_PATTERNS = [
+     # a private-key block, BEGIN through END: PEM and OpenSSH (`… PRIVATE KEY`) and GnuPG's armor
+     # (`PGP PRIVATE KEY BLOCK`, the PGP 2.x `PGP SECRET KEY BLOCK`); a block with no END line (cut
+     # at its source) is redacted to the end of the text. First, so no later rule leaves pieces of it
+@@ -77,10 +193,15 @@ SECRET_PATTERNS = [
+      "<private-key-redacted>"),
+     # the same block with malformed header lines (3 or more dashes, spaces beside them; VERIFY-SCRUB1 F14), from BEGIN
+     # through END. Unlike the rule above it needs the END line: without one, a line of prose about these headers hid
+-    # the rest of a tool result (SCRUB2 measured up to 15,522 characters on this session's transcripts).
+-    (re.compile(r"-{3,}[ \t]*BEGIN [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?[ \t]*-{3,}.*?"
+-                r"-{3,}[ \t]*END [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?[ \t]*-{3,}", re.S),
+-     "<private-key-redacted>"),
++    # the rest of a tool result (SCRUB2 measured up to 15,522 characters on this session's transcripts). It runs in
++    # linear time (AF-AP-152; VERIFY-SCRUB2 F7: over 20 s on 60,000 dashes): a head starts only at the first dash of a
++    # run; an END line is found by its last three dashes before END, so a run in the body is not read again from each of
++    # its dashes; and a head with no END after it ends the rule's scan (_key_block_or_same, which also takes an END that
++    # shares the head's closing dashes). It hides exactly what SCRUB2's rule hid.
++    (re.compile(r"(?<!-)-{3,}[ \t]*BEGIN [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?[ \t]*"
++                r"(?:(?=---(-{3,}[ \t]*END [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?[ \t]*-{3,})))?-{3,}"
++                r"(?:.*?(---[ \t]*END [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?[ \t]*-{3,})|.*)", re.S),
++     _key_block_or_same),
+     # explicit credential assignments / headers: the head is kept, the value (_VALUE) replaced. The 8-character floor reads
+     # the whole run after the separator (the lookahead). Every piece of the value is redacted whatever its length: the run
+     # was one value before AF-AP-157, so a floor on a piece would show bytes that were hidden. A head that is not in-run
+@@ -91,19 +212,46 @@ SECRET_PATTERNS = [
+     (re.compile(r"(Bearer\s+)(?=[A-Za-z0-9._\-]{8})(?:(?!" + _BEARER + r"|" + _LINK + r")[A-Za-z0-9._\-])+"),
+      r"\1<redacted>"),
+     # SCRUB2 (VERIFY-SCRUB1 F14), each shape measured on this session's transcripts before it went in (SCRUB2-report.md):
+-    # a Cookie header, from its head to the end of the line or a quote, when a `name=value` of 8+ characters is in it
+-    (re.compile(r"((?i:\b(?:set-)?cookie)[\"']?\s*:\s*[\"']?)(?=[^\r\n\"']*=[^\s;\"']{8})[^\r\n\"']+"), r"\1<redacted>"),
+-    # an Authorization header's credential after a known scheme (a bearer in any case too). Any word as the scheme took
+-    # prose after this repo's `AUTHORIZATION:` brief headings.
+-    (re.compile(r"((?i:authorization)[\"']?\s*:\s*[\"']?(?i:token|basic|bearer|digest|negotiate|ntlm|apikey|api-key|key"
+-                r"|ssws)\s+)(?=[A-Za-z0-9._~+/=\-]{8})[A-Za-z0-9._~+/=\-]+"), r"\1<redacted>"),
++    # a Cookie header, from its head to the end of the line or a quote, when a `name=value` of 8+ characters is in it.
++    # SCRUB2-R1: it reads escapes with the classes above _key_block_or_same; after the colon an escaped line end or tab is
++    # whitespace, as the decoded text's is (VERIFY-SCRUB2-R1 B2: `Cookie:` + `\n` + `    sid=<value>` in raw JSON). Stage 1
++    # reads the heads the PIN read (_COOKIE_PIN) and nothing else; stage 2's Cookie rule reads the others. Its cost
++    # (AF-AP-152): SCRUB2's rule read the rest of its line from every head (2.7 s on a 64,000-character line of heads),
++    # and round 1's classes read a backslash run again at every pair (29 s on 64,000 backslashes, B1). Now a head with
++    # no `name=value` of 8+ characters (the floor reads characters, a backslash or an escape too, as the rule before
++    # SCRUB2-R1 did: V4) matches to its line's end, or to a later head that _COOKIE_X names, and stays as it is
++    # (_cookie_or_same). So each character of a line is read a bounded number of times, not once per head, and a
++    # backslash run is read by its length, not again at each pair: time grows linearly with the text.
++    (re.compile(r"(" + _COOKIE_PIN + r")(?:(?=[^\r\n\"']*=[^\s;\"']{8})(?P<value>" + _CL + r"+)|(?:(?!" + _COOKIE_X
++                + r")" + _CL + r")*)"), _cookie_or_same),
++    # an Authorization header's credential after a known scheme (a bearer in any case too), as the PIN read it: a plain or
++    # bare-quoted head, the token after whitespace (the next line's too: VERIFY-SCRUB2-R1 V11, pre-existing). Any word as
++    # the scheme took prose after this repo's `AUTHORIZATION:` brief headings. A head behind an escaped quote is stage 2's.
++    (re.compile(r"((?i:authorization)[\"']?\s*:\s*[\"']?" + _SCHEME + r"\s+)(?=[A-Za-z0-9._~+/=\-]{8})"
++                r"[A-Za-z0-9._~+/=\-]+"), r"\1<redacted>"),
+     # `pwd` and `credentials` assigned a value that is not a path or a reference (it starts with none of / ~ . $ \). As
+     # names of the credential rule both took paths (`PWD=/home/...`), and `credentials` took Python annotations
+-    # (`credentials: LoginRequest`), so `credentials` needs `=` or a quoted key.
+-    (re.compile(r"((?<![A-Za-z0-9])(?i:pwd)[\"']?\s*[:=]\s*[\"']?)(?![/~.$\\])(?=[^\s\"'&,;]{8})[^\s\"'&,;]+"),
++    # (`credentials: LoginRequest`), so `credentials` needs `=` or a quoted key. Stage 1 reads the PIN's heads: the name
++    # after no ASCII letter or digit, a bare quote beside it. SCRUB2-R1: escapes are read with the classes above
++    # _key_block_or_same. The floors count characters, a backslash of a pair, of an odd run or of an escape too, as the
++    # rule before SCRUB2-R1 did (VERIFY-SCRUB2-R1-R2 N1: round 2's floors counted such a run or group as one unit, and
++    # an 8-character value with one showed). The pwd floor (_PWD_FLOOR) is that rule's, and costs nothing. The
++    # credentials floor (_CRED_FLOOR) counts only the characters before the value's first escape (an odd run of
++    # backslashes, then n, r, t or f), so VERIFY-SCRUB2 F15's shapes in raw JSON, `credentials=None)` + `\n\nrows` and
++    # `_CREDENTIALS=0` + `\nnext_step_here`, keep the next line's words. Its cost: a decoded credentials value with a
++    # literal `\n`, `\r`, `\t` or `\f` among its first 8 characters stays (`credentials=abc\n<value>`, which that rule
++    # hid); the same text, read as raw JSON, is F15's shape (tasks/briefs/system1/SCRUB2-R1-R2-report.md, D1). A backslash
++    # pair or an odd run before another letter costs nothing. The value starts where the PIN's did, at another rule's
++    # head too, and runs as the PIN's did, over any later head: its end is the PIN's, less F15's escape and F5's
++    # backslash before a quote. A value that skipped such a head (D6's start guard, now stage 2's) left that head free
++    # for a later stage-1 rule, a head the PIN never read, and its value ran over a later head whose value the PIN hid
++    # (round 4: `pwd="credentials": cookie:credentials =  <v>` showed <v>). A credentials value that the floor refuses and
++    # the PIN's floor takes is matched whole and kept (_credentials_or_same), so a credentials head inside it waits for
++    # stage 2, as the PIN never read it.
++    (re.compile(r"((?<![A-Za-z0-9])(?i:pwd)[\"']?\s*[:=]\s*[\"']?)(?![/~.$\\])" + _PWD_FLOOR + _VU + r"+"),
+      r"\1<redacted>"),
+-    (re.compile(r"((?<![A-Za-z0-9])(?i:credentials)(?:[\"']\s*:|\s*=)\s*[\"']?)(?![/~.$\\])(?=[^\s\"'&,;]{8})"
+-                r"[^\s\"'&,;]+"), r"\1<redacted>"),
++    (re.compile(r"((?<![A-Za-z0-9])(?i:credentials)(?:[\"']\s*:|\s*=)\s*[\"']?)(?![/~.$\\])(?:" + _CRED_FLOOR
++                + r"(?P<value>" + _VU + r"+)|(?=[^\s\"'&,;]{8})[^\s\"'&,;]+)"), _credentials_or_same),
+     # provider-shaped keys. The left anchor is `(?<![A-Za-z0-9])`, not `\b` (AF-AP-224): `\b` wants a non-word character
+     # before the key, so a key glued to an `_` (`mcp__srv__sk-...`, `my_sk-...`) passed whole. An `_` now separates; a
+     # letter or a digit still does not. SCRUB1 measured no left anchor at all on this session's transcripts: 17,692 more
+@@ -119,6 +267,48 @@ SECRET_PATTERNS = [
+     (re.compile(_KEY_L + r"xox[abprs]-[A-Za-z0-9\-]{10,}" + _KEY_R), "xox-<redacted>"),
+     # ephemeral bridge links (the token often rides in the URL's session)
+     (re.compile(r"https?://[a-z0-9\-]+\.trycloudflare\.com[^\s)\"']*", re.I), "https://<bridge-link-redacted>"),
++]
++# Stage 2: after stage 1 (and in scrub_payload after the PAYLOAD rules), round 3's rules. Each value here starts at a
++# head and ends where round 3 ended it; the stops (_OTHER_HEAD, _APART, _COOKIE, _LATER_PWD, _LATER_CRED) keep a later
++# head that a stage-2 rule still reads. A head a stage-1 or PAYLOAD rule reads needs no stop here: its value is a marker.
++STAGE2_PATTERNS = [
++    # the token of `Authorization: Negotiate <token>` (VERIFY-SCRUB2 F2). The word `Negotiate` has 9 letters, over the
++    # credential rule's floor, so stage 1's credential rule (R1 in scrub_payload, behind an escaped quote) takes the word
++    # as the value, as the PIN did, and the token after it showed. This rule reads the head with that marker in place of
++    # the word, or with the word where no rule took it (an escaped quote in scrub). The token is on the head's own line
++    # (spaces or tabs after it), and it stops before a Bearer match, a bridge link and another named rule's head
++    # (_OTHER_HEAD: an Authorization or Cookie header, pwd, credentials, the credential rule's names; AF-AP-157;
++    # VERIFY-SCRUB2-R1 B3: after `\s+` the token was the next line's `Authorization`). The stage-2 rules below read the
++    # Authorization, Cookie, pwd and credentials heads; the others are stage-1 or PAYLOAD heads, whose values are markers
++    # by now. The token is base64 (SPNEGO's shape): `=` only as padding at its end, so it never takes a `name=value` pair
++    # that the Cookie rule's floor reads. No other head stops it: any other word stays in the token.
++    (re.compile(r"((?i:authorization)" + _Q + r"\s*:\s*" + _Q + r"(?:(?i:negotiate)|<redacted>)[ \t]+)(?=[A-Za-z0-9._~+/\-]{8})"
++                r"(?:(?!" + _BEARER + r"|" + _LINK + r"|" + _OTHER_HEAD + r")[A-Za-z0-9._~+/\-])+=*"), r"\1<redacted>"),
++    # the Cookie rule of stage 1, and the heads the PIN never read (an escaped quote, `my_cookie:`, a head after a
++    # literal `\t` or an escaped line end): such a head's match ends at the next stop (_APART, _COOKIE), and the floor is
++    # searched in that segment (_cookie_or_same), so a line of such heads is read once (round 3's census: at most 0.06 s
++    # for the Cookie rule on each 64,000-character text of 65 hostile families and 8 more aimed at its clauses, about x2
++    # per doubling).
++    (re.compile(r"((?:" + _COOKIE_PIN + r"|" + _COOKIE + r"(?:\s|\\[nrt])*" + _Q + r"(?P<new>)))(?(new)(?P<seg>(?:(?!"
++                + _APART + r"|" + _COOKIE + r")" + _CL + r")*)|(?:(?=[^\r\n\"']*=[^\s;\"']{8})(?P<value>" + _CL
++                + r"+)|(?:(?!" + _COOKIE_X + r")" + _CL + r")*))"), _cookie_or_same),
++    # the scheme rule of stage 1, and a head behind an escaped quote (_Q; VERIFY-SCRUB2 F1: a JSON document inside a tool
++    # input), which the PIN never read: its token is on the scheme's own line (with `\s+` it was the next line's
++    # `Authorization`, and that header's credential stayed: SCRUB2-R1 round 2), and it stops before a later head that
++    # stands apart (_APART; VERIFY-SCRUB2-R1-R2 N2: a token glued to `.pwd=` took that name). In scrub_payload the PAYLOAD
++    # rules ran first, so a Basic or bearer token there is the payload rules' marker already.
++    (re.compile(r"((?i:authorization)(?:[\"']?\s*:\s*[\"']?" + _SCHEME + r"\s+|" + _Q + r"\s*:\s*" + _Q + _SCHEME
++                + r"[ \t]+(?P<esc>)))(?=[A-Za-z0-9._~+/=\-]{8})(?:(?(esc)(?!" + _APART + r"))[A-Za-z0-9._~+/=\-])+"),
++     r"\1<redacted>"),
++    # the pwd and credentials rules of stage 1, and the heads the PIN never read: `_KEY_L` before the name (a head after
++    # an escape's letter, or after a marker), an escaped quote beside it (_Q). A value here stops before a later pwd or
++    # credentials head that stands apart (_LATER_PWD, _LATER_CRED): the name shows, and that head's rule hides its value.
++    (re.compile(r"(" + _KEY_L + r"(?i:pwd)" + _Q + r"\s*[:=]\s*" + _Q + r")(?![/~.$\\]|" + _APART + r")" + _PWD_FLOOR
++                + r"(?:(?!" + _LATER_PWD + r")" + _VU + r")+"), r"\1<redacted>"),
++    (re.compile(r"(" + _KEY_L + r"(?i:credentials)(?:\\*[\"']\s*:|\s*=)\s*" + _Q + r")(?![/~.$\\]|" + _APART + r")"
++                + _CRED_FLOOR + r"(?:(?!" + _LATER_CRED + r")" + _VU + r")+"), r"\1<redacted>"),
++]
++SECRET_PATTERNS = STAGE1_PATTERNS + STAGE2_PATTERNS + [
+     # long opaque tokens (40+ url-safe chars) — coarse, deliberately. Each end is `\b` or its ASCII form: `\b` alone never
+     # holds next to a non-ASCII letter, so a token glued to `é` or `の` passed (VERIFY-SCRUB1 F12); with both forms every
+     # match `\b` made stays a match.
+@@ -127,7 +317,7 @@ SECRET_PATTERNS = [
+ 
+ 
+ def scrub(text: str) -> str:
+-    for pat, rep in SECRET_PATTERNS:
++    for pat, rep in SECRET_PATTERNS:      # stage 1, stage 2, then the opaque rule
+         text = pat.sub(rep, text)
+     return text
+ 
+@@ -180,14 +370,17 @@ OPAQUE_MARK = "<opaque-redacted>"      # the marker of scrub's coarse opaque-run
+ 
+ 
+ def scrub_payload(text: str, opaque=None) -> str:
+-    """The extended scrubber for tool payloads: scrub's named rules, then PAYLOAD_PATTERNS, then scrub's coarse opaque-run
+-    rule, whose match becomes `opaque(match)` when a callable is given (session_export.py's stable pseudonyms, AMENDMENT 1
+-    G6) or its marker. The named rules run first, so a value one of them takes never reaches `opaque`, however long."""
+-    for pat, rep in SECRET_PATTERNS:
+-        if rep != OPAQUE_MARK:
+-            text = pat.sub(rep, text)
++    """The extended scrubber for tool payloads: scrub's stage 1, then PAYLOAD_PATTERNS, then scrub's stage 2 (every rule
++    that reads a head the PIN never read runs after every rule that reads a head the PIN reads: SCRUB2-R1 round 4), then
++    scrub's coarse opaque-run rule, whose match becomes `opaque(match)` when a callable is given (session_export.py's
++    stable pseudonyms, AMENDMENT 1 G6) or its marker. The named rules run first, so a value one of them takes never
++    reaches `opaque`, however long."""
++    for pat, rep in STAGE1_PATTERNS:
++        text = pat.sub(rep, text)
+     for pat, rep in PAYLOAD_PATTERNS:
+         text = pat.sub(rep, text)
++    for pat, rep in STAGE2_PATTERNS:
++        text = pat.sub(rep, text)
+     for pat, rep in SECRET_PATTERNS:
+         if rep == OPAQUE_MARK:
+             text = pat.sub(rep if opaque is None else opaque, text)
+diff --git a/tasks/briefs/system1/vscrub2r4/vscrub2r1r4_red.py b/tasks/briefs/system1/vscrub2r4/vscrub2r1r4_red.py
+new file mode 100644
+index 0000000..d15d9e7
+--- /dev/null
++++ b/tasks/briefs/system1/vscrub2r4/vscrub2r1r4_red.py
+@@ -0,0 +1,82 @@
++"""VERIFY-SCRUB2-R1-R4's red tests (scratch only, never committed). R4V-1 (DISC-4, the cross-rule K-chain): a
++credentials value the credentials floor refuses (an escape among its first 8 characters: D1, or F15's shape in canonical
++JSON) is kept whole, so a head inside it, which the PIN never read (the PIN's credentials value hid its name), is read by
++a rule that runs after stage 1's credentials rule and before a later PIN-head rule: the Bearer tail, Basic, bearer, R1's
++escaped-quote credential, the PASS rule or the bridge link. That rule's token is glued to a later head (a PASS name, an
++escaped-quote credential, curl's `-u`, a URL, a lower-case bearer), takes that head's name, and the later value, which the
++PIN hid with its own rule, shows in convert()'s events. Every value is a fake built here. The PIN passes each item."""
++import importlib.util
++import json
++import pathlib
++import secrets
++
++import pytest
++
++ROOT = pathlib.Path(__file__).resolve().parents[1]
++TOOL = ROOT / "scripts" / "transcript_export.py"
++_spec = importlib.util.spec_from_file_location("transcript_export_vscrub2r1r4", TOOL)
++MOD = importlib.util.module_from_spec(_spec)
++_spec.loader.exec_module(MOD)
++B = "\\"
++
++
++def _v():
++    return "7" + secrets.token_hex(8) + "q"
++
++
++def _canon(obj):
++    return json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
++
++
++def _hidden(v, out):
++    """no 8-character piece of v, as written or as JSON writes it, is in out"""
++    forms = {v, json.dumps(v)[1:-1]}
++    return not any(f[i:i + 8] in out for f in forms for i in range(len(f) - 7))
++
++
++def _settle(text):
++    """convert()'s scrub of one event's text: scrub_payload to a fixed point (at most 4 passes)"""
++    for _ in range(4):
++        out = MOD.scrub_payload(text)
++        if out == text:
++            return out
++        text = out
++    return "<UNSETTLED>"
++
++
++# canonical JSON (convert()'s tool_call): `credentials=<short>` then a real line end (F15's shape: the floor refuses it),
++# then a head on the next line whose token is glued to a later head
++@pytest.mark.parametrize("fmt", [
++    "export credentials=ab\nBearer k1a2b3c4d5e6f/DB_PASS=" + B + "\"%s" + B + "\"",
++    "[auth] credentials=q1\nAuthorization: " + B + "\"Basic dXNlcjpwYXNzQxtoken=" + B + "\"%s" + B + "\"",
++    "credentials=zz\nbearer k1a2b3c4d59~curl -u a:%s https://zq.example",
++    "credentials=U\nabcBearer k1qF5UwwJ7Lpcs/token=" + B + "\"%s" + B + "\" next",
++    "credentials=bT\r\nBearer khEPDGj0IKFUUP/https://u:%s@h.example",
++])
++def test_r4v1_a_head_inside_a_refused_value_in_canonical_json_frees_no_later_value(fmt):
++    v = _v()
++    assert _hidden(v, _settle(_canon({"command": fmt % v})))
++
++
++# decoded text (convert()'s text and tool_result events): a literal escape among the value's first 8 characters (D1)
++@pytest.mark.parametrize("fmt", [
++    "credentials=Z" + B + "tBearer k1a2b3c4d5e6f+X_PASS = %s",
++    "set credentials=y" + B + "rtoken=" + B + "\"k1a2b3c4d5;DB_PASS = %s",
++    "'credentials':'qcro7h" + B + "rabcBearer kFMIgtUHJ76U2+X_PASS = %s'",
++    "credentials=pfyXX" + B + "rx9y8z7w6Bearer kfl9ugaiT5LN2~curl -u \"a:%s\"",
++    "credentials=lP" + B + "tx9y8z7w6Authorization: " + B + "\"Basic kyCcooZO4/cN1/bearer %s" + B + "\"",
++])
++def test_r4v1_a_head_inside_a_refused_value_in_decoded_text_frees_no_later_value(fmt):
++    v = _v()
++    assert _hidden(v, _settle(fmt % v))
++
++
++# the control: the same texts with a value the floor takes (no escape among its first 8 characters) hide v on every version
++@pytest.mark.parametrize("fmt", [
++    "export credentials=abcdefgh\nBearer k1a2b3c4d5e6f/DB_PASS=" + B + "\"%s" + B + "\"",
++    "credentials=Zabcdefgh" + B + "tBearer k1a2b3c4d5e6f+X_PASS = %s",
++])
++def test_r4v1_control_a_value_the_floor_takes_hides_the_later_value(fmt):
++    v = _v()
++    text = fmt % v
++    assert _hidden(v, _settle(_canon({"command": text}) if "\n" in text else text))
+diff --git a/tests/test_session_export.py b/tests/test_session_export.py
+index 6f34bc7..697c53b 100644
+--- a/tests/test_session_export.py
++++ b/tests/test_session_export.py
+@@ -1023,8 +1023,10 @@ def test_gate_counts_patterns_and_canaries_and_prints_none(tmp_path, se):
+     assert counts.get("pattern:credential") == "1" and counts.get("pattern:github-token") == "1", r.stdout
+     assert counts.get("pattern:opaque-run") == "2" and counts.get("canary:bridge-token") == "1", r.stdout
+     assert {n: counts.get("pattern:" + n) for n in r1} == {n: "1" for n in r1}, r.stdout
+-    # SCRUB2: the lower-case bearer header is also the scrub's own authorization-scheme shape now
+-    assert counts.get("pattern:authorization-scheme") == "1" and counts.get("total") == "11", r.stdout
++    # SCRUB2: the lower-case bearer header is also the scrub's own authorization-scheme shape now; stage 2's scheme rule
++    # (SCRUB2-R1 round 4) reads the PIN's heads again, so the gate counts that header under both names
++    assert counts.get("pattern:authorization-scheme") == "1" == counts.get("pattern:stage2-authorization-scheme"), r.stdout
++    assert counts.get("total") == "12", r.stdout
+ 
+ 
+ # SESSION-EXPORT-R1 (task #252; VERIFY-SESSION-EXPORT F-1, F-4 to F-7; AMENDMENT 3), on the shared export above.
+@@ -1262,3 +1264,50 @@ def test_repo_runs_refuses_a_blob_git_cannot_give(tmp_path, se):
+     (repo / ".git" / "objects" / blob[:2] / blob[2:]).unlink()
+     with pytest.raises(ValueError):
+         se.repo_runs(str(repo), commit)
++
++
++# VERIFY-SCRUB2 F10 (SCRUB2-R1, task #321): gate_patterns() pairs each name with the rule at its position, so two names
++# swapped keep the count and mislabel the gate's report, and no count check sees it. Each name has a probe its own rule
++# changes (as gate_file counts: a match whose replacement differs), and no two rules each change the other's probe, so a
++# swap of any two names fails here. Every value is a fake assembled here (session_export._z).
++def _gate_probes(se):
++    z = se._z
++    body = "MIIEzq" + z("pk-1") + "\n" + z("pk-2")
++    return {
++        "private-key": "-----BEGIN RSA PRIVATE KEY-----\n" + body,                  # no END: the strict rule's shape
++        "private-key-malformed": "----BEGIN RSA PRIVATE KEY----\n%s\n----END RSA PRIVATE KEY----" % body,
++        "authorization-negotiate": "Authorization: Negotiate " + z("neg"), "credential": "api_key=" + z("cred"),
++        "bearer": "Bearer " + z("bearer"), "cookie": "Cookie: sid=" + z("cookie"),
++        "authorization-scheme": "Authorization: Token " + z("token"), "pwd": "pwd=" + z("pwd"),
++        "credentials": "credentials=" + z("credentials"), "sk-key": "sk-" + z("sk"), "github-token": "ghp_" + z("gh"),
++        # stage 2 (SCRUB2-R1 round 4): a head the PIN never read (`my_cookie:`, an escaped quote, a literal `\t`)
++        "stage2-cookie": "my_cookie: sid=" + z("cookie-2"), "stage2-authorization-scheme": 'Authorization: \\"Token '
++        + z("token-2"), "stage2-pwd": "x\\tpwd=" + z("pwd-2"), "stage2-credentials": "x\\tcredentials=" + z("cred-2"),
++        "google-key": "AIza" + z("aiza") + z("aiza-2")[:12], "slack-token": "xoxb-" + z("xox"),
++        "bridge-link": "https://zq-%s.trycloudflare.com/exec" % z("link").lower(),
++        "opaque-run": z("run-1") + z("run-2") + z("run-3"),
++        "bridge-host": "curl zq-%s.trycloudflare.com/x" % z("host").lower(),
++        "bearer-tail": "Bearer <redacted>~" + z("tail"), "basic-auth": "Authorization: Basic " + z("basic"),
++        "escaped-credential": 'export PC_BRIDGE_TOKEN=\\"%s\\" && ls' % z("esc"),
++        "url-password": "postgres://zq:%s@db.internal/app" % z("pgpass"),
++        "bearer-lower": "authorization: bearer " + z("low"), "curl-user": "curl -u zq:%s https://zq.example" % z("curl"),
++        "pass-name": "DB_PASS=" + z("pass"), "url-token-user": "https://%s@github.com/zq" % z("tokuser"),
++    }
++
++
++def _changes(pat, rep, text):
++    """gate_file's count: a match of `pat` in `text` whose replacement differs from it."""
++    return any((rep(m) if callable(rep) else m.expand(rep)) != m.group(0) for m in pat.finditer(text))
++
++
++def test_each_gate_pattern_name_labels_its_own_rule(se):
++    probes, pats = _gate_probes(se), se.gate_patterns()
++    assert [n for n, _ in pats] == list(se.PATTERN_NAMES) and sorted(probes) == sorted(se.PATTERN_NAMES)
++    rules = dict(pats)
++    changes = {(a, b) for a, (p, r) in rules.items() for b, t in probes.items() if _changes(p, r, t)}
++    assert [n for n in probes if (n, n) not in changes] == []                  # each rule changes its own probe
++    assert sorted((a, b) for a, b in changes if a < b and (b, a) in changes) == []    # so any swap of two names fails
++    # controls: VERIFY-SCRUB2's two surviving swaps (N1, N3) leave each name's probe unchanged by the rule it then labels
++    for x, y in (("pwd", "credentials"), ("private-key", "private-key-malformed")):
++        swapped = dict(rules, **{x: rules[y], y: rules[x]})
++        assert [n for n in (x, y) if _changes(*swapped[n], probes[n])] == []
+diff --git a/tests/test_transcript_export.py b/tests/test_transcript_export.py
+index 5d3abec..f14dc6c 100644
+--- a/tests/test_transcript_export.py
++++ b/tests/test_transcript_export.py
+@@ -9,6 +9,7 @@ import io
+ import json
+ import os
+ import pathlib
++import random
+ import re
+ import subprocess
+ import sys
+@@ -1287,3 +1288,770 @@ def test_scrub2_shapes_never_reach_the_session_export(tmp_path):
+     assert len(calls) == len(inputs), [e.get("kind") for e in events][:8]
+     blob = json.dumps(events, ensure_ascii=False)
+     assert [f[:4] for f in fakes if not _no_piece(f, blob)] == []
++
++
++# SCRUB2-R1 (task #321; VERIFY-SCRUB2 F1, F2, F5, F7, F12, F15). The Cookie, pwd and credentials rules (and the scheme
++# rule's head) read a JSON-escaped text as its decoded text reads; `Authorization: Negotiate <token>` hides its token; the
++# lenient key-block and Cookie rules run in linear time and hide what SCRUB2's forms hid. Every value is a fake built here.
++BS = "\\"                                   # one backslash: the escapes below are built from it in code, never typed
++
++
++def _bash_record(n, inp, cwd):
++    """One assistant record in the harness's shape, with a Bash tool_use whose input is `inp`."""
++    return json.dumps({
++        "parentUuid": None, "isSidechain": False, "userType": "external", "cwd": cwd,
++        "sessionId": "0f0f0f0f-fake-4a4a-8b8b-00000000cafe", "version": "2.1.0", "gitBranch": "fake",
++        "type": "assistant", "uuid": "u-%05d" % n, "timestamp": "2026-09-26T08:%02d:%02d.000Z" % divmod(n, 60),
++        "requestId": "req_fake%05d" % n,
++        "message": {"model": "claude-fake", "id": "msg_fake%05d" % n, "type": "message", "role": "assistant",
++                    "content": [{"type": "tool_use", "id": "toolu_%05d" % n, "name": "Bash", "input": inp,
++                                 "caller": {"type": "direct"}}],
++                    "stop_reason": "tool_use", "usage": {"input_tokens": 1, "output_tokens": 1}}},
++        separators=(",", ":"))
++
++
++def _through_convert(tmp_path, commands):
++    """session_export.convert() over one Bash call per command (the input is written as canonical JSON: a line start
++    sits after an escaped newline); each call event's text, in order."""
++    path = tmp_path / "r1-convert.jsonl"
++    path.write_text("".join(_bash_record(n, {"command": c}, str(tmp_path)) + "\n" for n, c in enumerate(commands, 1)))
++    events = []
++    _session_export().convert(str(path), src="zq/r1.jsonl", key=token_bytes(32), sink=events.append)
++    calls = [e["text"] for e in events if e.get("kind") == "tool_call"]
++    assert len(calls) == len(commands), [e.get("kind") for e in events][:8]
++    return calls
++
++
++def _through_digest(tmp_path, texts):
++    """main() over one user turn per text, with fixture value-gate sources; the digest's text."""
++    jsonl = tmp_path / "r1-digest.jsonl"
++    jsonl.write_text("".join(_entry("user", t, "2026-09-26T08:%02d:%02d.000Z" % divmod(i, 60)) + "\n"
++                             for i, t in enumerate(texts)))
++    r = _run(jsonl, tmp_path / "out")
++    assert r.returncode == 0, r.stderr
++    return (tmp_path / "out" / "chat-2026-09-26.md").read_text()
++
++
++# F1: each shape in each context VERIFY-SCRUB2 5a lists, through the digest (the decoded text) and convert() (canonical
++# JSON: a line start after an escaped newline, a tab after an escaped tab, a JSON document's quotes escaped).
++R1_SHAPES = (("pwd", "pwd=%s", {"pwd": "%s"}), ("credentials", "credentials=%s", {"credentials": "%s"}),
++             ("cookie", "Cookie: sid=%s", {"Cookie": "sid=%s"}),
++             ("authorization", "Authorization: Token %s", {"Authorization": "Token %s"}))
++R1_CONTEXTS = (("a line start", "first line\n{s} rest"), ("after a tab", "a\t{s} rest"),
++               ("after a literal backslash-n", "zq" + BS + "n{s} rest"), ("after é", "café{s} rest"),
++               ("after の", "この{s} rest"), ("a JSON document", None), ("plain (control)", "x {s} rest"))
++
++
++def _r1_rows():
++    """(shape, context, text, fake): one fresh fake per cell."""
++    rows = []
++    for shape, fmt, doc in R1_SHAPES:
++        for ctx, cfmt in R1_CONTEXTS:
++            v = _fake_value()
++            rows.append((shape, ctx, json.dumps(_fill(doc, v)) if cfmt is None else cfmt.replace("{s}", fmt % v), v))
++    return rows
++
++
++def test_r1_named_rules_hold_every_f1_context_end_to_end(tmp_path):
++    rows = _r1_rows()
++    blob = _through_digest(tmp_path, [t for _, _, t, _ in rows])
++    calls = _through_convert(tmp_path, [t for _, _, t, _ in rows])
++    leaks = [(s, c, "digest") for s, c, _, v in rows if not _no_piece(v, blob)]
++    leaks += [(s, c, "convert") for (s, c, _, v), text in zip(rows, calls) if not _no_piece(v, text)]
++    assert leaks == []
++
++
++# The four rules as SCRUB2 left them (cdbc1b8:scripts/transcript_export.py:95, 98-99, 103, 105-106), for the controls; each
++# key names the one rule of today's stage 1 it stands in for.
++PIN_R1 = {
++    "cookie)": r"((?i:\b(?:set-)?cookie)[\"']?\s*:\s*[\"']?)(?=[^\r\n\"']*=[^\s;\"']{8})[^\r\n\"']+",
++    "|ssws)": (r"((?i:authorization)[\"']?\s*:\s*[\"']?(?i:token|basic|bearer|digest|negotiate|ntlm|apikey|api-key|key"
++               r"|ssws)\s+)(?=[A-Za-z0-9._~+/=\-]{8})[A-Za-z0-9._~+/=\-]+"),
++    "(?i:pwd)": r"((?<![A-Za-z0-9])(?i:pwd)[\"']?\s*[:=]\s*[\"']?)(?![/~.$\\])(?=[^\s\"'&,;]{8})[^\s\"'&,;]+",
++    "(?i:credentials)": (r"((?<![A-Za-z0-9])(?i:credentials)(?:[\"']\s*:|\s*=)\s*[\"']?)(?![/~.$\\])(?=[^\s\"'&,;]{8})"
++                         r"[^\s\"'&,;]+"),
++}
++
++
++def _payload_with(swaps):
++    """MOD's scrub_payload as SCRUB2 ran it: stage 1 with each rule whose pattern holds a key of `swaps` replaced by (that
++    pattern, `\\1<redacted>`), the PAYLOAD rules, then the opaque rule; no stage 2 (SCRUB2-R1 round 4), which SCRUB2 had not."""
++    pats, hit = [], []
++    for p, r in MOD.STAGE1_PATTERNS:
++        keys = [k for k in swaps if k in p.pattern]
++        hit += keys
++        pats.append((re.compile(swaps[keys[0]]), r"\1<redacted>") if keys else (p, r))
++    assert sorted(hit) == sorted(swaps), hit                           # each key names exactly one rule
++    order = pats + list(MOD.PAYLOAD_PATTERNS) + [pr for pr in MOD.SECRET_PATTERNS if pr[1] == MOD.OPAQUE_MARK]
++
++    def run(text):
++        for p, r in order:
++            text = p.sub(r, text)
++        return text
++    return run
++
++
++def _scrub_with_scrub2s_forms(text):
++    """MOD's scrub as SCRUB2 ran it (SCRUB2-R1 round 4): stage 1 with PIN_R1's forms in place of its four rules, then the
++    opaque rule; no stage 2."""
++    pats = []
++    for p, r in MOD.STAGE1_PATTERNS:
++        keys = [k for k in PIN_R1 if k in p.pattern]
++        pats.append((re.compile(PIN_R1[keys[0]]), r"\1<redacted>") if keys else (p, r))
++    for p, r in pats + [pr for pr in MOD.SECRET_PATTERNS if pr[1] == MOD.OPAQUE_MARK]:
++        text = p.sub(r, text)
++    return text
++
++
++def _r1_misses(payload):
++    """[(shape, context)] where a piece of the fake survives `payload` over the command's canonical JSON (convert's view)."""
++    return sorted({(s, c) for s, c, t, v in _r1_rows() if not _no_piece(v, payload(_canon({"command": t})))})
++
++
++def test_r1_contexts_red_on_scrub2s_forms_exactly_where_verify_scrub2_found_them():
++    assert _r1_misses(getattr(MOD, "scrub_payload")) == []
++    want = {(s, c) for s in ("pwd", "credentials", "cookie")
++            for c in ("a line start", "after a tab", "after a literal backslash-n", "a JSON document")}
++    want |= {("authorization", "a JSON document"), ("cookie", "after é"), ("cookie", "after の")}
++    assert _r1_misses(_payload_with(PIN_R1)) == sorted(want)
++
++
++# F5: inside canonical JSON a quote is `\"`; a value stops before its backslash, so the JSON stays valid and reads back as
++# the text with the value replaced.
++R1_QUOTED = (('echo "pwd=%s"', 'echo "pwd=' + R + '"'), ('echo "credentials=%s"', 'echo "credentials=' + R + '"'),
++             ('echo "Cookie: sid=%s"', 'echo "Cookie: ' + R + '"'),
++             ('curl -H "Cookie: a=1; sid=%s" https://zq.example', 'curl -H "Cookie: ' + R + '" https://zq.example'),
++             ('echo "Authorization: Token %s"', 'echo "Authorization: Token ' + R + '"'),
++             ("echo '{\"pwd\": \"%s\"}'", "echo '{\"pwd\": \"" + R + "\"}'"))
++
++
++@pytest.mark.parametrize("fmt,want", R1_QUOTED)
++def test_r1_a_value_stops_before_an_escaped_quote(fmt, want):
++    v = _fake_value()
++    out = getattr(MOD, "scrub_payload")(_canon({"command": fmt % v}))
++    assert _no_piece(v, out) and json.loads(out) == {"command": want}, out
++
++
++# F15: in the raw view an escaped newline, carriage return, tab or form feed is no character of the credentials floor
++# (_VF), so a short value stays under it and the next line stays whole: VERIFY-SCRUB2 F15's two shapes, then their CRLF
++# and tab forms (the last two also kill the round-2 mutants M2' and M3': `\r`, `\t` read as value characters). SCRUB2's
++# forms redacted each of these into its next line. The pwd and Cookie rules take an escape before a value unit into the
++# value again (SCRUB2-R1 round 2, VERIFY-SCRUB2-R1 V4: no redaction the rule before SCRUB2-R1 made may be lost in any
++# view), so their F15-class shapes are redacted as SCRUB2 redacted them.
++R1_ORDINARY = ("python3 - <<EOF\nclient = Client(credentials=None)\n\nrows = client.list()\nEOF",
++               "echo ok\nGOOGLE_APPLICATION_CREDENTIALS=0\nnext_step_here",
++               "python3 - <<EOF\r\nclient = Client(credentials=None)\r\n\r\nrows = client.list()\r\nEOF",
++               "f(credentials=cred12)\r\nnext_line_words", "f(credentials=cred)\tpadding_word_here")
++
++
++def test_r1_an_escaped_newline_or_tab_ends_a_value(tmp_path):
++    payload = getattr(MOD, "scrub_payload")
++    assert [t[:16] for t in R1_ORDINARY if payload(_canon({"command": t})) != _canon({"command": t})] == []
++    pin = _payload_with(PIN_R1)                                        # control: SCRUB2's forms change every one
++    assert [t[:16] for t in R1_ORDINARY if pin(_canon({"command": t})) == _canon({"command": t})] == []
++    assert [json.loads(c)["command"] for c in _through_convert(tmp_path, R1_ORDINARY)] == list(R1_ORDINARY)
++    # a long value is still taken whole; a tab stays inside a Cookie header's line, as a real tab does
++    v = _fake_value()
++    for text in ("credentials=%s\nnext_line_here" % v, "Cookie: a=1;\tsid=%s\nnext_line_here" % v):
++        out = payload(_canon({"command": text}))
++        assert _no_piece(v, out) and json.loads(out)["command"].startswith(text[:8]), out
++
++
++# F2 (the credential rule took the 9-letter word `Negotiate` as the value, and the token stayed) and F12's W7 (four schemes
++# no test held): every listed scheme's token is hidden by scrub and scrub_payload, and end to end.
++SCHEMES = ("Token", "Basic", "Bearer", "bearer", "Digest", "Negotiate", "NTLM", "ApiKey", "Api-Key", "Key", "SSWS")
++
++
++def test_every_authorization_scheme_hides_its_token(tmp_path):
++    rows = [("Authorization: %s %s" % (s, v), v) for s, v in ((s, _fake_value()) for s in SCHEMES)]
++    assert [(t.split()[1], fn.__name__) for t, v in rows for fn in (SCRUB, getattr(MOD, "scrub_payload"))
++            if not _no_piece(v, fn(t))] == []
++    v, w = _fake_value(), _fake_value()
++    # the word stays hidden, as the credential rule hid it before; the token stops before a Bearer match (AF-AP-157)
++    assert SCRUB("Authorization: Negotiate %s" % v) == "Authorization: %s %s" % (R, R)
++    out = SCRUB("Authorization: Negotiate %sBearer %s" % (v[:12], w))
++    assert _no_piece(v[:12], out) and _no_piece(w, out), out
++    assert _no_piece(v, getattr(MOD, "scrub_payload")(_canon({"command": 'curl -H "Authorization: Negotiate %s"' % v})))
++    blob = _through_digest(tmp_path, ["Authorization: Negotiate %s" % v])
++    [call] = _through_convert(tmp_path, ["curl -H 'Authorization: Negotiate %s' x" % w])
++    assert _no_piece(v, blob) and _no_piece(w, call)
++
++
++# AF-AP-152, VERIFY-SCRUB2 F7: the lenient key-block rule retried `-{3,}` at every dash of a run and scanned to the end of
++# the text from every BEGIN head with no END (over 20 s on 60,000 dashes; 0.014 s before SCRUB2), and the Cookie rule read
++# the rest of its line from every head (2.7 s on 64,000 characters). VERIFY-SCRUB2-R1 B1: round 1's value classes read a
++# backslash run again at every pair of it (29 s on 64,000 backslashes after a Cookie head); the texts from the Cookie head
++# on hold backslash runs, escapes and heads after each changed rule's head (the escaped Cookie heads killed a stop that
++# made each head read the rest of the line; the base64 token, the Negotiate token's stops). A child times each scrub on
++# each hostile text; every call must take under 2 s (the slowest took 0.28 s in the sandbox on 2026-09-28, under load),
++# and a stall fails the test at the child's timeout.
++LINEAR_CHILD = r"""
++import importlib.util, sys, time
++spec = importlib.util.spec_from_file_location("transcript_export_linear", sys.argv[1])
++te = importlib.util.module_from_spec(spec)
++spec.loader.exec_module(te)
++head, B = "----BEGIN RSA PRIVATE KEY----\n", "\\"
++texts = [("60,000 dashes", "-" * 60000), ("60,000 dashes, then BEGIN", "-" * 60000 + "BEGIN RSA PRIVATE KEY----\nzq"),
++         ("4,000 BEGIN heads, no END", head * 4000), ("a BEGIN head, then 60,000 dashes", head + "-" * 60000),
++         ("12,000 cookie heads on a line", "cookie: x " * 12000), ("11,000 Set-Cookie heads", "Set-Cookie:" * 11000),
++         ("a Cookie head, then 60,000 backslashes", "Cookie: " + B * 60000),
++         ("a pwd head, then 60,000 backslashes", "pwd=a" + B * 60000),
++         ("a credentials head, then 60,000 backslashes", "credentials=a" + B * 60000),
++         ("a cookie value, then 60,000 backslashes and a quote", "Cookie: a=" + B * 60000 + '"'),
++         ("30,000 escaped newlines after a pwd head", "pwd=a" + (B + "n") * 30000),
++         ("14,000 escaped Cookie heads", ("Cookie:" + B + "n") * 14000),
++         ("7,000 CRLF Set-Cookie heads", ("Set-Cookie:" + B + "r" + B + "n  ") * 7000),
++         ("a Negotiate token of 60,000 base64 characters", "Authorization: Negotiate " + "Ab+/" * 15000),
++         ("12,000 my_cookie heads on a line", "my_cookie: " * 12000),
++         ("6,000 my_cookie and pwd heads, then a value", "my_cookie: a pwd: " * 6000 + "sid=abcdefghij")]
++for name, text in texts:
++    for fn in (te.scrub, te.scrub_payload):
++        t0 = time.perf_counter()
++        fn(text)
++        print("%s|%s|%.4f" % (name, fn.__name__, time.perf_counter() - t0), flush=True)
++"""
++
++
++def test_the_key_block_and_cookie_rules_run_in_linear_time():
++    try:
++        r = subprocess.run([sys.executable, "-c", LINEAR_CHILD, str(TOOL)], capture_output=True, text=True, timeout=40)
++    except subprocess.TimeoutExpired as e:
++        pytest.fail("a scrub stalled on a hostile text; the calls that finished: %s" % (e.stdout or b"").decode()[-400:])
++    assert r.returncode == 0, r.stderr[-400:]
++    rows = [line.split("|") for line in r.stdout.splitlines()]
++    assert len(rows) == 32 and [(n, f, s) for n, f, s in rows if float(s) >= 2.0] == []
++
++
++# The lenient rule as SCRUB2 wrote it (cdbc1b8:scripts/transcript_export.py:81-83): SCRUB2-R1 changes its speed, not what it
++# hides. The generator's alphabet: whole malformed heads and END lines (3, 4 and spaced dashes, PGP BLOCK), loose dashes
++# (1, 2, 3 and 5), their words alone, spaces, tabs, newlines and filler. It cannot draw a 5-dash head (the strict rule's),
++# lower case, or a head split over two lines.
++PIN_KEY_BLOCK = re.compile(r"-{3,}[ \t]*BEGIN [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?[ \t]*-{3,}.*?"
++                           r"-{3,}[ \t]*END [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?[ \t]*-{3,}", re.S)
++KEY_BLOCK_WORDS = ("----BEGIN RSA PRIVATE KEY----", "---BEGIN PRIVATE KEY---", "--- BEGIN EC PRIVATE KEY ---",
++                   "----BEGIN PGP PRIVATE KEY BLOCK----", "----END RSA PRIVATE KEY----", "---END PRIVATE KEY---",
++                   "--- END EC PRIVATE KEY ---", "----END PGP PRIVATE KEY BLOCK----", "-", "--", "---", "-----", " ", "\t",
++                   "\n", "BEGIN ", "END ", "PRIVATE KEY", "SECRET KEY", "zq", "AbC0+/=")
++
++
++def test_the_lenient_key_block_rule_hides_what_scrub2s_rule_hid():
++    p, r = [pr for pr in MOD.SECRET_PATTERNS if "BEGIN" in pr[0].pattern][1]       # the second rule that reads BEGIN
++    rng = random.Random(321)
++    texts = ["".join(rng.choice(KEY_BLOCK_WORDS) for _ in range(rng.randint(1, 30))) for _ in range(5000)]
++    assert [t for t in texts if p.sub(r, t) != PIN_KEY_BLOCK.sub("<private-key-redacted>", t)] == []
++    assert sum(PIN_KEY_BLOCK.search(t) is not None for t in texts) > 3000          # the generator draws blocks (3,465)
++    b64 = base64.b64encode(token_bytes(48)).decode()
++    b64 = b64[:32] + "\n" + b64[32:]                   # lines under the opaque rule's 40, so only this rule acts on them
++    rule, heads = "-" * 5000, "----BEGIN RSA PRIVATE KEY----\n" * 50
++    two = ("----BEGIN A PRIVATE KEY----\n%s\n----END A PRIVATE KEY----\nKEEP zq\n----BEGIN B PRIVATE KEY----\n%s\n"
++           "----END B PRIVATE KEY----" % (b64, b64))
++    for text, want in (("----BEGIN RSA PRIVATE KEY-------END RSA PRIVATE KEY----", "<private-key-redacted>"),  # empty
++                       (rule + "\n---BEGIN EC PRIVATE KEY---\n%s\n---END EC PRIVATE KEY---\n" % b64 + rule,
++                        rule + "\n<private-key-redacted>\n" + rule),
++                       (heads + b64, heads + b64),                                  # no END: the text stays
++                       (two, "<private-key-redacted>\nKEEP zq\n<private-key-redacted>"),     # W15: a greedy body joins
++                       ("---\tBEGIN RSA PRIVATE KEY\t---\n%s\n---\tEND RSA PRIVATE KEY\t---" % b64,
++                        "<private-key-redacted>"),                                  # W13: a tab beside the dashes
++                       ("----BEGIN PGP PRIVATE KEY BLOCK----\n\n%s\n----END PGP PRIVATE KEY BLOCK----" % b64,
++                        "<private-key-redacted>")):                                 # W14: the BLOCK suffix
++        assert p.sub(r, text) == want == SCRUB(text), want[:30]
++
++
++# The Cookie rule as SCRUB2 wrote it (cdbc1b8:scripts/transcript_export.py:95). The generator's alphabet: heads in two
++# cases and Set-Cookie, colons, quotes, spaces, tabs, newlines, separators, names and values of 2 and 8 characters. It
++# draws no backslash, no `_` and no non-ASCII letter: there SCRUB2-R1 changes the rule on purpose (escapes, the left
++# anchor), and the tests above hold those contexts.
++PIN_COOKIE = re.compile(r"((?i:\b(?:set-)?cookie)[\"']?\s*:\s*[\"']?)(?=[^\r\n\"']*=[^\s;\"']{8})[^\r\n\"']+")
++COOKIE_WORDS = ("Cookie: ", "cookie:", "Set-Cookie:", "Cookie", ":", " ", "\t", "\n", "\r\n", '"', "'", "=", ";", "; ",
++                "sid=", "a=1", "AbCd1234", "Ab", "x", ",", "&", "sid=AbCd1234")
++
++
++def test_the_cookie_rule_hides_what_scrub2s_rule_hid_on_plain_text():
++    [(p, r)] = [pr for pr in MOD.STAGE1_PATTERNS if pr[1] is MOD._cookie_or_same]
++    [(p2, r2)] = [pr for pr in MOD.STAGE2_PATTERNS if pr[1] is MOD._cookie_or_same]
++    rng = random.Random(3210)
++    texts = ["".join(rng.choice(COOKIE_WORDS) for _ in range(rng.randint(1, 40))) for _ in range(6000)]
++    assert [t for t in texts if p.sub(r, t) != PIN_COOKIE.sub(r"\1<redacted>", t)] == []
++    # stage 2's Cookie rule reads these heads again (SCRUB2-R1 round 4): what stage 1's left, it leaves as it is, and
++    # alone it hides what stage 1's hides (each stage's floor and value are pinned apart: in scrub one hides the other)
++    assert [t for t in texts if p2.sub(r2, p.sub(r, t)) != p.sub(r, t)] == []
++    assert [t for t in texts if p2.sub(r2, t) != p.sub(r, t)] == []
++    assert sum(PIN_COOKIE.search(t) is not None for t in texts) > 2000             # the generator draws matches (2,258)
++    # a later head holds a quote or a newline, so it reads a value past the first head's line end: the first head's
++    # no-value match stops before it (_COOKIE_X), and the value is hidden as before
++    v = _fake_value()
++    assert SCRUB('Cookie: x Cookie: "sid=%s"' % v) == 'Cookie: x Cookie: "%s"' % R
++    assert SCRUB("Cookie: x Cookie:\nsid=%s" % v) == "Cookie: x Cookie:\n" + R
++
++
++def _one_stage(rules, text):
++    for p, r in rules:
++        text = p.sub(r, text)
++    return text
++
++
++def test_each_named_rule_takes_8_characters_and_leaves_7():
++    # VERIFY-SCRUB2 F12 (W1-W5): the 8-character floor of the Cookie, scheme, pwd and credentials rules, both ways. Each
++    # stage alone too (SCRUB2-R1 round 4): stage 2 reads the PIN's heads again, so in scrub either stage's floor hides what
++    # the other's lost. A scheme head behind an escaped quote is stage 2's alone.
++    v8, v7 = "7" + token_hex(4)[:6] + "q", "7" + token_hex(3)[:5] + "q"
++    for fmt, kept in (("Cookie: sid=%s; theme=x", "Cookie: "), ("Authorization: Token %s", "Authorization: Token "),
++                      ("pwd=%s", "pwd="), ("credentials=%s", "credentials=")):
++        assert SCRUB(fmt % v8) == kept + R, fmt
++        assert SCRUB(fmt % v7) == fmt % v7, fmt
++        for stage in (MOD.STAGE1_PATTERNS, MOD.STAGE2_PATTERNS):
++            assert _one_stage(stage, fmt % v8) == kept + R and _one_stage(stage, fmt % v7) == fmt % v7, fmt
++    esc = "Authorization: " + BS + "\"Token "
++    assert SCRUB(esc + v8) == _one_stage(MOD.STAGE2_PATTERNS, esc + v8) == esc + R
++    assert SCRUB(esc + v7) == esc + v7 and _one_stage(MOD.STAGE1_PATTERNS, esc + v8) == esc + v8
++    # Y33: stage 2's scheme rule reads a plain head as stage 1's does, its whole token (the stop is after an escaped quote)
++    assert _one_stage(MOD.STAGE2_PATTERNS, "Authorization: Basic abcdefgh.pwd= zz") == "Authorization: Basic %s zz" % R
++
++
++def test_a_pwd_value_that_starts_with_a_backslash_stays():
++    # VERIFY-SCRUB2 F12 (W8): a value that starts with a backslash is a path or an escape, never a pwd value
++    for text in ("pwd=" + BS + "srv" + BS + "zq-share-01", "PWD: " + BS + BS + "srv" + BS + "zq-share-02"):
++        assert SCRUB(text) == text and getattr(MOD, "scrub_payload")(_canon({"c": text})) == _canon({"c": text})
++
++
++def test_an_upper_case_escape_separates_and_an_escaped_backslash_is_one_character():
++    # VERIFY-SCRUB2 F12 (W10): `\u00C9` (upper-case hex) is a JSON escape too, so a key or a name right after it is taken
++    esc = BS + "u00C9"
++    for rule, keys in _fake_keys().items():
++        for key in keys:
++            assert SCRUB("zq%s%s end" % (esc, key)) == "zq%s%s end" % (esc, MARK[rule]), rule
++    v = _fake_value()
++    assert SCRUB("zq%spwd=%s end" % (esc, v)) == "zq%spwd=%s end" % (esc, R)
++    # an escaped backslash is one value character: a value with a backslash pair and an `n` in it stays one value, as
++    # SCRUB2's rule took it
++    assert SCRUB("pwd=Ab" + BS + BS + "nqz" + v[:6]) == "pwd=" + R
++
++# SCRUB2-R1 round 2 (task #321; VERIFY-SCRUB2-R1 B1-B3, V4, V5). Every value is a fake built here.
++def _through_convert_turns(tmp_path, texts):
++    """session_export.convert() over one user turn per text; each text event's text (the decoded text the export keeps)."""
++    path = tmp_path / "r2-turns.jsonl"
++    path.write_text("".join(json.dumps({
++        "parentUuid": None, "isSidechain": False, "userType": "external", "cwd": str(tmp_path),
++        "sessionId": "0f0f0f0f-fake-4a4a-8b8b-00000000cafe", "version": "2.1.0", "gitBranch": "fake", "type": "user",
++        "uuid": "t-%05d" % n, "timestamp": "2026-09-28T08:%02d:%02d.000Z" % divmod(n, 60),
++        "message": {"role": "user", "content": t}}) + "\n" for n, t in enumerate(texts, 1)))
++    events = []
++    _session_export().convert(str(path), src="zq/r2.jsonl", key=token_bytes(32), sink=events.append)
++    out = [e["text"] for e in events if e.get("kind") == "text"]
++    assert len(out) == len(texts), [e.get("kind") for e in events][:8]
++    return out
++
++
++@pytest.mark.parametrize("fmt", ["headers:\n  Cookie:\n    session=%s\n", "Set-Cookie:\r\n  sid=%s", "Cookie:\nsid=%s"])
++def test_r2_a_cookie_value_on_the_next_line_is_hidden_in_every_view(fmt, tmp_path):
++    # B2: after the Cookie head's colon an escaped line end or tab is whitespace, as the decoded text's is
++    v = _fake_value()
++    text = fmt % v
++    out = getattr(MOD, "scrub_payload")(_canon({"content": text}))
++    assert _no_piece(v, SCRUB(text)) and _no_piece(v, out) and json.loads(out) is not None    # decoded, canonical JSON
++    assert _no_piece(v, SCRUB(_canon({"content": text})))                                    # the JSON pasted in chat
++    [call] = _through_convert(tmp_path, ["cat <<'EOF'\n" + text + "\nEOF"])
++    assert _no_piece(v, call)
++    # the escaped line end and the indent after the colon stay, as the head's whitespace; the marker starts at the name
++    name = text.split("=")[0].split()[-1]                                                   # session or sid
++    assert out.startswith(_canon({"content": text[:text.index(name + "=")] + R})[:-2]), out
++
++
++@pytest.mark.parametrize("scheme", ["Basic", "Token"])
++def test_r2_the_negotiate_token_never_takes_the_next_header(scheme, tmp_path):
++    # B3: `Negotiate` with no token, then another Authorization header on the next line or on the same one: the token was
++    # that header's name, and its credential stayed. Hidden now in scrub, scrub_payload, the digest and convert().
++    v = _fake_value()
++    texts = ["Authorization: Negotiate\nAuthorization: %s %s" % (scheme, v),
++             "Authorization: Negotiate Authorization: %s %s" % (scheme, v)]
++    for text in texts:
++        assert _no_piece(v, SCRUB(text)) and _no_piece(v, getattr(MOD, "scrub_payload")(_canon({"content": text}))), text
++    assert _no_piece(v, _through_digest(tmp_path, texts)) and all(_no_piece(v, c) for c in _through_convert(tmp_path, texts))
++    # the token is on the word's own line: a word on the next line is no token (the credential rule takes `Negotiate`)
++    assert SCRUB("Authorization: Negotiate\nnextlinewords here") == "Authorization: %s\nnextlinewords here" % R
++
++
++def test_r2_the_negotiate_token_is_base64_and_stops_before_other_heads():
++    # M22: a SPNEGO token is base64, with `+`, `/` and `=` padding (the fakes above are hex); its runs are under 40
++    # characters, so only this rule, not the opaque one, can hide it
++    v = "YII" + token_hex(6) + "+" + token_hex(6) + "/" + token_hex(6) + "Zq=="
++    for fn in (SCRUB, getattr(MOD, "scrub_payload")):
++        assert fn("Authorization: Negotiate %s" % v) == "Authorization: %s %s" % (R, R), fn.__name__
++    # M21: the floor is 8 characters, so a 10-character token is hidden
++    w = "YIIb" + token_hex(3)
++    assert SCRUB("Authorization: Negotiate %s" % w) == "Authorization: %s %s" % (R, R)
++    # `=` only pads the end: the token never takes a `name=value` pair that the Cookie rule's floor reads (before SCRUB2-R1
++    # the credential rule took the word `Negotiate` and the Cookie rule this whole line)
++    u = _fake_value()
++    assert _no_piece(u, SCRUB("Cookie: x Authorization: Negotiate =zqheads:%s" % u))
++    # the token stops before another rule's head (_OTHER_HEAD), and that rule takes its value
++    assert _no_piece(u, SCRUB("Authorization: Negotiate credentials = %s" % u))
++
++
++# V4 (the coordinator's ruling on VERIFY-SCRUB2-R1): a literal backslash-n, -r, -t or -f in decoded text is two characters
++# (a Windows path, a regex); it no longer cuts a pwd value or ends a Cookie line where the rule before SCRUB2-R1 hid the
++# whole value (VERIFY-SCRUB2-R1's lost_shapes cells), in the digest and in convert()'s decoded text events. The credentials
++# floor keeps F15's shapes out, so a credentials value whose first 8 characters hold such an escape stays (the report's
++# D1); a longer one, as here, is hidden.
++R2_LITERAL = ("Cookie: path=C:" + BS + "new" + BS + "x; sid=%s", "Cookie: dir=" + BS + "repo; sid=%s",
++              "Cookie: sid=ab" + BS + "t%s", "Cookie: sid=ab" + BS + "n%s", "pwd=ab" + BS + "n%s",
++              "pwd=abcdefgh" + BS + "t%s", "pwd=abcdefgh" + BS + "r%s", "pwd=abcdefgh" + BS + "f%s",
++              "credentials=abcdefgh" + BS + "t%s", "credentials=abcdefgh" + BS + "n" + BS + "n%s")
++
++
++def test_r2_a_literal_escape_in_decoded_text_keeps_the_value_hidden(tmp_path):
++    rows = [(fmt % v, v) for fmt, v in ((f, _fake_value()) for f in R2_LITERAL)]
++    assert [t[:24] for t, v in rows if not _no_piece(v, SCRUB(t))] == []
++    blob = _through_digest(tmp_path, [t for t, _ in rows])
++    events = _through_convert_turns(tmp_path, [t for t, _ in rows])
++    assert [t[:24] for (t, v), e in zip(rows, events) if not (_no_piece(v, blob) and _no_piece(v, e))] == []
++    # the Cookie floor reads 8 characters after `=`, a literal escape too, as it did before SCRUB2-R1: this line's only
++    # such value holds one, and the line is hidden whole
++    u = _fake_value()
++    assert SCRUB("Cookie: sid=" + BS + "theme=x; " + u) == "Cookie: " + R
++
++
++def test_r2_a_value_never_starts_at_another_rules_head():
++    # AF-AP-157's class, found by VERIFY-SCRUB2-R1's differential: a pwd or credentials value that began at the next
++    # rule's head (its name, a quote or whitespace, then `:` or `=`) hid that head, and the head's value stayed; the rules
++    # before SCRUB2-R1 hid each of these values
++    v = _fake_value()
++    for text in ("zq" + BS + "nPWD: \ncredentials = %s" % v, "pwd=" + BS + '"credentials": %s' % v,
++                 "x" + BS + 'tPWD: "credentials": %s' % v, '"credentials": ' + BS + BS + '"credentials": \r\n%s' % v):
++        assert _no_piece(v, SCRUB(text)), text[:32]
++    # a name glued to its value is part of the value: `token=...` stays pwd's value, hidden whole
++    assert SCRUB("pwd=token=%s" % v) == "pwd=" + R
++
++
++def test_r2_an_escape_stays_in_a_value_only_before_a_value_character():
++    # an escape joins a value only when a value unit follows it: a pwd value, then an escaped line end and an indented next
++    # line, ends at the line end in raw JSON, as in the decoded text; with a value unit after it the value runs on (V4)
++    payload = getattr(MOD, "scrub_payload")
++    assert payload(_canon({"c": "pwd=abcdefgh\r\n  next"})) == _canon({"c": "pwd=" + R + "\r\n  next"})
++    assert payload(_canon({"c": "pwd=abcdefgh\r\nnext"})) == _canon({"c": "pwd=" + R})
++    # a Cookie line runs on over an escaped line end before a line unit; its last one, before the string's end, stays
++    v = _fake_value()
++    assert payload(_canon({"c": "Cookie: sid=%s\n" % v})) == _canon({"c": "Cookie: %s\n" % R})
++
++
++def test_r2_a_value_stops_before_an_escaped_quote_at_depth_two():
++    # M17: a run of escaped backslashes is value only when no quote follows it. At depth two an escaped quote is three
++    # backslashes and a quote; a value that took the pair before it left `\"`, which ended the inner JSON's string early.
++    v = _fake_value()
++    for doc in ({"pwd": v}, {"credentials": v}, {"Cookie": "sid=" + v}):
++        out = getattr(MOD, "scrub_payload")(_canon({"command": "echo " + json.dumps(json.dumps(doc))}))
++        inner = json.loads(json.loads(json.loads(out)["command"][5:]))
++        assert _no_piece(v, out) and sorted(inner) == sorted(doc), out
++    # at depth one a run of escaped backslashes before the closing quote stays outside the value too (M17's own shape: the
++    # value `abcdefgh\` ends before its literal backslash, which shows): a run before a quote is never taken
++    assert getattr(MOD, "scrub_payload")(_canon({"c": "pwd=abcdefgh" + BS})) == _canon({"c": "pwd=" + R + BS})
++
++
++def test_r2_a_pwd_name_after_a_backspace_or_form_feed_escape_is_taken():
++    # M20: canonical JSON writes a backspace or a form feed as `\b` or `\f`; a pwd name right after one is taken (the
++    # letter before it is the escape's, not the name's neighbour)
++    v = _fake_value()
++    for ch in ("\b", "\f"):
++        assert _no_piece(v, getattr(MOD, "scrub_payload")(_canon({"command": "x" + ch + "pwd=" + v}))), repr(ch)
++
++
++@pytest.mark.parametrize("quote", [BS + '"', BS * 3 + '"', BS + "'"])
++def test_r2_after_an_escaped_quote_the_scheme_token_is_on_its_own_line(quote, tmp_path):
++    # B3's shape after an escaped quote, found in round 2: the rule before SCRUB2-R1 read no such head, so the next
++    # header's own match hid its credential; with `\s+` the scheme rule took the next line's `Authorization` as the token,
++    # and that header's credential stayed. Hidden now in scrub, scrub_payload, the digest and convert()'s decoded text.
++    v, w, x = _fake_value(), _fake_value(), _fake_value()
++    rows = [("Authorization: %sNegotiate\nAuthorization: Basic %s" % (quote, v), v),
++            ("Authorization: %sBasic\nAuthorization: Token %s" % (quote, w), w),
++            ('"Authorization": %sDigest\r\n  Authorization: Basic %s' % (quote, x), x)]
++    payload = getattr(MOD, "scrub_payload")
++    assert [t[:24] for t, u in rows if not (_no_piece(u, SCRUB(t)) and _no_piece(u, payload(_canon({"c": t}))))] == []
++    blob = _through_digest(tmp_path, [t for t, _ in rows])
++    events = _through_convert_turns(tmp_path, [t for t, _ in rows])
++    assert [t[:24] for (t, u), e in zip(rows, events) if not (_no_piece(u, blob) and _no_piece(u, e))] == []
++    # a token on the scheme's own line is taken, a Negotiate token the base64 rule refuses too (W6); a plain head still
++    # reads its token from the next line, as the rule before SCRUB2-R1 did
++    u = _fake_value()
++    assert SCRUB("Authorization: %sBasic %s" % (quote, u)) == "Authorization: %sBasic %s" % (quote, R)
++    assert SCRUB("Authorization: %sNegotiate ab=%s" % (quote, u)) == "Authorization: %sNegotiate %s" % (quote, R)
++    assert SCRUB("Authorization: Basic\n  %s" % u) == "Authorization: Basic\n  %s" % R
++
++
++# SCRUB2-R1 round 3 (task #321; VERIFY-SCRUB2-R1-R2 N1, N2, F-MUT). First the verifier's 16 red items
++# (tasks/briefs/system1/vscrub2r2/vscrub2r1r2_red.py), their bodies and assertions as it wrote them, on this file's module
++# (MOD), _canon and token_hex. Every value is a fake built here.
++B = BS
++
++
++def _h(n):
++    return token_hex(n)[:n]
++
++
++def _hidden(v, out):
++    """no 8-character piece of v, as written or as JSON writes it, is in out"""
++    forms = {v, json.dumps(v)[1:-1]}
++    return not any(f[i:i + 8] in out for f in forms for i in range(len(f) - 7))
++
++
++# N1, decoded text (the digest): 8 characters, one literal pair / tab escape / a group of two escapes / three pairs.
++@pytest.mark.parametrize("head", ["pwd=", "PWD: ", "credentials="])
++@pytest.mark.parametrize("shape", ["pair8", "pairs10", "oddrun9"])
++def test_n1_a_short_value_with_backslash_content_stays_hidden_in_decoded_text(head, shape):
++    v = {"pair8": "Q" + _h(1) + B + B + _h(4), "pairs10": "Q" + B * 2 + _h(1) + B * 2 + _h(1) + B * 2 + "z",
++         "oddrun9": "Q" + _h(4) + B * 3 + "x"}[shape]
++    assert _hidden(v, MOD.scrub(head + v))
++
++
++@pytest.mark.parametrize("shape", ["tab8", "group8"])
++def test_n1_a_short_pwd_value_with_literal_escapes_stays_hidden_in_decoded_text(shape):
++    v = {"tab8": "R" + _h(2) + B + "t" + _h(3), "group8": "M" + _h(1) + B + "n" + B + "n" + _h(2)}[shape]
++    assert _hidden(v, MOD.scrub("pwd=" + v))
++
++
++# N1, canonical JSON (convert()'s tool_call): the decoded pair is four backslashes there, one unit to round 2's floor.
++@pytest.mark.parametrize("head", ["--pwd=", "credentials="])
++def test_n1_a_short_value_with_a_pair_stays_hidden_in_canonical_json(head):
++    v = "Q" + _h(1) + B + B + _h(4)
++    assert _hidden(v, MOD.scrub_payload(_canon({"command": head + v})))
++
++
++# N2: a Cookie head the PIN never read swallows the pwd head; the pwd value must stay hidden as the PIN hid it.
++@pytest.mark.parametrize("fmt", ["{" + B + "\"Cookie" + B + "\": " + B + "\"sid=%s; pwd='%s'" + B + "\"}",
++                                 "my_cookie: session=%s; db_pwd=\"%s\"",
++                                 "my_cookie: sid=%s; credentials=\"%s\""])
++def test_n2_a_newly_read_cookie_head_never_frees_a_later_value(fmt):
++    c, v = "7" + _h(14) + "q", "7" + _h(14) + "q"
++    text = fmt % (c, v)
++    assert _hidden(v, MOD.scrub(text)) and _hidden(v, MOD.scrub_payload(text))
++
++
++# N2's other shapes: a head the rule before SCRUB2-R1 never read (an escaped quote, `my_cookie:`, a head after a literal
++# `\t`, a head that _APART freed) never frees a later value that rule hid; its value stops before a later head that
++# stands apart, whose rule takes the value. The verifier's shapes, then the scheme rule's and the pwd rule's own siblings
++# (round 3), in scrub, scrub_payload, the JSON pasted in chat, the digest and convert()'s decoded text events.
++R3_N2 = ("my_cookie: sid=%(c)s; pwd:\n  %(v)s", "my_cookie: sid=%(c)s; Path=/ Cookie:\n  sid=%(v)s",
++         "my_cookie: a Cookie:x Authorization: y sid=%(v)s",
++         BS + '"credentials' + BS + '": écredentials = %(v)s', "x" + BS + "tcredentials==credentials = %(v)s",
++         'pwd="credentials": cookie:credentials =  %(v)s', "Authorization: " + BS + '"Basic abcdefgh.pwd= %(v)s',
++         "pwd" + BS + '": abcd_pwd: %(v)s', "pwd" + BS + '": abcd_credentials= %(v)s')
++
++
++def test_r3_a_head_the_pin_never_read_frees_no_later_value(tmp_path):
++    rows = [(fmt % {"c": _fake_value(), "v": v}, v) for fmt, v in ((f, _fake_value()) for f in R3_N2)]
++    payload = getattr(MOD, "scrub_payload")
++    assert [t[:24] for t, v in rows if not (_hidden(v, SCRUB(t)) and _hidden(v, payload(_canon({"c": t})))
++                                            and _hidden(v, SCRUB(_canon({"c": t}))))] == []
++    blob = _through_digest(tmp_path, [t for t, _ in rows])
++    events = _through_convert_turns(tmp_path, [t for t, _ in rows])
++    assert [t[:24] for (t, v), e in zip(rows, events) if not (_hidden(v, blob) and _hidden(v, e))] == []
++
++
++def test_r3_a_cookie_head_the_pin_read_keeps_its_whole_line():
++    # _COOKIE_PIN: from a head the rule before SCRUB2-R1 read, the value is the rest of the line, over a later head too, as
++    # that rule hid it. Read as a head that rule never read, each would stop before `Authorization:` and show v.
++    v = _fake_value()
++    for text in ("Set-Cookie: a Authorization: x sid=%s" % v, '"Cookie": "a Authorization: x sid=%s"' % v,
++                 "Cookie:" + BS + "t  a Authorization: x sid=%s" % v):
++        out = SCRUB(text)
++        assert _no_piece(v, out) and "Authorization" not in out, text[:16]
++    out = getattr(MOD, "scrub_payload")(_canon({"c": "Cookie:\n  a Authorization: x sid=%s" % v}))
++    assert _no_piece(v, out) and "Authorization" not in out
++    # a head that rule never read: its value is past a real line end after an escape, or past an escaped quote
++    for text in ("Cookie:" + BS + "t\nsid=%s" % v, "Cookie:" + BS + "n" + BS + '"sid=%s' % v,
++                 "Cookie: " + BS + '"sid=%s' % v):
++        assert _no_piece(v, SCRUB(text)), text[:12]
++
++
++def test_r3_a_new_cookie_heads_floor_is_searched_in_its_segment():
++    # from a head the rule before SCRUB2-R1 never read, the match ends at the next stop and the floor, 8 characters after
++    # `=` and no `;`, is searched in that segment (_cookie_or_same)
++    v8, v7 = "7" + token_hex(4)[:6] + "q", "7" + token_hex(3)[:5] + "q"
++    assert SCRUB("my_cookie: sid=%s" % v8) == "my_cookie: " + R
++    assert SCRUB("my_cookie: sid=%s" % v7) == "my_cookie: sid=%s" % v7
++    assert SCRUB("my_cookie: path=/; sid=%s" % v8) == "my_cookie: " + R
++    assert SCRUB("my_cookie: a=1234;567 x") == "my_cookie: a=1234;567 x"
++    u = _fake_value()
++    assert SCRUB("my_cookie: sid=%s pwd: %s" % (v8, u)) == "my_cookie: %spwd: %s" % (R, R)
++    # Y30: the segment ends before a later Cookie head that stands apart from nothing (`cookie:sid=`, not _APART), and
++    # that head's own match takes its value (in round 4 a later head the PIN read is stage 1's marker by then)
++    assert SCRUB("my_cookie: a=1; x" + BS + "tcookie:sid=" + v8) == "my_cookie: a=1; x" + BS + "tcookie:" + R
++
++
++def test_r3_a_value_stops_only_before_a_head_that_a_later_rule_reads():
++    v = _fake_value()
++    # stage 2, a head the PIN never read (here after a literal `\t`): a later pwd or credentials head that stands apart
++    # ends a pwd value, a credentials head a credentials value, and the head's rule takes the value after it
++    t = "x" + BS + "t"
++    assert SCRUB(t + "pwd=abcd" + t + "pwd: %s" % v) == t + "pwd=%spwd: %s" % (R, R)
++    assert SCRUB(t + "pwd=abcd" + t + "credentials= %s" % v) == t + "pwd=%scredentials= %s" % (R, R)
++    assert SCRUB(t + "credentials=abcdefgh" + t + "credentials= %s" % v) == t + "credentials=%scredentials= %s" % (R, R)
++    assert SCRUB(t + "pwd=ab_credentials" + BS + '": %s' % v) == t + "pwd=%scredentials%s\": %s" % (R, BS, R)
++    # a name glued to a letter is no head (_KEY_L), and a pwd head ran before the credentials rule: both stay value
++    assert SCRUB(t + "pwd=abc9credentials: x") == t + "pwd=%s x" % R
++    assert SCRUB(t + "credentials=abc9credentials: x") == t + "credentials=%s x" % R
++    assert SCRUB(t + "credentials=abcd_pwd: x") == t + "credentials=%s x" % R
++    # a plain scheme head keeps that rule's token whole: the stop is for a head after an escaped quote
++    assert SCRUB("Authorization: Basic abcdefgh.pwd= zz") == "Authorization: Basic %s zz" % R
++    # D6 as ruled, in stage 2: neither value starts at another rule's head that stands apart (_APART), whose name stays
++    assert SCRUB(t + "pwd: Authorization: Basic zz") == t + "pwd: Authorization: Basic zz"
++    assert SCRUB(t + "credentials = password: zz") == t + "credentials = password: zz"
++    assert SCRUB(t + "pwd: password = zz") == t + "pwd: password = zz"       # X12: whitespace before `=` stands apart
++    # X9: `credentials` is one of _NAMES, so the scheme token after an escaped quote stops before its head
++    assert SCRUB("Authorization: " + BS + "\"Basic abcdefgh.credentials: zz") == ("Authorization: " + BS + "\"Basic " + R
++                                                                                  + "credentials: zz")
++    # stage 1 (SCRUB2-R1 round 4), a head the PIN read: the value starts and ends where the PIN's did, at and over another
++    # rule's head too; a value that stopped or never started there left a head the PIN never read to a later stage-1 rule
++    for text in ("pwd=abcd_pwd: %s" % v, "pwd=abcd_credentials= %s" % v, "credentials=abcd_credentials= %s" % v,
++                 "pwd: Authorization: Basic zz", "credentials = password: zz", 'pwd="credentials": cookie:credentials = x'):
++        assert SCRUB(text) == _scrub_with_scrub2s_forms(text), text[:20]
++
++
++def test_r3_the_credentials_floor_counts_characters_to_its_first_escape():
++    # F15's class in raw JSON: a value with an escaped control character among its first 8 characters stays, and the next
++    # line's words with it. A decoded backslash before the escape (2, 4 or 6 backslashes in raw JSON) is counted, and the
++    # escape after it is still found (a pair or an odd run before another letter is no escape: the N1 items above).
++    payload = getattr(MOD, "scrub_payload")
++    for text in ("credentials=None)\fnext", "credentials=None)\tnext", "credentials=None)\r\nnext",
++                 "credentials=abcdefg\nnext_line", "credentials=ab" + BS + "\nnext_step_here",
++                 "credentials=a" + BS * 2 + "\nnext_step_here", "credentials=a" + BS * 3 + "\nnext_step_here"):
++        assert payload(_canon({"c": text})) == _canon({"c": text}), repr(text[:16])
++
++
++# F-MUT (VERIFY-SCRUB2-R1-R2): one assertion per clause whose mutant no test killed; each fails with its clause dropped.
++def test_r3_each_clause_the_verifier_found_unpinned_is_pinned():
++    v, h = _fake_value(), token_hex(4)
++    # X3: a group of escaped line ends inside a Cookie line is one unit (_LESC's +), and the value runs on over it
++    assert _no_piece(v, SCRUB("Cookie: sid=ab" + BS + "n" + BS + "n" + v))
++    # X6: a later Cookie head whose colon an escaped line end follows reads the next line (_COOKIE_X), so the first head's
++    # no-value match stops before it
++    assert _no_piece(v, SCRUB("Cookie: a Cookie:" + BS + "n\nsid=" + v))
++    # X7, X8: the Negotiate token stops before a Cookie or a pwd head glued to it (_NAMES), whose rule takes the value
++    assert _no_piece(v, SCRUB("Authorization: Negotiate abcdefghCookie: sid=" + v))
++    assert _no_piece(v, SCRUB("Authorization: Negotiate abcdefghpwd=" + v))
++    # X10: ... and before a head whose quote is escaped (_OTHER_HEAD's _Q)
++    assert _no_piece(v, SCRUB("Authorization: Negotiate abcdefghpwd" + BS + '": ' + BS + '"' + v))
++    # X13: ... and before a bridge link, which the link rule takes whole
++    assert "zq-" + h not in SCRUB("Authorization: Negotiate abcdefghhttps://zq-%s.trycloudflare.com/x" % h)
++    # X14: the Negotiate head reads an escaped quote (_Q): its token stops before a Cookie head glued to it, which the
++    # Cookie rule reads before the scheme rule runs
++    assert _no_piece(v, SCRUB("Authorization: " + BS + '"Negotiate abcdefghCookie: sid=' + v))
++
++
++# SCRUB2-R1 round 4 (task #321; VERIFY-SCRUB2-R1-R3 R3V-1, N2R). First the verifier's 11 red items
++# (tasks/briefs/system1/vscrub2r3/vscrub2r1r3_red.py), their bodies and assertions as it wrote them, on this file's module
++# (MOD), _canon, _hidden and token_hex. A head the PIN never read took a value that ran over the head of a rule that runs
++# after it in scrub_payload (the R1 escaped-quote credential, the PASS rule, curl's `-u`), and that rule's value showed in
++# convert()'s events. Every value is a fake built here.
++def _v():
++    return "7" + token_hex(8) + "q"
++
++
++def _settle(text):
++    """convert()'s scrub of one event's text: scrub_payload to a fixed point (at most 4 passes)"""
++    for _ in range(4):
++        out = MOD.scrub_payload(text)
++        if out == text:
++            return out
++        text = out
++    return "<UNSETTLED>"
++
++
++# canonical JSON (convert()'s tool_call): a Cookie line after an escaped newline, then a quoted credential on a later line
++@pytest.mark.parametrize("later", ["export DB_PASSWORD=\"%s\"", "token=\"%s\"", "api_key=\"%s\"", "AGENT_TOKEN=\"%s\"",
++                                   "SMTP_PASS='%s'"])
++def test_n2r_a_line_start_cookie_in_canonical_json_frees_no_later_value(later):
++    c, v = _v(), _v()
++    text = "cat > /tmp/zq/req.http <<'EOF'\nGET /api HTTP/1.1\nCookie: session=%s\nEOF\n%s\n" % (c, later % v)
++    assert _hidden(v, _settle(_canon({"command": text})))
++
++
++# decoded text (convert()'s text and tool_result events): a head the PIN never read, then a PAYLOAD rule's head
++@pytest.mark.parametrize("fmt", ["my_cookie: sid=%s; DB_PASS=\"%s\"", "my_cookie: sid=%s; curl -u \"admin:%s\" https://zq.example",
++                                 "x" + B + "rPWD: sid=%sSMTP_PASS='%s'", "my_cookie: sid=%s; password=" + B + "\"%s" + B + "\""])
++def test_n2r_a_new_head_in_decoded_text_frees_no_later_value(fmt):
++    c, v = _v(), _v()
++    assert _hidden(v, _settle(fmt % (c, v)))
++
++
++# canonical JSON: a pwd or credentials head the PIN never read (after a literal \t or \r), its value over an escaped line
++# end (the V4 continuation), then a quoted credential on the next line
++@pytest.mark.parametrize("fmt", ["x" + B + "tpwd=sid=%s\nDB_PASSWORD=\"%s\"", "y" + B + "rcredentials = sid=%s\r\ntoken=\"%s\""])
++def test_n2r_a_new_pwd_or_credentials_head_in_canonical_json_frees_no_later_value(fmt):
++    c, v = _v(), _v()
++    assert _hidden(v, _settle(_canon({"command": fmt % (c, v)})))
++
++
++# The order (SCRUB2-R1 round 4): every rule that reads a head the PIN never read (stage 2) runs after every rule that reads
++# a head the PIN reads (stage 1, and in scrub_payload the PAYLOAD rules). One text per stage-2 rule, in its order: that
++# rule, run first, takes the head of a rule that runs after it and the value that rule hid on the PIN shows (the control);
++# in the real order the value stays hidden. The decoded texts are convert()'s text events, the canonical ones its tool calls.
++R4_ORDER = (("Authorization: Negotiate YIIabcde.DB_PASS=\"%s\"", False),                          # the Negotiate token
++            ("my_cookie: sid=abcdefgh1; curl -u \"admin:%s\" https://zq.example", False),         # the Cookie rule
++            ("Authorization: " + BS + "\"Token abcdefghpassword=" + BS + "\"%s" + BS + "\"", False),  # the scheme rule
++            ("x" + BS + "tpwd=sid=abcdefgh1\nDB_PASSWORD=\"%s\"", True),                              # the pwd rule
++            ("y" + BS + "rcredentials = sid=abcdefgh1\r\ntoken=\"%s\"", True))                        # the credentials rule
++
++
++def _settle_in(order):
++    """_settle with the rules run in `order`."""
++    def run(text):
++        for _ in range(4):
++            out = text
++            for p, r in order:
++                out = p.sub(r, out)
++            if out == text:
++                return out
++            text = out
++        return "<UNSETTLED>"
++    return run
++
++
++def test_r4_every_rule_that_reads_a_head_the_pin_never_read_runs_after_every_pin_rule():
++    s1, s2 = list(MOD.STAGE1_PATTERNS), list(MOD.STAGE2_PATTERNS)
++    opaque = [pr for pr in MOD.SECRET_PATTERNS if pr[1] == MOD.OPAQUE_MARK]
++    assert MOD.SECRET_PATTERNS == s1 + s2 + opaque and len(opaque) == 1 and len(s2) == len(R4_ORDER)
++    for rule, (fmt, canon) in zip(s2, R4_ORDER):
++        v = _v()
++        text = _canon({"command": fmt % v}) if canon else fmt % v
++        assert _hidden(v, _settle(text)) and _hidden(v, MOD.scrub_payload(text)), fmt[:24]
++        first = _settle_in([rule] + s1 + list(MOD.PAYLOAD_PATTERNS) + [pr for pr in s2 if pr is not rule] + opaque)
++        assert not _hidden(v, first(text)), fmt[:24]                   # control: that rule moved first shows the value
++
++
++# R3V-3 (VERIFY-SCRUB2-R1-R3): the two round-3 clauses no test held, one assertion per mutant.
++def test_r4_each_clause_the_verifier_found_unpinned_is_pinned():
++    v = _fake_value()
++    # V12: after an escaped quote the scheme token stops before a head that stands apart (_APART), not before any head
++    # (_OTHER_HEAD): a glued head with a glued value stays in the token and is hidden there. The digest's view: in
++    # scrub_payload the Basic payload rule runs before stage 2, and its token ends at the `.`
++    assert SCRUB("Authorization: " + BS + "\"Basic abcdefgh.token=zq12") == "Authorization: " + BS + "\"Basic " + R
++    # V14: a later pwd head after an escape's letter (_KEY_L's `(?<=\\[nrtbf])`) ends a stage-2 pwd value, and its rule
++    # hides its value; the verifier's example with a head the PIN never read first (a PIN head's value is stage 1's)
++    assert _no_piece(v, SCRUB("x" + BS + "tpwd=q1w2e3r4" + BS + "tPWD: %s" % v))
++
++
++# Stage 1's credentials rule matches a value that its floor refuses and the PIN's floor takes (D1; F15's shapes in raw
++# JSON), as the PIN's rule did, and keeps it (_credentials_or_same): a credentials head inside it waits for stage 2. Read
++# in stage 1, that head's value ran over a later head whose value the PIN hid (the R1 credential's), and the value showed
++# in convert()'s events (round 4's chain probe). The first value, which the PIN showed, is hidden too (by stage 2). D1's
++# refusals are decoded text events; F15's shape is the canonical JSON of a real line end (a tool_call).
++@pytest.mark.parametrize("fmt, canon", [
++    ("credentials=None)" + BS + "n_credentials = %s" + BS + "ntoken=" + BS + "\"%s" + BS + "\"", False),
++    ("credentials=ab" + BS + "t/credentials = %s" + BS + "tDB_PASS=" + BS + "\"%s" + BS + "\"", False),
++    ("credentials = abc\r\niz7-credentials = %s" + BS + "tsecret: \"%s\"", True)])
++def test_r4_a_credentials_head_inside_a_refused_value_waits_for_stage_2(fmt, canon):
++    c, v = _v(), _v()
++    text = _canon({"command": fmt % (c, v)}) if canon else fmt % (c, v)
++    assert _hidden(v, _settle(text)) and _hidden(c, _settle(text))
++
++
++# The residual the order leaves (SCRUB2-R1 round 4's report, K-chain): a head inside a credentials value that the floor
++# refuses (D1; F15's shapes) is one the PIN never read, and a stage-1 or PAYLOAD rule reads it; its value can run over a
++# later head whose value the PIN hid. Here the Basic payload rule's token takes a glued `token=`, and the R1 credential
++# after it shows in convert()'s tool_call. A credentials floor that counts escapes would hide it (D1's K class).
++@pytest.mark.xfail(strict=True, reason="SCRUB2-R1 round 4: the K-chain residual of D1 and F15, left for a ruling")
++def test_r4_a_head_inside_a_refused_credentials_value_frees_no_later_value():
++    c, v = _v(), _v()
++    text = ("credentials=x\tabcdefgh" + BS + "tAuthorization: " + BS + "\"Basic %stoken=" % c + BS + "\"%s" % v + BS
++            + "\"")
++    assert _hidden(v, _settle(_canon({"command": text})))
