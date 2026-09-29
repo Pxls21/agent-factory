@@ -191,6 +191,9 @@ expansion.
    check: read every known secret where it lives, in process, and count it in the output, whole, by 8-byte windows and in
    its printed forms (`scripts/known_values_check.py`, names and counts only). Run it on every export before it ships, and
    on the repository's tracked files when committed text feeds an exemption.
+   **A key's public prefix is a window hit (2026-09-29):** a ledger line that named the codiv key's prefix in backticks
+   read `whole=0 windows=2/42`; a file holding the prefix alone reads the same two windows, and the ledger before that
+   line read 0/42. In committed text, describe a key's prefix in words, so the check's zero stays a zero.
 
 9. **Verify input ownership at MINT time, not launch time.** A launch-time existence check on a
    shared append-only artifact is NOT a race guard: a concurrent writer (a test suite calling the
