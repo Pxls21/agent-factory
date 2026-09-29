@@ -8,6 +8,10 @@
 - **CORRECTION 2026-09-29 (T0-REPLAY round 1, §9):** the "about 200k" budget for this session (§1 item 2, §3.3, §8
   question 1) is NOT supported. The first rule set, with the last two turns protected, cut the median active context
   from 454,522 to 332,932 and reached no budget from 100k to 250k. Round 2 measures wider rules and a trim guard.
+- **RE-SCOPED 2026-09-29 by D-106 (the owner's answers to §8):** Hermes adopts the LCM plugin if T1 finds it good
+  enough; this Claude Code session gets no trimmer (§3.3's C1 and C3 are parked) and instead a measured compaction
+  point, a richer compaction and context packs; Jev acts only after it beats the fixed rules on the replay. The plan is
+  §10; §3.3, §6 and §8 stay as the record of what was proposed.
 
 ## 0. The ask, in the owner's words (D-105, 2026-09-28 18:23:30Z)
 
@@ -227,3 +231,85 @@ Source: `tasks/briefs/jev-trim/T0-REPLAY-report.md` and `docs/research/findings/
   harvest stack) and superseded attachments; a trim guard (fire only when the eligible items can reach L, or at most
   once per N requests); and a pessimistic cache bound (the 20-block lookback, the report's D16). Round 2 measures them.
 
+
+## 10. D-106 (2026-09-29): the re-scope and the plan
+
+The owner's answers (D-106, transcript 00:51:42Z) replace §3.3 and answer §8. Nothing below is built; every number it
+needs comes from a measurement named here, never from intuition (the "about 200k" of §1 was the lesson).
+
+### 10.1 What changes
+
+- **Hermes (the lanes, then production):** adopt the LCM plugin if T1 finds it good enough (license, pins, model calls
+  through OmniRoute only, what it exposes to the model, its tests). T2 (our own engine) is built only if T1 rejects LCM.
+  LCM's thresholds for the Qwen lanes come from 10.2's Qwen rows.
+- **This session:** no trimmer. §3.3's C1 (the size cap) and C3 (the fixed start) are parked. C2's seam
+  (`session.compact`, audit A1.11) is re-used to enrich the compaction and to choose its moment (10.3 P4, P5), not to
+  hand back a trimmed list.
+- **Jev:** acts only after it beats the fixed rules on the replay (§4 stands; the score is 10.3's).
+- **T0 round 2** finishes as briefed (it was mid-run at the ruling); its composition table feeds 10.3.
+
+### 10.2 Where to compact (task #352)
+
+The question: at what fill does this session's work get worse, and what does one compaction cost? The owner's candidate
+is about 500k on the 1M-context models; the current point is about 784k (audit A1.15). Four measurements decide it.
+
+- **R-A, published curves** (a sandbox EXPLORE lane with web access): accuracy against input length for each model we
+  run (Opus 5.5 in the main loop and the sandbox lanes, Fable 5 when it is the main loop, Qwen3.8-27B on the PC lanes at
+  131k) and its nearest measured siblings (MRCR, GraphWalks, RULER, NoLiMa, LongBench v2, Fiction.LiveBench, the
+  context-rot studies, agentic long-horizon results), plus the vendors' own compaction guidance. An evidence table with
+  sources and dates, vendor claims marked; no verdict.
+- **R-B, our own quality curve** (the replay tool; counts only): per main-session request, the fill; per following step,
+  signals that need no judge: tool errors, failed edits (the `old_string` not found), a file read again with no change
+  in between, a command run again with no edit in between, hook refusals (the future-stamp gate, stale ids). Rates per
+  100k of fill, compared inside each segment (early against late) so that the fill is separated from the task mix.
+- **R-C, the loss at each compaction** (the replay tool): at each compaction boundary in the transcripts, what the
+  session fetched again in the next N steps that it held before the boundary (the same file read again, the same
+  command run again, the transcript or the ledger searched), in steps and tokens, and which of those the summary and the
+  SessionStart injections already held. This is the cost of one compaction, and the score in 10.3.
+- **R-D, a live A/B** after R-A to R-C: segments at the candidate point (set with `CLAUDE_CODE_AUTO_COMPACT_WINDOW` or
+  `/autocompact`, audit A1.14; how it combines with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80` is measured first), compared
+  with the 784k segments on R-B's rates and R-C's loss.
+
+The choice: the fill at which the quality lost to a fuller context (R-A, R-B) exceeds the loss of one more compaction
+(R-C) spread over a segment. The cache cost per request is a third column, not the decider.
+
+### 10.3 A richer compaction and context packs (task #353)
+
+What exists (§0b's rule): System-1 L1 injects skill text on Edit, Write and Bash, once per context window, and resets at
+compaction; L3 and `wiki-context.py` inject per prompt; SessionStart (compact) injects the task view, the live-state
+block and the chat tail; `scripts/codemap.py` builds a pack per code file after each commit (L2a, task #284: symbols,
+callers and risk, tests, registry rows). Not built: L2b (show a code pack when the file is touched), packs for other
+files, packs per task.
+
+- **P1, file packs on touch (L2b):** the first Read, Edit or Write of a file in a context window injects the relevant
+  part of its pack (the symbol being edited; the file's header on a Read), within the System-1 budget, once per window.
+- **P2, packs beyond code:** for any tracked file, the lines that name it in the ledger, the decision log, the incident
+  log and its AF-AP rows, the quirk skills, the briefs and reports; its last commit subjects; its open issues. Built
+  after each commit like L2a, read in milliseconds.
+- **P3, task packs:** per active task in the ledger view, its headline lines, its brief and report paths, its files,
+  its live agent id or PC lane, and its last state line. Injected at compaction (SessionStart, for the tasks in flight)
+  and when a task's file or id is touched.
+- **P4, the summarizer's instructions:** tell the summarizer what R-C shows it loses (for example the owner's exact
+  words, agent ids, file paths, numbers with their producers, pending commands). The stable route is an instruction in
+  the context the summarizer reads; `session.compact` ("rewrite `instructions` ... on the way down", audit A1.11) is the
+  early-access route, probed first in a throwaway session.
+- **P5, the moment:** a function-hook plugin compacts between turns (`$.session.compact()`, audit A1.11) at a good
+  boundary (after a landing or a push, no edit in flight) once the fill passes the point 10.2 chooses; the built-in
+  threshold stays as the backstop. Early access: probed first in a throwaway session.
+- **Jev (D-106 item 5):** at each compaction Jev writes its own selection of pack items and a digest, in shadow: logged,
+  never injected. On the replay both are scored by R-C: the share of the post-compaction re-fetches each would have
+  prevented, at the same token budget. Jev's selection replaces the fixed rules only after it beats them on a committed
+  sample (deep-work Phase 2); the owner decides.
+
+### 10.4 Increments (they replace §6)
+
+| Id | What | Venue | Waits on |
+|---|---|---|---|
+| K0 | R-A, the published curves | sandbox EXPLORE (web) | a free lane slot |
+| K1 | R-B and R-C in the replay tool (T0 round 3) | sandbox build | T0 round 2's report |
+| K2 | P1 (L2b) and P2 | sandbox build | a free lane slot |
+| K3 | P3, then P4 by the stable route | sandbox build | K1 (what a compaction loses) |
+| K4 | the throwaway-session probe of `session.compact` and `$.session.compact()`, then P5 | sandbox | K0, K1 (the point) |
+| K5 | R-D, the live A/B | this session | K0, K1 |
+| K6 | Jev in shadow, scored on the replay | PC | K1, K3 |
+| H1 | LCM for the Hermes lanes, pinned in `upstream.lock.yaml`, its thresholds from K0's Qwen rows | PC | T1's verdict |
