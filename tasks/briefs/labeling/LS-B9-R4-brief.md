@@ -60,6 +60,33 @@ Return the whole report as your final message: the premise re-run, the files wit
 pasted, the mutants, the real runs (`stack.py list`; the SessionStart hook's output with its character count), the
 CLAUDE.md pointer line you propose, and a DISCREPANCIES list.
 
-## PREMISE — MEASURED at authoring
+## PREMISE — MEASURED at authoring (2026-09-29, main tree; PIN origin 0749fe5)
 
-(Filled at dispatch from `scripts/premise_block.sh` at the pushed PIN.)
+Printed by `bash scripts/premise_block.sh` from the main tree. Item 6b and this block are local at dispatch (the push
+waits on CI), so the block measures the tree you work in. Expected to differ when you re-run it: nothing.
+
+```
+$ git merge-base --is-ancestor 0749fe5 HEAD && echo PIN-is-an-ancestor-of-HEAD
+PIN-is-an-ancestor-of-HEAD
+$ git log -1 --format=%s -- scripts/stack.py
+LS-B9 landed (task #339, D-103): the stack runner and wave 1; VERIFY-LS-B9 round 3 MERGE-READY-WITH-FOLLOWUPS
+$ sha256sum scripts/stack.py scripts/stacks.toml scripts/handback_extract.py tests/test_stack.py scripts/install_session_hooks.py tests/test_session_hooks.py | cut -c1-16,65-
+a3a24981247588c7  scripts/stack.py
+e44d0f5d94d57a41  scripts/stacks.toml
+382646e573354170  scripts/handback_extract.py
+96c44e0a388ca856  tests/test_stack.py
+b78e189d0ac5b7db  scripts/install_session_hooks.py
+dddd30002144af50  tests/test_session_hooks.py
+$ git status --porcelain -- scripts/stack.py scripts/stacks.toml scripts/handback_extract.py tests/test_stack.py scripts/install_session_hooks.py tests/test_session_hooks.py .claude/settings.json | wc -l
+0
+$ grep -c '"SessionStart"' .claude/settings.json
+1
+$ grep -n '^6b\. ' tasks/briefs/labeling/LS-B9-R4-brief.md | cut -c1-60
+40:6b. **Local commit ids in a hand-back.** `harvest` gains 
+$ bash scripts/pc_suite.sh set-id -- tests/test_stack.py tests/test_session_hooks.py tests/test_task_sync.py | tail -1
+3 files set=cebb397be3f6
+$ bash scripts/pc_suite.sh set-id -- tests/test_stack.py tests/test_no_laya_in_gates.py tests/test_s0_01_spec_runner.py tests/test_s0_11_eval_hardening.py tests/test_search_intercept.py | tail -1
+5 files set=2804489b9d6b
+$ rm -rf /tmp/lsb9r4-premise-bt; python3 -m pytest -q -p no:cacheprovider --basetemp=/tmp/lsb9r4-premise-bt tests/test_stack.py tests/test_session_hooks.py tests/test_task_sync.py 2>&1 | tail -1 | sed -E 's/ in [0-9.]+s.*//'
+271 passed
+```
