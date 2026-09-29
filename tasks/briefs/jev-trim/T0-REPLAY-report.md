@@ -1,4 +1,4 @@
-<!-- Coordinator note (2026-09-29): the T0-REPLAY lane's hand-back, extracted verbatim from its transcript by `python3 scripts/stack.py harvest agent=af25a8ffadcb62c75` (run s-20260929T002019Z-ffa427; hand-back sha256 fee52ff11b20; 313 assistant records, all claude-opus-5-5, 0 refusal stops). The report of record for T0 (task #346). -->
+<!-- Coordinator note (2026-09-29): the T0-REPLAY lane's hand-back, extracted verbatim from its transcript by `python3 scripts/stack.py harvest agent=af25a8ffadcb62c75` (run s-20260929T002019Z-ffa427; hand-back sha256 fee52ff11b20; 313 assistant records, all claude-opus-5-5, 0 refusal stops). The report of record for T0 (task #346). Two local commit ids were replaced by the commit's subject before the push (stale_ids). -->
 
 # T0-REPLAY: context trimming replayed with plain rules (task #346, D-105)
 
@@ -39,7 +39,7 @@ All ten PREMISE commands matched the brief's expected output.
 - The audit lines 200-202 were identical.
 - The pytest line was `42 passed`. It ran with a private `--basetemp` in my scratchpad instead of /tmp/t0-premise-bt, per the lane rule; that was the only change.
 
-HEAD moved to e982cb4 during my run (other sessions' commits). I re-checked at 00:1xZ:
+HEAD moved to the commit "Live-state: the two waiting briefs are committed; three commits wai ..." (a local id then) during my run (other sessions' commits). I re-checked at 00:1xZ:
 - `git diff --stat 6222e4a HEAD -- scripts/jev_pipes/ tests/test_jev_pipes_replay.py tests/fixtures/jev_pipes/` is still empty.
 - e48e954 changed only §2 (the Hermes measurement rows) of D105-DESIGN-v1.md, not §3.1.
 - The T0 brief is unchanged.
@@ -742,7 +742,7 @@ No other test names the new files; `grep -rln jev_trim tests/ harness-ports/test
 
 ## 13. Tree state at 00:12:43Z
 
-- **HEAD:** e982cb4.
+- **HEAD:** the commit "Live-state: the two waiting briefs are committed; three commits wai ..." (a local id then).
 - **Untracked, mine (11):** the three sources and eight outputs in §2.
 - **Untracked, not mine (1):** `tasks/briefs/i59/VERIFY-I59-F-R5-report.md`.
 - **The other lane's tracked modifications:** untouched.
