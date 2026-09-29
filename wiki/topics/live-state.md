@@ -26,6 +26,7 @@ last_compiled: 2026-09-03
 - **RETRO 10:2xZ:** the owner signed the twelve (D-107) and their tag objects are committed; `STATUS.md` no longer says the anchors are pending; task #306 (the tag-import script) holds the three-step recipe that worked.
 - **RETRO 11:0xZ:** task #363's items landed: AF-AP-241 to 245 (245: an owner interrupt stops the background lanes); `session-continuity`, `orchestration` 0p and `env-tool-quirks` gained lessons; tasks #366 and #367 registered (backlog); task #362's follow-ups are issue #82.
 - **RETRO 10:3xZ:** the owner's signing loop ran twice, so the committed tag objects were re-imported from the 10:24Z set (the same objects as on GitHub); task #363 gains (h), hand the owner re-runnable commands; task #306 gains the three-way check.
+- **RETRO 11:4xZ:** K5's first reading: the first compaction under the 625000 window fired at 484,174 tokens, 50 minutes after the one before (task #352 stays HOME). Task #369 closed: `scripts/skill_bake_finish.sh` mirrors a skill that is not hand-ported before the lane sync (proven live on env-tool-quirks). Task #371 registered (backlog: a guard against a top-level `cd`, after its fourth bite in two days).
 
 **2026-09-29 00:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin 0e6d4a1, plus local commits; the main tree is the primary.**
