@@ -32,7 +32,8 @@ line of an earlier step, as {each}); `empty_ok = true` (a chained input that pri
 nothing to do: not selected, never a failure); `needs = ["<step>", ...]` (the step runs only when each named earlier
 step ended ok); `headline = true` (the step's first stdout line, its control characters escaped and cut at 500
 characters, goes into the print's header right after the tree line: the print cap cuts an over-long header from its
-end, `params:` first, VERIFY-LS-B9 R3-F1). A stack may carry `notes`, one-line cautions `list` prints under its line.
+end, `params:` first, VERIFY-LS-B9 R3-F1). A stack may carry `notes`, one-line cautions `list` prints under its line,
+and `body`, the parameter a chat-form box's lines below its ┄┄┄ divider fill (scripts/ls_req.py; `explain` names it).
 A section over its cap_lines prints its first and its last lines (a verdict is often the last line) and names the
 saved full output; the whole print is capped at 9,000 characters, cut from the largest section first. Each step's
 full output (stdout, then a `--- stderr ---` block) is saved as <run dir>/<step>[.<n>].out; one JSON line per run
@@ -89,7 +90,7 @@ LIST_TYPES = {"paths": "path", "symbols": "symbol", "words": "word"}
 BUILTINS = ("tree", "run", "main", "head", "branch", "each", "transcript", "tmp")
 DEFAULT_BUILTINS = ("tree", "main", "head", "branch")
 INTERPRETER_RE = re.compile(r"python[0-9.]*|bash|sh|node")   # argv[1] of these is a script that must exist
-STACK_KEYS = {"summary", "replaces", "outward", "rated", "params", "steps", "notes"}
+STACK_KEYS = {"summary", "replaces", "outward", "rated", "params", "steps", "notes", "body"}
 NOTE_MAX = 300            # characters of one catalog note
 CATALOG_CAP = 4000        # the SessionStart catalog stays under this: the harness swaps a hook text over 10,000
                           # characters for a 2,000-character preview of its head (AF-AP-183)
@@ -372,6 +373,11 @@ class Stack:
         for p in self.params.values():
             if p.split_from is not None and getattr(self.params.get(p.split_from), "type", None) != "text":
                 _bad(p.where + ".split_from", "must name a text parameter of this stack")
+        # the parameter a chat-form box's body (its lines below ┄┄┄) fills: scripts/ls_req.py, THE BOX
+        self.body = spec.get("body")
+        if self.body is not None and (not isinstance(self.body, str) or self.body not in self.settable()):
+            _bad(where + ".body", "must name a parameter of this stack that a request sets (found %r; those "
+                 "parameters: %s)" % (self.body, ", ".join(self.settable()) or "none"))
         agents = [p.name for p in self.params.values() if p.type == "agent"]
         self.agent = agents[0] if len(agents) == 1 else None
         steps = spec.get("steps")
@@ -1225,8 +1231,10 @@ def cmd_explain(stack, tokens, tools, opts):
     head = env.head_or_none()
     lines = ["explain %s — %s" % (stack.label, stack.summary),
              "tree %s · HEAD %s" % (tree, head[:12] if head else "none"),
-             "params: %s" % (" ".join("%s=%s" % (k, fmt_value(v)) for k, v in env.values.items()) or "(none)"),
-             "<run> = %s/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>" % log_dir_of(opts, env)]
+             "params: %s" % (" ".join("%s=%s" % (k, fmt_value(v)) for k, v in env.values.items()) or "(none)")]
+    if stack.body is not None:
+        lines.append("body: %s (a chat-form box's lines below its ┄┄┄ divider fill it)" % stack.body)
+    lines.append("<run> = %s/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>" % log_dir_of(opts, env))
     if env.tmp_used:
         lines.append("<tmp> = %s/stack-<run id>, outside every git work tree; removed after the run" % TMP_BASE)
     for group in stack.groups:

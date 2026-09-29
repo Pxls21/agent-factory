@@ -38,6 +38,42 @@ reading the same lines, so every request, its place in the transcript and its re
     intent: that line gets its own receipt, `refused: malformed (<why>)`, never silence.
 A well-formed request line whose nonce is not in the turn's valid set never runs: `refused: stale nonce`.
 
+THE BOX (task #380, D-111, D-113; the contract is tasks/briefs/labeling/LS-B11-brief.md): the second request head, the
+form the owner confirmed. The label names a stack; the lines inside are a form that fills its parameters. A box is a
+request as a REQ line is, on the same transport: the nonce, a new id, the duplicate-id, stale-nonce, cap and budget
+rules, one receipt, one ledger row, the fallback's bind rows and the reconciler treat it alike. The REQ line stays as
+the fallback.
+  ┌─ find · r1 · <nonce>
+  │ q: where does the scrubber hide bearer tokens
+  └─
+  - The top edge starts the line: `┌─ ` (U+250C, U+2500, a space), then <label> · <id> · <nonce>, one space on each side
+    of each U+00B7, then optionally a space and one or more ─ (decoration); trailing blanks ignored. The label, the id
+    and the nonce follow the REQ line's rules.
+  - Every line inside starts with │ (U+2502): `│ ` and its text, or a bare `│` for an empty line; trailing blanks are
+    removed. First the parameters, one `key: value` per line (the key is stack.py's NAME_RE, the value the rest of the
+    line after `: `, spaces included); an empty line among them is skipped. Each value is ONE element of the runner's
+    argument vector, never a shell word.
+  - An optional divider `│ ┄┄┄` (three or more U+2504 and nothing else): every inside line after it, up to the bottom
+    edge, is the BODY, each without its `│ ` (a bare `│` gives an empty line), joined with newlines. The body goes to
+    the parameter the stack names as its `body` (scripts/stacks.toml). The runner's text type takes one line of at most
+    500 characters: a body of several lines reaches the runner, which refuses it in its own words.
+  - The bottom edge starts the line: `└─`, then optionally more ─; trailing blanks ignored. There is no right edge.
+  - A box may sit in a fenced code block (a line of three backquotes, optionally followed by a language word), so the
+    chat shows it as a box: in a message that holds a box, fence lines never break the closing rule. A message with no
+    box keeps the REQ lines' closing rule exactly: there a fence line after a request line is text.
+  - Malformed, with a current nonce: `refused: malformed (<why>)`, under the box's id when its top edge parses, else
+    under `?`: a top edge that breaks the grammar; an unclosed box (no bottom edge before the message ends); an inside
+    line that does not start with │ (the box ends before it, and it is read as the message's next line); an inside
+    line with no space after │; a parameter line with no `: `, or a key that is not a parameter name; a second
+    divider; a NUL in a value; text after the requests. Two body cases need the registry, so the Stop judges them when
+    the request would run: a body for a stack that names no body, and a parameter line that sets the body parameter
+    beside a body.
+  - A box whose top edge carries no current nonce is not a request (an illustration): its lines are text, read as the
+    REQ form reads text. The exception is a box well formed on its own grammar (the cases above, but the closing rule
+    and the two body cases): it is a request with a stale nonce, `refused: stale nonce`, as a REQ line is.
+  - Its ledger rows carry `form: "box"` (a REQ line's `form: "req"`) and its text: the box's lines, top edge to bottom
+    edge; `line` is its top edge's.
+
 RECEIPTS, exactly one per request line: `RES <nonce> <id> <status>`, the status `ran rc=<rc> run=<run id>` followed by
 the runner's print (its own 9,000-character cap), or `refused: <reason>` (malformed, stale nonce, duplicate id, unknown
 label, a parameter the runner refuses, cap, budget), or `unanswered: <why>` from the reconciler. A malformed line with
@@ -93,7 +129,8 @@ without blocking (a stale nonce alone never blocks) are reported there too.
 
 STATE: <main>/.jev/req/ (the MAIN tree through git's common dir, as the stack runner finds its log; AF_REQ_STATE, read
 once at start, replaces <main>/.jev for tests): ledger.jsonl (one row per receipt: the session, nonce, id, label,
-status, the stack run id and its run dir, the transcript and the uuid of the record that carried the request, so an
+status, the stack run id and its run dir, the transcript and the uuid of the record that carried the request, its form
+(`req` or `box`) and its text (cut at LEDGER_TEXT_MAX characters; `sha` is the whole text's), so an
 export can pair the chat before a request with its label and its result; plus one `bind` row, kind bind and status
 bound, when the record of a last_assistant_message receipt appears: its uuid and line, and the receipt's `fb`, which
 completes that receipt's pairing), sessions/<session>.json (the nonces and
@@ -142,6 +179,16 @@ WORD_RE = re.compile(r"[A-Z][A-Z0-9_]{0,15}")
 RUN_LINE_RE = re.compile(r"stack ([a-z][a-z0-9-]{1,23}) · run (s-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}) · exit ([0-9]+)")
 SESSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 NONCE_RE = re.compile(r"[0-9a-f]{12}")
+# THE BOX, its characters escaped here (U+250C ┌, U+2500 ─, U+00B7 ·, U+2502 │, U+2504 ┄, U+2514 └)
+TOP_RE = re.compile("\u250c\u2500 ([a-z][a-z0-9-]{1,23}) \u00b7 ([a-z][a-z0-9]{0,15}) \u00b7 ([0-9a-f]{12})"
+                    "(?: \u2500+)?")                  # the label (LABEL_RE), the id (ID_RE), the nonce, decoration
+BOTTOM_RE = re.compile("\u2514\u2500+")
+DIVIDER_RE = re.compile("\u2504{3,}")               # after an inside line's `│ `
+NAME_RE = re.compile(r"[a-z][a-z0-9_]{0,23}")       # stack.py's NAME_RE: a parameter line's key
+FENCE_RE = re.compile(r"```[A-Za-z0-9_+.#-]*")      # a fence line: three backquotes, optionally a language word
+BAR = "\u2502"
+BOX_LINE = ("\u250c", "\u2502", "\u2514")           # a line of a box's shape starts with one of these
+LEDGER_TEXT_MAX = 4000                              # characters of a request's text kept in its ledger row
 
 # Transcript records, told apart by byte patterns before any decoding (the compact form measured exact on 14,003
 # records of this session's transcript, 2026-09-29: every assistant record holds one content block). Each pattern
@@ -166,11 +213,12 @@ P_TURN = _pat(b"turnOrigin", b"")
 def has(raw, pats):
     return any(p in raw for p in pats)
 
-NONCE_LINE = ("Chat form (LS-B10) nonce {n}: to run a stack without a tool call, end your message with request lines "
-              "`REQ {n} <id> <label> key=value ...` (a new id for each line: r1, r2, ...; the labels of "
-              "scripts/stacks.toml; a value with spaces or lines goes in a block: key=<<END, its lines, then END "
-              "alone), nothing after them and the nonce nowhere else; a Stop hook runs each through scripts/stack.py "
-              "and answers `RES {n} <id> <status>`.")
+NONCE_LINE = ("Chat form (LS-B10) nonce {n}: to run a stack without a tool call, end your message with one box per "
+              "request, such as the three lines `┌─ find · r1 · {n}`, `│ q: who calls "
+              "parse_message`, `└─` (a label of scripts/stacks.toml, a new id per box, a `│ key: "
+              "value` line per parameter; below a `│ ┄┄┄` line, the stack's body, verbatim), "
+              "nothing after them and the nonce nowhere else; fallback, one line: `REQ {n} <id> <label> "
+              "key=value ...`. A Stop hook runs each through scripts/stack.py and answers `RES {n} <id> <status>`.")
 
 GIT_UNCOMMITTED = ("There are uncommitted changes in the repository. Please commit and push these changes to the "
                    "remote branch.")
@@ -426,14 +474,17 @@ def message_groups(recs):
 # ---------------------------------------------------------------- the grammar
 
 class Cand:
-    """One request line (kind "request": its head is well formed) or one malformed line that carries a current nonce
-    (kind "malformed"). reason: why it is refused as malformed, or None."""
-    __slots__ = ("kind", "nonce", "id", "label", "params", "reason", "uuid", "line", "off", "text", "sha", "source")
+    """One request line or box (kind "request": its head is well formed) or one malformed line that carries a current
+    nonce (kind "malformed"). reason: why it is refused as malformed, or None. form: "req" or "box"; body: a box's text
+    below its divider, or None."""
+    __slots__ = ("kind", "nonce", "id", "label", "params", "reason", "uuid", "line", "off", "text", "sha", "source",
+                 "form", "body")
 
     def __init__(self, kind, nonce, cid, label, uuid, line, off, source):
         self.kind, self.nonce, self.id, self.label = kind, nonce, cid, label
         self.params, self.reason, self.text, self.sha = [], None, "", ""
         self.uuid, self.line, self.off, self.source = uuid, line, off, source
+        self.form, self.body = "req", None
 
 
 def why_malformed(line, nonce):
@@ -445,6 +496,10 @@ def why_malformed(line, nonce):
             ", ".join(odd))
     if s.startswith("RES "):
         return "a receipt quoted with the nonce: quote receipts without it"
+    if s.startswith("┌"):
+        return why_top(s, nonce)
+    if "┌─" in s and "REQ " not in s:
+        return "text or markup before ┌─: a box's top edge starts the line, bare"
     if not s.startswith("REQ "):
         if "REQ " in s:
             return "text or markup before REQ: a request line starts with REQ at the line's start, bare"
@@ -463,28 +518,105 @@ def why_malformed(line, nonce):
     return "the line breaks the request grammar"
 
 
+def why_top(s, nonce):
+    """Why a line that starts with ┌ and carries the nonce is not a box's top edge (s: trailing blanks removed)."""
+    if not s.startswith("┌─ "):
+        return "a box's top edge starts with ┌─ and a space, then <label> · <id> · <nonce>"
+    parts = s[3:].split(" · ")
+    if len(parts) != 3:
+        return ("a box's top edge is ┌─ <label> · <id> · <nonce>, one space on each side of each "
+                "·; found %r" % s[:60])
+    if not LABEL_RE.fullmatch(parts[0]):
+        return "the label %r is not a stack label" % parts[0][:32]
+    if not ID_RE.fullmatch(parts[1]):
+        return "the id %r: an id is [a-z][a-z0-9]{0,15}, such as r1" % parts[1][:24]
+    if parts[2][:12] != nonce:
+        return "the nonce is written %r: it is 12 lowercase hex digits" % parts[2].split(" ")[0][:24]
+    return "after the nonce a box's top edge holds only a space and ─ (decoration); found %r" % parts[2][12:][:40]
+
+
+def parse_box(lines, k, top, source):
+    """(the box whose top edge is lines[k], the index of the line after it): THE BOX. It ends at its bottom edge, at
+    the message's end (unclosed), or before a line that does not start with │ (the caller reads that line next)."""
+    u, i, ln, off = lines[k]
+    c = Cand("request", top.group(3), top.group(2), top.group(1), u, i, off, source)
+    c.form, text, body = "box", [ln], None
+    j = k + 1
+    while True:
+        if j >= len(lines):
+            c.reason = c.reason or "an unclosed box: no bottom edge └─ before the end of the message"
+            break
+        s = lines[j][2].rstrip(" \t\r")
+        if BOTTOM_RE.fullmatch(s):
+            text.append(lines[j][2])
+            j += 1
+            break
+        if not s.startswith(BAR):
+            c.reason = c.reason or ("an inside line that does not start with │ (found %r): a box's lines start "
+                                    "with │ up to its bottom edge └─" % s[:40])
+            break
+        text.append(lines[j][2])
+        j += 1
+        if s != BAR and not s.startswith(BAR + " "):
+            c.reason = c.reason or ("an inside line is │, a space and its text, or a bare │; found %r"
+                                    % s[:40])
+            continue
+        inner = s[2:]
+        if DIVIDER_RE.fullmatch(inner):
+            if body is not None:
+                c.reason = c.reason or ("a second ┄┄┄ divider: a box has one, and its body runs from "
+                                        "there to the bottom edge")
+            body = [] if body is None else body
+        elif body is not None:
+            body.append(inner)
+        elif inner:                      # an empty line among the parameters is skipped
+            key, sep, value = inner.partition(": ")
+            if not sep:
+                c.reason = c.reason or ("a parameter line is key: value (a colon and a space after the key); found %r"
+                                        % inner[:40])
+            elif not NAME_RE.fullmatch(key):
+                c.reason = c.reason or "a parameter's key is [a-z][a-z0-9_]{0,23}; found %r" % key[:32]
+            else:
+                c.params.append([key, value])
+    if body is not None:
+        c.body = "\n".join(body)
+    if any("\x00" in v for _k, v in c.params) or "\x00" in (c.body or ""):
+        c.reason = c.reason or "a value holds a NUL character"
+    c.text = "\n".join(text)
+    c.sha = hashlib.sha256(c.text.encode("utf-8", "surrogatepass")).hexdigest()
+    return c, j
+
+
 def parse_message(blocks, nonces, source):
     """The candidates of one message. blocks: [(uuid, text, offset)] in order; nonces: the current set."""
     lines = [(u, i, ln, off) for u, text, off in blocks for i, ln in enumerate(text.split("\n"))]
-    out, reqs, started, broken = [], [], False, False
+    out, reqs, after = [], [], []        # after: each line of text after the first request: is it a fence line
     k = 0
     while k < len(lines):
         u, i, ln, off = lines[k]
         s = ln.rstrip(" \t\r")
+        top = TOP_RE.fullmatch(s)
+        if top is not None:
+            c, end = parse_box(lines, k, top, source)
+            if c.nonce in nonces or c.reason is None:   # else an illustration: its lines are text, read below
+                out.append(c)
+                reqs.append(c)
+                k = end
+                continue
         m = HEAD_RE.fullmatch(s)
         if m is None:
-            if started and s.strip():
-                broken = True            # text after the request lines
+            if reqs and s.strip():
+                after.append(FENCE_RE.fullmatch(s) is not None)
             low = s.lower()
             hit = next((n for n in nonces if n in low), None)
             if hit is not None:
                 c = Cand("malformed", hit, "?", None, u, i, off, source)
                 c.reason, c.text = why_malformed(ln, hit), ln
+                c.form = "box" if s.startswith(BOX_LINE) else "req"
                 c.sha = hashlib.sha256(ln.encode("utf-8", "surrogatepass")).hexdigest()
                 out.append(c)
             k += 1
             continue
-        started = True
         c = Cand("request", m.group(1), m.group(2), m.group(3), u, i, off, source)
         blocks_open = []                 # (index into c.params, end word)
         for tok in m.group(4).split(" ")[1:]:
@@ -522,7 +654,10 @@ def parse_message(blocks, nonces, source):
         c.sha = hashlib.sha256(c.text.encode("utf-8", "surrogatepass")).hexdigest()
         out.append(c)
         reqs.append(c)
-    if broken:
+    # the closing rule: text after the first request refuses them all; a fence line is text only in a message that
+    # holds no box (the REQ lines' rule, unchanged)
+    boxed = any(c.form == "box" for c in reqs)
+    if any(not (fence and boxed) for fence in after):
         for c in reqs:
             c.reason = c.reason or "text after the request lines: they close the message's text"
     return out
@@ -536,7 +671,7 @@ def lam_missing(lam, recs, nonces, earlier=()):
     if not lam:
         return False
     want = [s for s in (ln.rstrip(" \t\r") for ln in lam.split("\n"))
-            if HEAD_RE.fullmatch(s) or any(n in s.lower() for n in nonces)]
+            if HEAD_RE.fullmatch(s) or TOP_RE.fullmatch(s) or any(n in s.lower() for n in nonces)]
     if not want:
         return False
     have = {ln.rstrip(" \t\r") for r in recs if r.kind == "text" and r.uuid not in earlier for ln in r.text.split("\n")}
@@ -633,7 +768,8 @@ def known(c, idx, seen, path):
 def row_of(ctx, session, transcript, c, status, reason, delivered, **extra):
     row = {"v": 1, "ts": utc(), "session": session, "nonce": c.nonce, "id": c.id, "label": c.label, "kind": c.kind,
            "status": status, "reason": reason, "uuid": c.uuid, "line": c.line, "sha": c.sha, "source": c.source,
-           "transcript": transcript, "delivered": delivered}
+           "transcript": transcript, "delivered": delivered, "form": c.form,
+           "text": c.text if len(c.text) <= LEDGER_TEXT_MAX else c.text[:LEDGER_TEXT_MAX - 1] + "…"}
     row.update(extra)
     return row
 
@@ -660,11 +796,12 @@ def load_module(name, path):
 
 
 def stack_labels(ctx):
-    """(the registry's stack labels, None) or (None, why the registry did not load), through the runner's own loader."""
+    """({label: the stack's body parameter or None}, labels sorted; None) or (None, why the registry did not load),
+    through the runner's own loader."""
     try:
         runner = load_module("ls_req_stack", STACK)
         _tools, stacks = runner.load_registry(ctx.opts.get("registry") or runner.DEFAULT_REGISTRY)
-        return sorted(stacks), None
+        return {label: stacks[label].body for label in sorted(stacks)}, None
     except Exception as e:  # a Refusal, or the runner missing
         return None, short("%s" % e if type(e).__name__ == "Refusal" else "%s: %s" % (type(e).__name__, e))
 
@@ -686,8 +823,9 @@ def on_term(signum, _frame):
     raise SystemExit(128 + signum)
 
 
-def run_request(ctx, c, deadline):
-    """(status, reason, rc, run id, the runner's print) of one request run through scripts/stack.py."""
+def run_request(ctx, c, deadline, body_key=None):
+    """(status, reason, rc, run id, the runner's print) of one request run through scripts/stack.py. body_key: the
+    parameter a box's body fills."""
     left = deadline - time.monotonic()
     if left < MIN_START_S:
         return "refused", "budget (%.0f s of the %.0f s round budget left: not started)" % (
@@ -696,7 +834,8 @@ def run_request(ctx, c, deadline):
     for opt in ("registry", "log_dir"):
         if ctx.opts.get(opt):
             argv += ["--" + opt.replace("_", "-"), ctx.opts[opt]]
-    argv += ["--", c.label] + ["%s=%s" % (k, v) for k, v in c.params]
+    params = c.params + ([[body_key, c.body]] if c.body is not None else [])
+    argv += ["--", c.label] + ["%s=%s" % (k, v) for k, v in params]
     t0 = time.monotonic()
     try:
         proc = subprocess.Popen(argv, cwd=ctx.opts["tree"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -1165,8 +1304,14 @@ def cmd_stop(ctx, payload):
             reason = "the registry did not load: %s" % registry_error
         elif c.label not in labels:
             reason = "unknown label %r (the stacks: %s)" % (c.label, ", ".join(labels))
+        elif c.body is not None and labels[c.label] is None:          # THE BOX's two body cases, the registry's
+            reason = ("malformed (a body below ┄┄┄, but stack %s names no body parameter: give its "
+                      "parameters as key: value lines)" % c.label)
+        elif c.body is not None and any(k == labels[c.label] for k, _v in c.params):
+            reason = ("malformed (the parameter line %s: sets the body parameter of stack %s, which the body below "
+                      "┄┄┄ sets too)" % (labels[c.label], c.label))
         else:
-            status, reason, rc, run, text = run_request(ctx, c, deadline)
+            status, reason, rc, run, text = run_request(ctx, c, deadline, labels[c.label])
             ran += status == "ran"
         saved = save_print(ctx, session, c, text) if text else None
         res = receipt_of(c, status, reason, rc, run)

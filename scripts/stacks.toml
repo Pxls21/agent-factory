@@ -253,6 +253,7 @@ replaces = "scripts/lane_context.sh run by hand (it exists; the stack gives it a
 outward = false
 rated = true
 notes = ["`ctx` does not show a missing ripwire as unmapped (F-6)."]
+body = "q"   # a box's body: the question for graft ask, in prose (files and sym stay key: value lines)
 
 [stacks.ctx.params.files]
 type = "paths"
@@ -318,6 +319,7 @@ summary = "what the repo already holds on q: graft ask, the owner's rulings, the
 replaces = "3 to 4 lookups before a brief or a question to the owner"
 outward = false
 rated = true
+body = "q"   # a box's body: the question, in prose, the stack's one text parameter
 
 [stacks.find.params.q]
 type = "text"
@@ -406,6 +408,7 @@ summary = "the bug-echo sweep: the pattern in the six code roots, the incident l
 replaces = "the bug-echo sweep after a fix: rg, git grep and ap_screen.py by hand"
 outward = false
 rated = true
+body = "pattern"   # a box's body: the search pattern, written as is (roots stays a key: value line)
 
 [stacks.echo.params.pattern]
 type = "text"

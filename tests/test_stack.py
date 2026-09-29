@@ -888,15 +888,26 @@ NOTES_BAD = "notes: a list of notes of 1 to 300 characters, each one line with n
     ("version = 1\n" + GOOD_STACK.replace("outward = false\n", 'outward = false\nnotes = [""]\n'), NOTES_BAD),
     ("version = 1\n" + GOOD_STACK.replace("outward = false\n", 'outward = false\nnotes = ["%s"]\n' % ("n" * 301)),
      NOTES_BAD),
+    ("version = 1\n" + GOOD_STACK.replace("outward = false\n", 'outward = false\nbody = "nope"\n'),
+     "stacks.st.body: must name a parameter of this stack that a request sets (found 'nope'; those parameters: none)"),
+    ("version = 1\n" + stack_toml("st", {"q": {"type": "text", "required": True},
+                                         "w": {"type": "words", "split_from": "q"}},
+                                  [{"id": "a", "argv": ["echo", "{q}"]}]).replace(
+        "outward = false\n", 'outward = false\nbody = "w"\n'),
+     "stacks.st.body: must name a parameter of this stack that a request sets (found 'w'; those parameters: q)"),
+    ("version = 1\n" + GOOD_STACK.replace("outward = false\n", "outward = false\nbody = 1\n"),
+     "stacks.st.body: must name a parameter of this stack that a request sets (found 1; those parameters: none)"),
 ], ids=["version-2", "version-string", "outward-true", "outward-missing", "unknown-placeholder", "program-placeholder",
         "splice-in-element", "chain-to-later-group", "optional-scalar-unguarded", "repeated-id", "bad-default",
         "timeout-0", "join-of-a-scalar", "join-unguarded", "tool-alone", "unmapped-if-two-lines", "save-cap-0",
         "rated-string", "timeout-3601", "label-uppercase", "needs-later-step", "foreach-later-step",
-        "empty-ok-unchained", "needs-not-a-list", "notes-string", "note-cr", "note-empty", "note-301"])
+        "empty-ok-unchained", "needs-not-a-list", "notes-string", "note-cr", "note-empty", "note-301",
+        "body-undeclared", "body-derived", "body-not-a-string"])
 def test_a_bad_registry_exits_3_before_anything_runs(tmp_path, text, message):
     """Mutants: the version check removed; the outward check removed; a join of a scalar or of an unset list let
     through; the timeout bound widened (V4); the label regex loosened (V5); a needs or foreach source not checked; the
-    notes check removed (a CR note printed raw by list and the catalog) — each lets `list` and the stack exit 0."""
+    notes check removed (a CR note printed raw by list and the catalog); the body check removed or loosened to any
+    declared parameter (a derived one, which no request can set) — each lets `list` and the stack exit 0."""
     tree = make_tree(tmp_path / "t")
     path = tmp_path / "stacks.toml"
     path.write_text(text)
@@ -1156,6 +1167,7 @@ group 1
 explain ctx — the code-intel pack of files: graft skeletons and ask, GitNexus impact, code-review-graph, ripwire, the AP screen
 tree {TREE} · HEAD {HEAD}
 params: files=scripts/stack.py,scripts/gate_files.py q='who runs the steps' sym=Runner,cap_lines
+body: q {BODYNOTE}
 <run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
 group 1
   pack: bash scripts/lane_context.sh -q 'who runs the steps' -s Runner -s cap_lines scripts/stack.py scripts/gate_files.py (timeout 900 s)
@@ -1175,6 +1187,7 @@ group 1
 explain find — what the repo already holds on q: graft ask, the owner's rulings, the chat, the AF-AP registry rows
 tree {TREE} · HEAD {HEAD}
 params: q='how does the stop hook drop a request' words=stop,hook,drop,request
+body: q {BODYNOTE}
 <run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
 group 1
   graft: graft ask 'how does the stop hook drop a request' (timeout 120 s)
@@ -1198,6 +1211,7 @@ group 1
 explain echo — the bug-echo sweep: the pattern in the six code roots, the incident log's lines, the AP screen over the files hit
 tree {TREE} · HEAD {HEAD}
 params: pattern=start_new_session roots=scripts,harness-ports,src,proofs,.claude/hooks,.github
+body: pattern {BODYNOTE}
 <run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
 group 1
   code: rg -n --no-heading --sort path -e start_new_session -- scripts harness-ports src proofs .claude/hooks .github (timeout 120 s, ok_rc 0,1)
@@ -1230,10 +1244,45 @@ def test_explain_of_each_wave1_stack_is_pinned(tmp_path, case):
     assert r.returncode == 0, r.stderr
     for key, value in (("{TREEQE}", shlex.quote(str(ROOT) + "/{each}")), ("{TREEQ}", shlex.quote(str(ROOT))),
                        ("{TREE}", str(ROOT)), ("{LOG}", str(tmp_path / "log")),
-                       ("{HEAD}", git(ROOT, "rev-parse", "HEAD")[:12]), ("{TR}", shlex.quote(str(transcript)))):
+                       ("{HEAD}", git(ROOT, "rev-parse", "HEAD")[:12]), ("{TR}", shlex.quote(str(transcript))),
+                       ("{BODYNOTE}", BODY_NOTE)):
         expected = expected.replace(key, value)
     assert r.stdout == expected
     assert not (tmp_path / "log").exists()
+
+
+# LS-B11 (task #380): a stack's `body`, the parameter a chat-form box's lines below its divider fill
+# (scripts/ls_req.py, THE BOX); the divider's characters built from escapes
+BODY_NOTE = "(a chat-form box's lines below its %s divider fill it)" % ("\u2504" * 3)
+
+
+def test_explain_names_a_stacks_body_and_only_when_it_has_one(tmp_path):
+    """`explain` prints the body line right after `params:` for a stack that names a body, and none for a stack that
+    does not; the body is taken as any parameter is (the run is unchanged). Mutants: the body line not printed;
+    printed for every stack (`body: None`)."""
+    tree = make_tree(tmp_path / "t")
+    step = [{"id": "show", "argv": [PY, "argv.py", "{q}"]}]
+    reg = registry(tmp_path, stack_toml("st", {"q": {"type": "text", "required": True}}, step).replace(
+        "outward = false\n", 'outward = false\nbody = "q"\n'), stack_toml("plain", {"q": {"type": "text",
+                                                                                              "required": True}}, step))
+    r = run(tmp_path, tree, reg, "explain", "st", "q=a b")
+    assert r.returncode == 0, r.stderr
+    assert "\nparams: q='a b'\nbody: q %s\n<run> = " % BODY_NOTE in r.stdout, r.stdout
+    r = run(tmp_path, tree, reg, "explain", "plain", "q=a b")
+    assert r.returncode == 0 and "body" not in r.stdout and "\nparams: q='a b'\n<run> = " in r.stdout, r.stdout
+    r = run(tmp_path, tree, reg, "st", "q=a b")
+    assert r.returncode == 0 and '["a b"]' in r.stdout, r.stdout
+
+
+def test_the_registry_names_a_body_for_find_ctx_and_echo_only():
+    """LS-B11 item 4, pinned: find and ctx name q (a question in prose), echo names pattern (a search pattern); no
+    other stack has one free-text parameter a person writes as prose or a pattern (ci's branch is a name). Mutant: a
+    body line dropped from or added to scripts/stacks.toml."""
+    mod = load_stack("stack_body_registry")
+    _tools, stacks = mod.load_registry(str(ROOT / "scripts" / "stacks.toml"))
+    assert {label: st.body for label, st in stacks.items()} == {
+        "harvest": None, "gate": None, "ctx": "q", "impact": None, "find": "q", "premise": None, "echo": "pattern",
+        "review": None, "ci": None}
 
 
 def test_premise_runs_on_this_tree(tmp_path):

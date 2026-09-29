@@ -11,6 +11,7 @@ repository's .jev/. The one exception makes the default place its subject (a tem
 the scripts).
 Each test's docstring names the mutant of scripts/ls_req.py that turns it into a FAILED test (AF-AP-223).
 """
+import hashlib
 import importlib.util
 import json
 import os
@@ -33,6 +34,19 @@ GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAM
 NONCE_RX = re.compile(r"Chat form \(LS-B10\) nonce ([0-9a-f]{12}): ")
 OLD = "0123456789ab"                 # a nonce-shaped token no prompt minted
 TAG = "<" + "system-reminder>"       # built at run time (a tag literal in a Write input can lose its shape)
+# THE BOX's characters, built from escapes (a box-drawing literal in a Write input could lose its shape)
+TL, H, DOT, V, DASH, BL = "\u250c", "\u2500", "\u00b7", "\u2502", "\u2504", "\u2514"
+DIV = DASH * 3
+
+
+def top(label, cid, nonce):
+    """A box's top edge: ┌─ <label> · <id> · <nonce>."""
+    return "%s%s %s %s %s %s %s" % (TL, H, label, DOT, cid, DOT, nonce)
+
+
+def box(label, cid, nonce, *inside):
+    """A box's text: its top edge, each inside line (│ and a space before it; "" gives a bare │), its bottom edge."""
+    return "\n".join([top(label, cid, nonce)] + [V + (" " + x if x else "") for x in inside] + [BL + H])
 
 
 def load():
@@ -529,10 +543,12 @@ def test_the_valid_set_keeps_the_last_nonces_while_the_query_runs(w):
 
 
 def test_the_prompt_hook_injects_one_line_with_the_nonce_and_the_grammar(w):
-    """ONE line, the nonce three times (the fixed prefix, the REQ form, the RES form). Mutant: a multi-line text."""
+    """ONE line, the nonce four times (the fixed prefix, the one-box example's top edge, the REQ fallback, the RES
+    form), under 600 characters (LS-B11 item 3: 454 characters at LS-B10, 555 with the box). Mutants: a multi-line
+    text; the box example or the REQ fallback left out."""
     n = w.prompt()
-    assert "\n" not in w.context and w.context.count(n) == 3 and "key=<<END" in w.context
-    assert len(w.context) < 600
+    assert "\n" not in w.context and w.context.count(n) == 4 and len(w.context) < 600
+    assert "`%s`" % top("find", "r1", n) in w.context and "`REQ %s <id> <label> key=value ...`" % n in w.context
 
 
 # ---------------------------------------------------------------- the cap and the budget (item 3)
@@ -1395,3 +1411,375 @@ def test_v6_a_stop_after_the_transcript_shrank_reads_its_tail(w):
     r = w.stop()
     assert r.returncode == 2 and receipts(r, n)["r1"][0].startswith("ran rc=0"), r.stderr
     assert "(the transcript changed under this session's state: only its last" in r.stderr.decode()
+
+
+# ---------------------------------------------------------------- LS-B11: the box (task #380, D-111, D-113)
+# The contract is tasks/briefs/labeling/LS-B11-brief.md: a second request head in parse_message, feeding LS-B10's
+# transport unchanged. Box strings are built from escapes (TL, H, DOT, V, DASH, BL above).
+
+BOX_REGISTRY = TEST_REGISTRY + """
+[stacks.echobody]
+summary = "prints its argument vector as JSON; a box's body fills q"
+replaces = "nothing"
+outward = false
+body = "q"
+[stacks.echobody.params.q]
+type = "text"
+required = true
+[stacks.echobody.params.tag]
+type = "word"
+[[stacks.echobody.steps]]
+id = "show"
+argv = ["python3", "argv.py", "{q}", "{tag?:--tag}"]
+"""
+
+
+@pytest.fixture
+def wb(tmp_path):
+    reg = tmp_path / "box-stacks.toml"
+    reg.write_text(BOX_REGISTRY)
+    return World(tmp_path, registry=reg)
+
+
+def sha(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+AFTER = "text after the request lines: they close the message's text"
+
+
+def test_a_box_parses_into_a_request_with_one_value_per_parameter_line():
+    """THE BOX (item 2): the top edge gives the nonce, the id and the label; each `key: value` line is one parameter,
+    its value the rest of the line after the first `: `, spaces included (one argument, never split); an empty line
+    among the parameters is skipped; the text is the box's lines and `line` its top edge's. Mutants: the value split
+    at spaces or at the last `: `; the empty line refused; the top edge's line index off by one; the text without its
+    bottom edge."""
+    text = box("ctx", "r1", N, "files: scripts/stack.py,scripts/gate_files.py", "q: who runs the steps: all of them",
+               "", "sym: Runner")
+    [c] = parse("Looking.\n" + text)
+    assert (c.kind, c.form, c.nonce, c.id, c.label, c.reason, c.line, c.body) == (
+        "request", "box", N, "r1", "ctx", None, 1, None)
+    assert c.params == [["files", "scripts/stack.py,scripts/gate_files.py"], ["q", "who runs the steps: all of them"],
+                        ["sym", "Runner"]]
+    assert (c.text, c.sha) == (text, sha(text))
+
+
+def test_a_box_body_keeps_backquotes_a_fence_line_a_leading_space_and_an_empty_line():
+    """Every inside line after the divider is the body, each without its `│ ` (a bare │ gives an empty line), joined
+    with newlines: backquotes, a fence line, a leading space, an empty line and a request-shaped line are kept as
+    written, and never read as a second request; trailing blanks are removed. Mutants: the body lines stripped (the
+    leading space lost); empty body lines dropped; the divider kept in the body."""
+    body = ["```python", "print(`x`)  # a backquote", "", " leading space", "REQ %s r9 premise files=b.txt" % N,
+            "$(rm -rf /) ; | &&", "```"]
+    text = box("echo", "r1", N, "roots: scripts", DIV, *body)
+    got = parse(text.replace("# a backquote", "# a backquote  \t"))     # trailing blanks: removed
+    assert [(c.id, c.reason, c.params, c.body) for c in got] == [("r1", None, [["roots", "scripts"]], "\n".join(body))]
+
+
+def test_a_box_in_a_fence_two_boxes_and_a_box_beside_a_req_line_close_the_message():
+    """Fence lines around and between boxes never break the closing rule; a box and a REQ line in one message are two
+    requests; prose after them refuses every one; a message with no box keeps LS-B10's rule, where a fence line after
+    a REQ line is text (item 5). Mutants: a fence line always text (the fenced box refused); a fence line never text
+    (the fenced REQ-only line would run); the closing rule skipped for a box."""
+    one, two, req = box("find", "r1", N, "q: a"), box("find", "r2", N, "q: b"), "REQ %s r3 premise files=a.txt" % N
+    cases = [("```text\n%s\n```" % one, ["r1"]),                               # a fenced box
+             ("```\n%s\n%s\n```" % (one, two), ["r1", "r2"]),                  # two boxes in one fence
+             ("```\n%s\n```\n\n```\n%s\n```\n" % (one, two), ["r1", "r2"]),    # two fenced boxes
+             ("%s\n```\n%s\n```" % (req, one), ["r3", "r1"]),                  # a REQ line, then a fenced box
+             ("```\n%s\n```\n%s" % (one, req), ["r1", "r3"])]                  # a fenced box, then a REQ line
+    for text, ids in cases:
+        assert [(c.id, c.reason) for c in parse(text)] == [(i, None) for i in ids], text
+    assert [(c.id, c.reason) for c in parse("%s\n%s\nthat is all" % (one, req))] == [("r1", AFTER), ("r3", AFTER)]
+    assert [(c.id, c.reason) for c in parse("```\n%s\n```" % req)] == [("r3", AFTER)]
+
+
+MALFORMED_BOXES = {
+    "top-no-space": ("%s%sfind %s r1 %s %s\n%s q: a\n%s%s" % (TL, H, DOT, DOT, N, V, BL, H), "malformed", "?",
+                     "a box's top edge starts with %s%s and a space, then <label> %s <id> %s <nonce>" % (
+                         TL, H, DOT, DOT)),
+    "top-spacing": ("%s%s find%sr1 %s %s" % (TL, H, DOT, DOT, N), "malformed", "?",
+                    "a box's top edge is %s%s <label> %s <id> %s <nonce>, one space on each side of each %s; found %r"
+                    % (TL, H, DOT, DOT, DOT, "%s%s find%sr1 %s %s" % (TL, H, DOT, DOT, N))),
+    "top-label": (top("Find", "r1", N), "malformed", "?", "the label 'Find' is not a stack label"),
+    "top-id": (top("find", "R1", N), "malformed", "?", "the id 'R1': an id is [a-z][a-z0-9]{0,15}, such as r1"),
+    "top-nonce-case": (top("find", "r1", N.upper()), "malformed", "?",
+                       "the nonce is written %r: it is 12 lowercase hex digits" % N.upper()),
+    "top-decoration": (top("find", "r1", N) + " " + H * 3 + " x", "malformed", "?",
+                       "after the nonce a box's top edge holds only a space and %s (decoration); found %r" % (
+                           H, " " + H * 3 + " x")),
+    "top-markup": ("> " + top("find", "r1", N), "malformed", "?",
+                   "text or markup before %s%s: a box's top edge starts the line, bare" % (TL, H)),
+    "unclosed": (top("find", "r1", N) + "\n%s q: a" % V, "request", "r1",
+                 "an unclosed box: no bottom edge %s%s before the end of the message" % (BL, H)),
+    "inside-no-bar": (top("find", "r1", N) + "\n%s q: a\nq2: b\n%s%s" % (V, BL, H), "request", "r1",
+                      "an inside line that does not start with %s (found 'q2: b'): a box's lines start with %s up to "
+                      "its bottom edge %s%s" % (V, V, BL, H)),
+    "inside-no-space": (top("find", "r1", N) + "\n%sq: a\n%s%s" % (V, BL, H), "request", "r1",
+                        "an inside line is %s, a space and its text, or a bare %s; found %r" % (V, V, V + "q: a")),
+    "param-no-colon-space": (box("find", "r1", N, "q:a"), "request", "r1",
+                             "a parameter line is key: value (a colon and a space after the key); found 'q:a'"),
+    "param-key": (box("find", "r1", N, "Q: a"), "request", "r1",
+                  "a parameter's key is [a-z][a-z0-9_]{0,23}; found 'Q'"),
+    "second-divider": (box("echo", "r1", N, DIV, "a", DIV, "b"), "request", "r1",
+                       "a second %s divider: a box has one, and its body runs from there to the bottom edge" % DIV),
+    "nul": (box("find", "r1", N, "q: a\x00b"), "request", "r1", "a value holds a NUL character"),
+    "text-after": (box("find", "r1", N, "q: a") + "\nmore prose", "request", "r1", AFTER),
+}
+
+
+@pytest.mark.parametrize("case", sorted(MALFORMED_BOXES))
+def test_each_malformed_box_is_refused_with_its_reason(case):
+    """Item 2's malformed cases with a current nonce, each ONE candidate with its exact reason: under the box's id when
+    its top edge parses, else under `?` (the lines after a broken top edge are text and carry no nonce, so no other
+    candidate). Mutants: each check removed (the box parses as well formed, reason None); a broken top edge given the
+    REQ line's reason; a line that breaks the box swallowed instead of ending it."""
+    text, kind, cid, reason = MALFORMED_BOXES[case]
+    assert [(c.kind, c.id, c.reason) for c in parse(text)] == [(kind, cid, reason)]
+
+
+def test_a_box_with_no_current_nonce_is_an_illustration_unless_well_formed():
+    """A top edge with no nonce is not a request; a box well formed on its own grammar with a non-current nonce is a
+    (stale) request, as a REQ line is, the closing rule included (the brief's own mock-up followed by prose: stale,
+    see the LS-B11 report's discrepancy); a non-current box broken on its own grammar is not a request: its lines
+    are text, which breaks the closing rule for a request before it, as LS-B10 read them. Mutants: every non-current
+    box a request (the unclosed one a candidate); none (the stale one silent); an illustration's lines skipped (r2
+    would pass)."""
+    assert parse("%s%s find %s r1\n%s q: a\n%s%s" % (TL, H, DOT, V, BL, H)) == []
+    assert parse(box("find", "r1", "<nonce>", "q: a")) == []
+    assert [(c.kind, c.nonce, c.id, c.reason) for c in parse(box("find", "r1", OLD, "q: a"))] == [
+        ("request", OLD, "r1", None)]
+    mock = box("find", "r1", "3f9c2a7b1d04", "q: where does the scrubber hide bearer tokens")
+    assert [(c.nonce, c.id, c.reason) for c in parse("```\n%s\n```\n\nThe owner: ..." % mock)] == [
+        ("3f9c2a7b1d04", "r1", AFTER)]
+    assert parse(top("find", "r1", OLD) + "\n%s q: a" % V) == []                  # unclosed: an illustration
+    got = parse("REQ %s r2 premise files=a.txt\n%s\n%s q: a" % (N, top("find", "r1", OLD), V))
+    assert [(c.id, c.reason) for c in got] == [("r2", AFTER)]
+
+
+def test_a_box_runs_premise_through_the_real_hook_and_its_row_carries_form_text_and_sha(w):
+    """Through the real hook entry, a fenced box runs the committed `premise` stack: RES ran rc=0 run=<id>, the run's
+    record holds the box's parameter as the runner parsed it; its ledger row carries form box, the box's text and
+    sha, its record and its top edge's line; a REQ line after the fence gets form req and its own text. Mutants: the
+    row without form or text; the fence after the box read as text (both refused); the top edge's line index off by
+    one; the text without its bottom edge."""
+    n = w.prompt()
+    text = box("premise", "r1", n, "files: a.txt,b.txt")
+    record = w.text("Checking.\n```\n%s\n```\nREQ %s r2 premise files=b.txt" % (text, n))
+    r = w.stop()
+    got = receipts(r, n)
+    assert r.returncode == 2 and got["r2"][0].startswith("ran rc=0"), r.stderr
+    m = re.fullmatch(r"ran rc=0 run=(s-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6})", got["r1"][0])
+    assert m, got
+    rec = next(x for x in w.runs() if x["run"] == m.group(1))
+    assert (rec["label"], rec["params"]) == ("premise", {"files": ["a.txt", "b.txt"]})
+    rows = {x["id"]: x for x in w.ledger()}
+    assert (rows["r1"]["form"], rows["r1"]["text"], rows["r1"]["sha"], rows["r1"]["uuid"], rows["r1"]["line"]) == (
+        "box", text, sha(text), record, 2)
+    assert (rows["r2"]["form"], rows["r2"]["text"]) == ("req", "REQ %s r2 premise files=b.txt" % n)
+
+
+def test_a_box_through_the_fallback_is_answered_once_and_its_record_bound(w):
+    """The transcript lags: last_assistant_message holds the box, so the hook waits, then answers it from that text
+    (a row with no record uuid); when the record lands, the next Stop binds it to that receipt (the box's sha is the
+    same in both): no second run, no second receipt, and the next prompt reports nothing (VERIFY-LS-B10 F1 for a
+    box). Mutants: the box's sha differing between its two readings (no bind: the record answered again as a
+    duplicate, exit 2); the top edge's line index off by one; the row without its form."""
+    n = w.prompt()
+    text = box("premise", "r1", n, "files: a.txt")
+    r = w.stop(lam=text, args=("--catchup", "0.3"))
+    assert r.returncode == 2 and receipts(r, n)["r1"][0].startswith("ran rc=0"), r.stderr
+    assert "the last_assistant_message fallback" in r.stderr.decode()
+    [row] = w.ledger()
+    assert (row["uuid"], row["source"], row["form"], row["sha"]) == (None, "last_assistant_message", "box", sha(text))
+    record = w.text(text)
+    w.summary(blocking=True)
+    r = w.stop(active=True)
+    assert (r.returncode, r.stderr) == (0, b"") and len(receipt_rows(w)) == 1 and len(w.runs()) == 1
+    [bind] = binds(w)
+    assert (bind["uuid"], bind["line"], bind["binds"], bind["form"]) == (record, 0, row["fb"], "box")
+    w.summary(blocking=False)
+    n2 = w.prompt()
+    assert w.context == M.NONCE_LINE.format(n=n2), w.context
+
+
+def test_a_stale_box_only_in_the_fallback_is_answered_stale_as_a_req_line_is(w):
+    """A well-formed box with a non-current nonce that only last_assistant_message holds is taken from it, as a stale
+    REQ line is: refused, stale nonce, delivered at the next prompt, never blocking. The REQ line is the control.
+    Mutant: lam_missing blind to a box's top edge (the stale box never collected: no receipt, silence)."""
+    w.prompt()
+    for i, text in ((1, box("premise", "r1", OLD, "files: a.txt")), (2, "REQ %s r2 premise files=a.txt" % OLD)):
+        r = w.stop(lam=text, args=("--catchup", "0.3"))
+        assert (r.returncode, r.stderr) == (0, b""), r.stderr
+        row = w.ledger()[-1]
+        assert (row["id"], row["status"], row["source"], row["delivered"]) == (
+            "r%d" % i, "refused", "last_assistant_message", "no"), row
+    w.summary(blocking=False)
+    w.prompt()
+    for i in (1, 2):
+        assert "delivered late: RES %s r%d refused: stale nonce (not this turn's)" % (OLD, i) in w.context
+    assert w.runs() == [] and [x["form"] for x in w.ledger()] == ["box", "req"]
+
+
+def test_a_duplicate_id_across_a_box_and_a_req_line_is_refused(w):
+    """The duplicate-id rule spans both forms: a REQ line r1 then a box r1 in one round; a box r2, then a REQ line r2
+    a round later. Mutant: a box's (nonce, id) kept apart from the REQ lines' (both would run)."""
+    n = w.prompt()
+    w.text("REQ %s r1 premise files=a.txt\n%s" % (n, box("premise", "r1", n, "files: b.txt")))
+    got = receipts(w.stop(), n)
+    assert got["r1"][0].startswith("ran rc=0") and got["r1"][1].startswith("refused: duplicate id"), got
+    w.summary(blocking=True)
+    w.text(box("premise", "r2", n, "files: a.txt"))
+    assert receipts(w.stop(active=True), n)["r2"][0].startswith("ran rc=0")
+    w.summary(blocking=True)
+    w.text("REQ %s r2 premise files=b.txt" % n)
+    r = w.stop(active=True)
+    assert receipts(r, n)["r2"][0].startswith("refused: duplicate id") and len(w.runs()) == 2, r.stderr
+
+
+def test_a_stale_box_never_runs_nor_blocks_and_a_box_with_no_nonce_gets_nothing(w):
+    """Through the hook: a well-formed box with an old nonce is `refused: stale nonce` (its row form box, delivered
+    at the next prompt: alone it never blocks); a box with no nonce beside it gets no receipt at all. Mutants: a
+    well-formed stale box not taken as a request (no receipt: silence); the row without its form. (The stale rule
+    itself is LS-B10's, pinned by its own tests.)"""
+    w.prompt()
+    w.text("%s\n%s%s find %s r2\n%s q: a\n%s%s" % (box("premise", "r1", OLD, "files: a.txt"), TL, H, DOT, V, BL, H))
+    r = w.stop()
+    assert (r.returncode, r.stderr) == (0, b"") and w.runs() == []
+    assert [(x["id"], x["status"], x["form"], x["delivered"]) for x in w.ledger()] == [("r1", "refused", "box", "no")]
+    w.summary(blocking=False)
+    w.prompt()
+    assert "delivered late: RES %s r1 refused: stale nonce (not this turn's)" % OLD in w.context
+    assert len(w.ledger()) == 1
+
+
+def test_a_malformed_box_gets_one_receipt_under_its_id_or_under_the_question_mark(w):
+    """One receipt per box, never silence: an unclosed box is refused under its id; a box whose top edge breaks the
+    grammar is refused under `?` (its row form box), and nothing runs. Mutants: the unclosed box accepted (it runs
+    what it holds); the `?` row's form not box; the row without its form."""
+    n = w.prompt()
+    w.text(top("premise", "r1", n) + "\n%s files: a.txt" % V)
+    r = w.stop()
+    assert res_lines(r) == ["RES %s r1 refused: malformed (an unclosed box: no bottom edge %s%s before the end of the "
+                            "message)" % (n, BL, H)], r.stderr
+    w.summary(blocking=True)
+    w.text("%s x\n%s files: a.txt\n%s%s" % (top("premise", "r2", n), V, BL, H))
+    r = w.stop(active=True)
+    assert res_lines(r) == ["RES %s ? refused: malformed (after the nonce a box's top edge holds only a space and %s "
+                            "(decoration); found ' x')" % (n, H)], r.stderr
+    assert [(x["id"], x["form"]) for x in w.ledger()] == [("r1", "box"), ("?", "box")] and w.runs() == []
+
+
+def test_a_box_body_fills_the_stacks_body_parameter_as_one_argument(wb):
+    """Item 4: the body goes to the parameter the stack names as its body, as ONE element of the runner's argument
+    vector (backquotes, $(), ; and | intact; no file the text names is created), beside the box's other parameters; a
+    parameter line's value with spaces is one argument too. A body for a stack that names none, and a parameter line
+    that sets the body parameter beside a body, are refused as malformed and run nothing; a body of two lines reaches
+    the runner, whose text type refuses it (the known limit: stack.py's text takes one line). Mutants: the body
+    dropped (the runner refuses a missing q); either body check removed (r2 or r3 runs)."""
+    n = wb.prompt()
+    value = "who calls `parse_lock`? $(touch pwned) ; echo hi | cat && x"
+    wb.text("\n".join([box("echobody", "r1", n, "tag: t1", DIV, value), box("echoargs", "r2", n, DIV, "x"),
+                       box("echobody", "r3", n, "q: one", DIV, "two"),
+                       box("echobody", "r4", n, DIV, "line one", "line two"), box("echoargs", "r5", n, "q: " + value)]))
+    r = wb.stop()
+    got, err = receipts(r, n), r.stderr.decode()
+    assert got["r1"][0].startswith("ran rc=0") and json.dumps([value, "--tag", "t1"]) in err, got
+    assert got["r2"] == ["refused: malformed (a body below %s, but stack echoargs names no body parameter: give its "
+                         "parameters as key: value lines)" % DIV], got
+    assert got["r3"] == ["refused: malformed (the parameter line q: sets the body parameter of stack echobody, which "
+                         "the body below %s sets too)" % DIV], got
+    assert got["r4"] == ["refused: q=line one line two refused: a text holds no NUL and no newline"], got
+    assert got["r5"][0].startswith("ran rc=0") and json.dumps([value]) in err, got
+    assert not (wb.repo / "pwned").exists() and len(wb.runs()) == 2
+
+
+def test_an_interrupted_box_is_reported_unanswered_by_the_reconciler_and_never_run(w):
+    """The reconciler treats a box as a REQ line: after an interrupt the next prompt reports `unanswered: r1 premise
+    (an interrupt, transcript record <uuid>)` for it, writes that receipt (form box) and runs nothing. Mutant: the
+    box head disabled (the box read as a line with the nonce: `unanswered: ?`)."""
+    n = w.prompt()
+    w.text("Checking.\n" + box("premise", "r1", n, "files: a.txt"))
+    stopped = w.interrupt()
+    w.prompt()
+    assert "unanswered: r1 premise (an interrupt, transcript record %s)" % stopped in w.context, w.context
+    assert [(x["id"], x["status"], x["form"]) for x in w.ledger()] == [("r1", "unanswered", "box")] and w.runs() == []
+
+
+def test_defer_check_defers_the_retro_for_a_box_as_for_a_req_line(w):
+    """The retro gate's deferral (turn-retro-gate.sh asks `defer-check` once the registration patch lands) reads
+    content only: a box's top edge carries the current nonce, so a Stop that answers a box defers the retro, from the
+    transcript or from last_assistant_message, as for a REQ line; an answered box, or one with an old nonce, does
+    not. So the registration patch needs no change for the box. Mutant: defer only on `REQ <nonce>` (the retro would
+    fire beside a box's receipts)."""
+    n = w.prompt()
+
+    def ask(**kw):
+        r = w.hook("defer-check", w.payload(**kw))
+        return r.returncode, r.stdout.decode()
+
+    w.text(box("premise", "r1", n, "files: a.txt"))
+    assert ask() == (0, "defer\n")
+    w.summary(blocking=True)                       # the Stop that answered r1
+    w.tool_use()
+    w.text("All done, no requests.")
+    assert ask() == (1, "")
+    assert ask(last_assistant_message=box("premise", "r2", n, "files: a.txt")) == (0, "defer\n")
+    assert ask(last_assistant_message=box("premise", "r2", OLD, "files: a.txt")) == (1, "")
+
+
+def test_a_box_at_the_cap_is_refused_and_runs_nothing(w):
+    """The cap holds for a box as for a REQ line: at cap-1 every request of the round is refused loudly and nothing
+    runs. Mutant: a box exempt from the cap (it would run)."""
+    env = dict(w.env, CLAUDE_CODE_STOP_HOOK_BLOCK_CAP="4")
+    n = w.prompt()
+    w.summary(blocking=True)
+    w.summary(blocking=True)
+    w.text(box("premise", "r1", n, "files: a.txt"))
+    r = w.stop(active=True, env=env)
+    assert r.returncode == 2 and w.runs() == [], r.stderr
+    assert res_lines(r) == ["RES %s r1 refused: cap: nothing ran; continue with tool calls (python3 scripts/stack.py "
+                            "premise ...): this is blocking Stop 3 in a row with no tool call, and above 4 the harness "
+                            "ends the turn" % n]
+
+
+def test_the_budget_stops_a_box_run_and_refuses_the_box_it_cannot_start(wb):
+    """The round's budget holds for boxes as for REQ lines: the running box is stopped (SIGTERM to the runner, which
+    kills its step) and the next is never started; the sleeping step is gone. Mutant: a box exempt from the start
+    check (the second box would start past the budget and be stopped, not refused before it starts)."""
+    n = wb.prompt()
+    pidfile = wb.tmp / "sleeper.pid"
+    wb.text("%s\n%s" % (box("slow", "r1", n, "pidfile: %s" % pidfile), box("echoargs", "r2", n, "q: never")))
+    try:
+        r = wb.stop(args=("--budget", "7"), timeout=60)
+    finally:
+        outlived = end_step(pidfile)
+    got = receipts(r, n)
+    assert got["r1"][0].startswith("refused: budget (stopped after"), got
+    assert got["r2"][0].startswith("refused: budget (") and "not started" in got["r2"][0], got
+    assert outlived is False and wb.runs() == []
+
+
+def test_the_stop_hook_time_with_boxes_after_a_large_transcript_is_bounded(w):
+    """40 MB of records before the turn, then a turn of 200 prose records and one message of five boxes that run the
+    committed `premise`: the Stop reads the turn only, answers the five inside a bound, and a second Stop reads only
+    what came after. Mutant: a scan of the whole file (the bytes, and the time, grow with it)."""
+    filler = json.dumps({"type": "user", "uuid": "f", "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "t", "content": "y" * 4000}]}}, separators=(",", ":")) + "\n"
+    with open(w.tx, "w") as fh:
+        fh.write(filler * (40 * 1024 * 1024 // len(filler)))
+    n = w.prompt()
+    for i in range(200):
+        w.text("prose %d %s" % (i, "p" * 1500))
+    w.text("\n".join(box("premise", "r%d" % i, n, "files: a.txt") for i in range(1, 6)))
+    t0 = time.monotonic()
+    r = w.stop()
+    took = time.monotonic() - t0
+    got = receipts(r, n)
+    assert r.returncode == 2 and sorted(got) == ["r1", "r2", "r3", "r4", "r5"], r.stderr
+    assert all(v[0].startswith("ran rc=0") for v in got.values()), got
+    w.summary(blocking=True)
+    again = w.stop(active=True)
+    assert (again.returncode, again.stderr) == (0, b"") and len(w.runs()) == 5
+    stops = [x for x in w.hooklog() if x["event"] == "stop"]
+    assert 300_000 < stops[0]["bytes"] < 400_000 and stops[1]["bytes"] < 1000, stops
+    assert took < 10, took              # measured 2026-09-29: the hook's own time p50 622 ms, p95 697 ms (30 rounds)
