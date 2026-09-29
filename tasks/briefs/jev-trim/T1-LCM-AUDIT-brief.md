@@ -65,6 +65,28 @@ Return the whole report as your final message (a report-file write is refused fo
 table per candidate (the nine rows above), the built-ins' rows, a DISCREPANCIES list (anything in this brief that did not
 match what you found), and every refusal you met. No recommendation.
 
-## PREMISE — MEASURED at authoring
+## PREMISE — MEASURED at authoring (2026-09-29, main tree; PIN origin 0e6d4a1)
 
-(Filled at dispatch from `scripts/premise_block.sh` at the pushed PIN.)
+Printed by `bash scripts/premise_block.sh` from the main tree. Expected to differ when you re-run it: nothing, unless
+HEAD moved past the PIN (the first line checks it is still an ancestor).
+
+```
+$ git merge-base --is-ancestor 0e6d4a1 HEAD && echo PIN-is-an-ancestor-of-HEAD
+PIN-is-an-ancestor-of-HEAD
+$ git -C /home/user/nerdherderdani/hermes-agent log -1 --format='%h %ci'
+527da60844 2026-09-02 06:36:16 -0700
+$ grep -n 'Select context engine\|plugins/context_engine/<name>/ directory (repo-shipped)' /home/user/nerdherderdani/hermes-agent/agent/agent_init.py
+2726:    # Select context engine: config-driven (like memory providers).
+2728:    # 2. Check plugins/context_engine/<name>/ directory (repo-shipped)
+$ grep -n 'def get_tool_schemas\|def handle_tool_call\|def select_context' /home/user/nerdherderdani/hermes-agent/agent/context_engine.py
+215:    def select_context(
+413:    def get_tool_schemas(self) -> List[Dict[str, Any]]:
+421:    def handle_tool_call(self, name: str, args: Dict[str, Any], **kwargs) -> str:
+$ grep -n 'commit: b3399c1' upstream.lock.yaml
+242:    commit: b3399c139624a0081d70397741a5b45f60fbe1f4
+$ grep -n '^### 3.2 Hermes\|^| T1 ' docs/research/findings/jev-trim/D105-DESIGN-v1.md
+103:### 3.2 Hermes: the lanes first, then production
+181:| T1 | The LCM audit: hermes-lcm and its forks at a pinned commit (what runs per request, recall tools, license, tests, fit with our pins). Adopt or build. | sandbox EXPLORE | no |
+$ ls /tmp/t1-lcm 2>&1 | head -1
+ls: cannot access '/tmp/t1-lcm': No such file or directory
+```
