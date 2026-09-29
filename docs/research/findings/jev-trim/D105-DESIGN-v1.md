@@ -5,6 +5,9 @@
 - **Evidence:** `docs/research/findings/jev-trim/TRIM-AUDIT-2026-09-28.md` (cited as "audit §N"), plus the Hermes code
   read at 527da60 in the main loop (cited by file:line) and one web search for prior art (§3.2).
 - **Rule:** a number below with no committed producer is marked UNVERIFIED.
+- **CORRECTION 2026-09-29 (T0-REPLAY round 1, §9):** the "about 200k" budget for this session (§1 item 2, §3.3, §8
+  question 1) is NOT supported. The first rule set, with the last two turns protected, cut the median active context
+  from 454,522 to 332,932 and reached no budget from 100k to 250k. Round 2 measures wider rules and a trim guard.
 
 ## 0. The ask, in the owner's words (D-105, 2026-09-28 18:23:30Z)
 
@@ -44,8 +47,9 @@ from the active context, "almost on a turn-by-turn basis". "The logs are still t
      about 91k, and the post-compaction messages about 39k (audit §3.3). 131,072 is below the start in 3 of 6 segments.
    - The one seam that can remove old messages is the early-access function hook `session.compact`, and it runs only
      between turns (audit A1.11). Its behavior at 2.1.283 is not verified.
-   - A realistic first budget here is about 200k: well below today's median of 460,505 per request (09-28) and far from
-     the 784k compaction point (audit §3.1, §3.2). The fixed start must shrink before 131k is possible here (§3.3, C3).
+   - ~~A realistic first budget here is about 200k~~ (withdrawn 2026-09-29, §9): the first rule set, measured, holds the
+     median at about 333k (from 454,522), far from the 784k compaction point but above every budget the owner named. The
+     fixed start must shrink before 131k is possible here (§3.3, C3).
 3. **The Jev judge: not yet.** No judge has been measured on the question "useless to the current work?" (audit §2).
    On other questions: Laya was rejected on every KC-J3 line; the local jev-pruner replay pruned 0 of 3,153 results, but
    its scorer never saw the chunk, so that run measured a broken path, not a judge (E1b); the Qwen teacher beats its
@@ -137,7 +141,8 @@ Three layers, the safest first.
 - **C3, the fixed start.** `tool.describe` gives a one-line description to each tool this project never calls (cached
   once per session, so the cache does not churn), and `prompt.section` leaves out system sections that do not apply
   (audit A1.12, A1.13). CLAUDE.md stays whole (D-090). Only C3 can bring this session toward 131k.
-- **Budget here:** B about 200k and L about 150k first, above the ~130k fixed start. Lower after C3.
+- **Budget here:** not yet set. The first rule set reaches no budget from 100k to 250k (§9); round 2 measures what the
+  wider rules reach.
 
 ## 4. Where Jev fits
 
@@ -191,11 +196,34 @@ active context stays small, and the model pulls back what it needs.
 ## 8. Questions for the owner
 
 1. **The budget for this Claude Code session.** 100k is below its fixed start of about 130k.
-   (a) Hold about 200k now (history trimming only). (b) Also shrink the fixed start (C3) and aim at about 150k.
-   (c) Keep compaction here and trim only in Hermes. Recommended: (a), then (b).
+   (a) Trim history only, at whatever level round 2 shows the rules can hold. (b) Also shrink the fixed start (C3).
+   (c) Keep compaction here and trim only in Hermes. Recommended: decide after T0 round 2 (the first rule set held about
+   333k, §9).
 2. **Jev and KC-J5.** The council's KC-J5 forbids a Laya score deciding what is dropped; D-105 asks Jev to decide.
    Recommended: Jev in shadow until it beats the plain rules on the replay; then you decide whether it may act.
 3. **The order.** Recommended: T0 and T1 now (no answer needed), then the Hermes lanes (T2), then this session (T3 to
    T5), then Jev (T6).
 4. **Adopt or build on Hermes.** If T1 finds hermes-lcm clean and pinned, adopt it (it summarizes with a model), or
    keep our own rule-based engine? Recommended: decide after T1.
+
+## 9. T0-REPLAY round 1 (2026-09-29): what the first rule set does
+
+Source: `tasks/briefs/jev-trim/T0-REPLAY-report.md` and `docs/research/findings/jev-trim/replay-2026-09-28/` (the tool
+`scripts/jev_trim/replay.py`, reusing the P1 walker and miss definition; the cross-check reproduces the audit's table).
+
+- **This session (1,898 requests, 7 segments), rules R1 to R4, the last two stop-hook turns protected, A=20, between
+  turns:** median active context 332,932 and p90 438,523 against the real 454,522 and 722,281; net cache cost -0.3% at
+  Opus 5.5's read price (0.05 of base; UNSURE, a parameter). Every budget from 100k to 250k gives the same result: the
+  protected turns alone pass 200k in 63.7% of requests, so each trim archives everything eligible and still ends above
+  the budget.
+- **What stays:** no rule covers the hand-back texts or the attachments (listings, nested memory, edited-file
+  snippets), and this session's turns are long (up to 130 requests between two stops).
+- **The needle proxy (the P1 miss definition, a lower bound on need):** 95 of 1,957 archived items (4.9%) were used
+  again within 20 steps, 353 (18%) later in the segment; for R1 alone (superseded copies) 6 and 17 of 322.
+- **Three long sandbox lanes, only the last 3 requests protected (the Hermes-like case), per request:** median 253k
+  to 338k against 406k to 459k. A trimmer that cannot reach L fires again on the next request, so it fired on most
+  requests and the modeled cache cost rose 57% to 368%.
+- **What this changes:** protection by a request window, not by turns; rules for hand-backs (saved to the repo by the
+  harvest stack) and superseded attachments; a trim guard (fire only when the eligible items can reach L, or at most
+  once per N requests); and a pessimistic cache bound (the 20-block lookback, the report's D16). Round 2 measures them.
+
