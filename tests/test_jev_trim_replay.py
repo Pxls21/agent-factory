@@ -955,9 +955,18 @@ def test_the_reach_probe_equals_a_brute_force_sum(tmp_path, opening):
     assert checked > 500 and nonzero > 200  # the control: the sums were not all zero
 
 
+# Python 3.12 made sum() over floats compensated (Neumaier), so a cache total rounded to one decimal can land a tenth
+# apart (508383.9 on 3.11, 508384.0 on 3.12 and 3.13; 144 values in run-d.json). The committed round-1 code (aed7d82)
+# writes each hash below on its own interpreter family (measured 2026-09-29 with /usr/bin/python3.11, 3.12 and 3.13;
+# CI run #1128 on 3.12 read the 3.12 hash), so the pin is per family and the claim stays "round 2 writes exactly what
+# round 1 wrote on the same interpreter".
+_RUN_D_BY_FAMILY = {
+    "3.11": "234fdcb5f4c1567358e568eebab0b4abcd59c200c588df57ef9bc3ba4da5b1e6",
+    "3.12+": "30072115fcbf247356c30a9dc3e3fc05e0a8810b5a112598657242b99d8af0a4",
+}
 GOLDEN_ROUND_ONE = {  # captured from the committed round-1 code (aed7d82, replay.py sha256 ff35dbb8541818bd...)
     "t.jsonl": "0a465650557e35c091b0430b59e7c925c0ebb647c8d554d8baf5cbbb510f2cb6",
-    "run-d.json": "234fdcb5f4c1567358e568eebab0b4abcd59c200c588df57ef9bc3ba4da5b1e6",
+    "run-d.json": _RUN_D_BY_FAMILY["3.12+" if sys.version_info >= (3, 12) else "3.11"],
     "SUMMARY.md": "c31ff84313887b019a70097d39f138a5a4cfbd65ce83973a14473131297dd812",
 }
 

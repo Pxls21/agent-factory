@@ -12,7 +12,7 @@ last_compiled: 2026-09-03
 ## Active lanes
 
 **2026-09-29 01:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
-- **Origin 774c112 (the landing pushed as 5d9a1d3, then the transcript sync; CI running on 5d9a1d3); the main tree is the primary.**
+- **Origin 774c112 (the landing pushed as 5d9a1d3, then the transcript sync); CI run #1128 red on one test pinned on Python 3.11 (AF-AP-238), fixed locally and re-pushed with CI_FIX; the main tree is the primary.**
 - **RUNNING (sandbox, two lanes):** K1, what a compaction loses (task #352); LS-B9 round 4 with the stacks' wiring (task #339).
 - **NEW, D-106:** the owner re-scoped D-105. Hermes: the LCM plugin if it is good enough. This session: a measured compaction point, a richer compaction and context packs, no trimmer; Jev acts only after it beats the fixed rules on the replay. Plan: §10 of `docs/research/findings/jev-trim/D105-DESIGN-v1.md`; tasks #352 and #353.
 - **HOME:** K0 (02:1xZ: the published evidence; the design's §10.5 reads it). T0-REPLAY round 2 (landed 02:0xZ: a record under D-106). T1-LCM-AUDIT (LCM-X is good enough for the PC lanes under five conditions; H1 next). VERIFY-SCRUB2-R1 round 3: NOT-READY on R3V-1; the repair budget is spent, so the scrubber repair is BLOCKED for the owner (round 3 held as `tasks/briefs/system1/SCRUB2-R1-R3.patch`, the tree back at the PIN).
