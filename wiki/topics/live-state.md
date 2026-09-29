@@ -12,7 +12,7 @@ last_compiled: 2026-09-03
 ## Active lanes
 
 **2026-09-29 00:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
-- **Origin 0c11fd1, plus local commits (the push waits on CI run #1125); the main tree is the primary.**
+- **Origin 0e6d4a1 (pushed 2026-09-29 00:3xZ after CI run #1125 passed); the main tree is the primary.**
 - **RUNNING (sandbox, three lanes, the D-062 limit):** VERIFY-SCRUB2 round 3 (task #321); VERIFY-I59-F round 5 (task #335); T0-REPLAY round 2 (task #346: request-window protection, rules for hand-backs and attachments, a trim guard).
 - **D-105:** round 1 reached no budget (median 454,522 to 332,932); the design's "about 200k" for this session is withdrawn (§9); the owner has the correction.
 - **BRIEFED, WAITING FOR A SLOT (committed; premise at dispatch):** T1, the hermes-lcm audit; LS-B9 round 4 with the stacks' wiring.
