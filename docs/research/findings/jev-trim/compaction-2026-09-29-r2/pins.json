@@ -1,0 +1,143 @@
+{
+ "not_pinned_with_a_boundary_now": [
+  "agent-a038a373e43037a56.jsonl"
+ ],
+ "pins": [
+  {
+   "boundaries": 139,
+   "file": "bdab799a-dc80-5933-9c9e-c80f206f9a17.jsonl",
+   "measured": 788725407,
+   "pin": 788725407,
+   "role": "main",
+   "sidechain": false
+  },
+  {
+   "boundaries": 1,
+   "file": "agent-a3977da56fa688986.jsonl",
+   "measured": 6563519,
+   "pin": 6563519,
+   "role": "subagent",
+   "sidechain": true
+  },
+  {
+   "boundaries": 3,
+   "file": "agent-a4920ba3ae772b9d0.jsonl",
+   "measured": 12926645,
+   "pin": 12926645,
+   "role": "subagent",
+   "sidechain": true
+  },
+  {
+   "boundaries": 1,
+   "file": "agent-a4c0c331a18908947.jsonl",
+   "measured": 5021742,
+   "pin": 5021742,
+   "role": "subagent",
+   "sidechain": true
+  },
+  {
+   "boundaries": 1,
+   "file": "agent-a4f24691b2f13e97e.jsonl",
+   "measured": 5372930,
+   "pin": 5372930,
+   "role": "subagent",
+   "sidechain": true
+  },
+  {
+   "boundaries": 1,
+   "file": "agent-a58226189b58bf46f.jsonl",
+   "measured": 6874791,
+   "pin": 6874791,
+   "role": "subagent",
+   "sidechain": true
+  },
+  {
+   "boundaries": 1,
+   "file": "agent-a60226a535b771d07.jsonl",
+   "measured": 5746951,
+   "pin": 5746951,
+   "role": "subagent",
+   "sidechain": true
+  },
+  {
+   "boundaries": 3,
+   "file": "agent-a88c7c57f2fa2a96b.jsonl",
+   "measured": 14223996,
+   "pin": 14223996,
+   "role": "subagent",
+   "sidechain": true
+  },
+  {
+   "boundaries": 1,
+   "file": "agent-a90d7cc077452b42d.jsonl",
+   "measured": 5722161,
+   "pin": 5722161,
+   "role": "subagent",
+   "sidechain": true
+  },
+  {
+   "boundaries": 1,
+   "file": "agent-aa842df27d05dd80d.jsonl",
+   "measured": 5739552,
+   "pin": 5739552,
+   "role": "subagent",
+   "sidechain": true
+  },
+  {
+   "boundaries": 1,
+   "file": "agent-aad0e50d8019b70bb.jsonl",
+   "measured": 4660437,
+   "pin": 4660437,
+   "role": "subagent",
+   "sidechain": true
+  },
+  {
+   "boundaries": 1,
+   "file": "agent-ab1c8cf107bc6ad72.jsonl",
+   "measured": 4544022,
+   "pin": 4544022,
+   "role": "subagent",
+   "sidechain": true
+  },
+  {
+   "boundaries": 2,
+   "file": "agent-ac753871198ee8cfd.jsonl",
+   "measured": 9748808,
+   "pin": 9748808,
+   "role": "subagent",
+   "sidechain": true
+  },
+  {
+   "boundaries": 1,
+   "file": "agent-ac9c149483559ffec.jsonl",
+   "measured": 5663224,
+   "pin": 5663224,
+   "role": "subagent",
+   "sidechain": true
+  },
+  {
+   "boundaries": 1,
+   "file": "agent-acc9cf211b3e34071.jsonl",
+   "measured": 5654864,
+   "pin": 5654864,
+   "role": "subagent",
+   "sidechain": true
+  },
+  {
+   "boundaries": 1,
+   "file": "agent-ae66dca0f21a920b6.jsonl",
+   "measured": 3861913,
+   "pin": 3861913,
+   "role": "subagent",
+   "sidechain": true
+  },
+  {
+   "boundaries": 1,
+   "file": "agent-af25a8ffadcb62c75.jsonl",
+   "measured": 6606908,
+   "pin": 6606908,
+   "role": "subagent",
+   "sidechain": true
+  }
+ ]
+}

@@ -1,0 +1,2964 @@
+{
+ "cost_model": {
+  "actual_usage": {
+   "cache_read_tokens": 86289663,
+   "cache_write_tokens": 3004822,
+   "mean_context": 425213.8,
+   "requests": 210
+  },
+  "assumptions": [
+   "A model, not a measurement: the session's work (its per-request growth) is taken as the same at every X.",
+   "Included: the segments that do not end in a compaction under CLASS_SPLIT (the early 200k-window segments are left out); their growth steps are replayed in file order as one stream.",
+   "The step across an observed compaction is taken as 0 (the real step is the compaction's drop).",
+   "After a modeled compaction the fill returns to K, the mean first context of the included segments that open at a boundary, whatever X is.",
+   "A compaction is counted when the fill would pass X; the request after it sends K, all of it written to the cache (the system prompt's cached prefix is not credited).",
+   "Every other request reads the previous request's fill from the cache and writes what it adds (a negative step writes nothing); cache reads are priced at READ_RATIO, writes at WRITE_RATIO, of the base input price.",
+   "The summarizer's own call (it reads the whole context once per compaction) is reported as its own column, not added to the reads.",
+   "The loss per compaction is the run's mean per-boundary value (1M_window class) measured at about 785k, the same at every X; `rest` keeps the observed segment length.",
+   "Position-aware variant: each observed step is scaled by g(its modeled bucket) / g(its observed bucket), g being the mean growth per request of the included segments' steps by position since the segment start (buckets 0-19, 20-99, 100 and later; a step, request i's context minus request i-1's, takes position i-1, the request whose output it adds: VERIFY-K1's convention; a bucket with no step takes the nearest earlier bucket's mean). The modeled position counts the requests since the stream's start or the last modeled compaction; the step across an observed compaction stays 0.",
+   "Calibration: one scale on every step, found by bisection (CALIBRATION_STEPS halvings, the scale nearest 1) so that the position-aware count at the last X (785k) equals the observed compactions among the included segments; the unscaled count is reported beside it. The flat model is not rescaled.",
+   "Actual usage: the included segments' requests' cache_read_input_tokens, cache_creation_input_tokens and mean context from their first usage records; the session ran at about 785k, so only that X has an actual to compare.",
+   "The corrected loss per compaction: the excess per boundary of K1's shapes (writes out) plus the strict set (refetch_total), and with the loose set (with_loose_total), over each control: (the real rate - the control's rate) x the real mean requests per boundary, times the modeled compactions."
+  ],
+  "excluded_segments": [],
+  "growth_means": {
+   "0-19": 7103.7,
+   "100+": 2712.6,
+   "20-99": 4169.8
+  },
+  "growth_steps": {
+   "0-19": 40,
+   "100+": 47,
+   "20-99": 121
+  },
+  "included_segments": 2,
+  "kept_start_from_segments": 1,
+  "kept_start_mean": 101421.0,
+  "loss_means_per_boundary": {
+   "100": {
+    "control": null,
+    "excess": null,
+    "real": {
+     "boundaries": 1,
+     "missed": 220.0,
+     "missed_paths": 37.0,
+     "refetch_calls": 26.0,
+     "refetch_requests": 25.0,
+     "refetch_tokens": 57901.4
+    }
+   },
+   "20": {
+    "control": null,
+    "excess": null,
+    "real": {
+     "boundaries": 1,
+     "missed": 33.0,
+     "missed_paths": 14.0,
+     "refetch_calls": 9.0,
+     "refetch_requests": 9.0,
+     "refetch_tokens": 34931.0
+    }
+   },
+   "rest": {
+    "control": null,
+    "excess": null,
+    "real": {
+     "boundaries": 1,
+     "missed": 220.0,
+     "missed_paths": 37.0,
+     "refetch_calls": 26.0,
+     "refetch_requests": 25.0,
+     "refetch_tokens": 57901.4
+    }
+   }
+  },
+  "loss_means_v2": {
+   "100": {
+    "boundaries": 1,
+    "refetch_total": {
+     "C1": null,
+     "C2": null,
+     "C5": null,
+     "real": {
+      "calls": 26.0,
+      "tokens": 57901.4
+     }
+    },
+    "requests_per_boundary": 62.0,
+    "with_loose_total": {
+     "C1": null,
+     "C2": null,
+     "C5": null,
+     "real": {
+      "calls": 37.0,
+      "tokens": 67461.1
+     }
+    }
+   },
+   "20": {
+    "boundaries": 1,
+    "refetch_total": {
+     "C1": null,
+     "C2": null,
+     "C5": {
+      "calls": 8.5,
+      "tokens": 34119.2
+     },
+     "real": {
+      "calls": 9.0,
+      "tokens": 34931.0
+     }
+    },
+    "requests_per_boundary": 20.0,
+    "with_loose_total": {
+     "C1": null,
+     "C2": null,
+     "C5": {
+      "calls": 12.0,
+      "tokens": 36167.2
+     },
+     "real": {
+      "calls": 14.0,
+      "tokens": 38723.6
+     }
+    }
+   },
+   "20-99": {
+    "boundaries": 1,
+    "refetch_total": {
+     "C1": null,
+     "C2": null,
+     "C5": null,
+     "real": {
+      "calls": 17.0,
+      "tokens": 22970.3
+     }
+    },
+    "requests_per_boundary": 42.0,
+    "with_loose_total": {
+     "C1": null,
+     "C2": null,
+     "C5": null,
+     "real": {
+      "calls": 23.0,
+      "tokens": 28737.6
+     }
+    }
+   },
+   "rest": {
+    "boundaries": 1,
+    "refetch_total": {
+     "C1": null,
+     "C2": null,
+     "C5": null,
+     "real": {
+      "calls": 26.0,
+      "tokens": 57901.4
+     }
+    },
+    "requests_per_boundary": 62.0,
+    "with_loose_total": {
+     "C1": null,
+     "C2": null,
+     "C5": null,
+     "real": {
+      "calls": 37.0,
+      "tokens": 67461.1
+     }
+    }
+   }
+  },
+  "model": "MODEL, not a measurement",
+  "negative_steps": 0,
+  "observed_compactions_in_included": 1,
+  "position_aware": {
+   "compactions_at_the_last_x": 1,
+   "compactions_at_the_last_x_unscaled": 1,
+   "rows": [
+    {
+     "X": 300000,
+     "cache_read_tokens": 41422132.2,
+     "cache_read_units": 2071106.6,
+     "cache_write_tokens": 1758063.0,
+     "cache_write_units": 3516126.0,
+     "compactions": 5,
+     "compactions_unscaled": 5,
+     "context_tokens": 43180195.2,
+     "loss_v2": {
+      "100": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 130.0,
+         "tokens": 289507.0
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 185.0,
+         "tokens": 337305.5
+        }
+       }
+      },
+      "20": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": {
+         "calls": 42.5,
+         "tokens": 170596.0
+        },
+        "real": {
+         "calls": 45.0,
+         "tokens": 174655.0
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": {
+         "calls": 60.0,
+         "tokens": 180836.0
+        },
+        "real": {
+         "calls": 70.0,
+         "tokens": 193618.0
+        }
+       }
+      },
+      "20-99": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 85.0,
+         "tokens": 114851.5
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 115.0,
+         "tokens": 143688.0
+        }
+       }
+      },
+      "rest": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 130.0,
+         "tokens": 289507.0
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 185.0,
+         "tokens": 337305.5
+        }
+       }
+      }
+     },
+     "mean_fill": 205620.0,
+     "requests": 210,
+     "summarizer_read_tokens": 1474913.2
+    },
+    {
+     "X": 400000,
+     "cache_read_tokens": 53116520.7,
+     "cache_read_units": 2655826.0,
+     "cache_write_tokens": 1471842.2,
+     "cache_write_units": 2943684.4,
+     "compactions": 3,
+     "compactions_unscaled": 3,
+     "context_tokens": 54588362.8,
+     "loss_v2": {
+      "100": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 78.0,
+         "tokens": 173704.2
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 111.0,
+         "tokens": 202383.3
+        }
+       }
+      },
+      "20": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": {
+         "calls": 25.5,
+         "tokens": 102357.6
+        },
+        "real": {
+         "calls": 27.0,
+         "tokens": 104793.0
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": {
+         "calls": 36.0,
+         "tokens": 108501.6
+        },
+        "real": {
+         "calls": 42.0,
+         "tokens": 116170.8
+        }
+       }
+      },
+      "20-99": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 51.0,
+         "tokens": 68910.9
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 69.0,
+         "tokens": 86212.8
+        }
+       }
+      },
+      "rest": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 78.0,
+         "tokens": 173704.2
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 111.0,
+         "tokens": 202383.3
+        }
+       }
+      }
+     },
+     "mean_fill": 259944.6,
+     "requests": 210,
+     "summarizer_read_tokens": 1188692.4
+    },
+    {
+     "X": 500000,
+     "cache_read_tokens": 61502176.7,
+     "cache_read_units": 3075108.8,
+     "cache_write_tokens": 1352615.0,
+     "cache_write_units": 2705230.0,
+     "compactions": 2,
+     "compactions_unscaled": 2,
+     "context_tokens": 62854791.8,
+     "loss_v2": {
+      "100": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 52.0,
+         "tokens": 115802.8
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 74.0,
+         "tokens": 134922.2
+        }
+       }
+      },
+      "20": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": {
+         "calls": 17.0,
+         "tokens": 68238.4
+        },
+        "real": {
+         "calls": 18.0,
+         "tokens": 69862.0
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": {
+         "calls": 24.0,
+         "tokens": 72334.4
+        },
+        "real": {
+         "calls": 28.0,
+         "tokens": 77447.2
+        }
+       }
+      },
+      "20-99": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 34.0,
+         "tokens": 45940.6
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 46.0,
+         "tokens": 57475.2
+        }
+       }
+      },
+      "rest": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 52.0,
+         "tokens": 115802.8
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 74.0,
+         "tokens": 134922.2
+        }
+       }
+      }
+     },
+     "mean_fill": 299308.5,
+     "requests": 210,
+     "summarizer_read_tokens": 992734.3
+    },
+    {
+     "X": 600000,
+     "cache_read_tokens": 79661861.2,
+     "cache_read_units": 3983093.1,
+     "cache_write_tokens": 1175607.9,
+     "cache_write_units": 2351215.8,
+     "compactions": 1,
+     "compactions_unscaled": 1,
+     "context_tokens": 80837469.1,
+     "loss_v2": {
+      "100": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 26.0,
+         "tokens": 57901.4
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 37.0,
+         "tokens": 67461.1
+        }
+       }
+      },
+      "20": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": {
+         "calls": 8.5,
+         "tokens": 34119.2
+        },
+        "real": {
+         "calls": 9.0,
+         "tokens": 34931.0
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": {
+         "calls": 12.0,
+         "tokens": 36167.2
+        },
+        "real": {
+         "calls": 14.0,
+         "tokens": 38723.6
+        }
+       }
+      },
+      "20-99": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 17.0,
+         "tokens": 22970.3
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 23.0,
+         "tokens": 28737.6
+        }
+       }
+      },
+      "rest": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 26.0,
+         "tokens": 57901.4
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 37.0,
+         "tokens": 67461.1
+        }
+       }
+      }
+     },
+     "mean_fill": 384940.3,
+     "requests": 210,
+     "summarizer_read_tokens": 597892.0
+    },
+    {
+     "X": 700000,
+     "cache_read_tokens": 82617504.7,
+     "cache_read_units": 4130875.2,
+     "cache_write_tokens": 1185686.5,
+     "cache_write_units": 2371373.0,
+     "compactions": 1,
+     "compactions_unscaled": 1,
+     "context_tokens": 83803191.1,
+     "loss_v2": {
+      "100": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 26.0,
+         "tokens": 57901.4
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 37.0,
+         "tokens": 67461.1
+        }
+       }
+      },
+      "20": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": {
+         "calls": 8.5,
+         "tokens": 34119.2
+        },
+        "real": {
+         "calls": 9.0,
+         "tokens": 34931.0
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": {
+         "calls": 12.0,
+         "tokens": 36167.2
+        },
+        "real": {
+         "calls": 14.0,
+         "tokens": 38723.6
+        }
+       }
+      },
+      "20-99": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 17.0,
+         "tokens": 22970.3
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 23.0,
+         "tokens": 28737.6
+        }
+       }
+      },
+      "rest": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 26.0,
+         "tokens": 57901.4
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 37.0,
+         "tokens": 67461.1
+        }
+       }
+      }
+     },
+     "mean_fill": 399062.8,
+     "requests": 210,
+     "summarizer_read_tokens": 695476.0
+    },
+    {
+     "X": 785000,
+     "cache_read_tokens": 86765419.5,
+     "cache_read_units": 4338271.0,
+     "cache_write_tokens": 1126613.6,
+     "cache_write_units": 2253227.2,
+     "compactions": 1,
+     "compactions_unscaled": 1,
+     "context_tokens": 87892033.1,
+     "loss_v2": {
+      "100": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 26.0,
+         "tokens": 57901.4
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 37.0,
+         "tokens": 67461.1
+        }
+       }
+      },
+      "20": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": {
+         "calls": 8.5,
+         "tokens": 34119.2
+        },
+        "real": {
+         "calls": 9.0,
+         "tokens": 34931.0
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": {
+         "calls": 12.0,
+         "tokens": 36167.2
+        },
+        "real": {
+         "calls": 14.0,
+         "tokens": 38723.6
+        }
+       }
+      },
+      "20-99": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 17.0,
+         "tokens": 22970.3
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 23.0,
+         "tokens": 28737.6
+        }
+       }
+      },
+      "rest": {
+       "refetch_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 26.0,
+         "tokens": 57901.4
+        }
+       },
+       "with_loose_total": {
+        "C1": null,
+        "C2": null,
+        "C5": null,
+        "real": {
+         "calls": 37.0,
+         "tokens": 67461.1
+        }
+       }
+      }
+     },
+     "mean_fill": 418533.5,
+     "requests": 210,
+     "summarizer_read_tokens": 784279.0
+    }
+   ],
+   "scale": 1.0,
+   "target_compactions": 1
+  },
+  "read_ratio": 0.05,
+  "rows": [
+   {
+    "X": 300000,
+    "cache_read_tokens": 38340178.0,
+    "cache_read_units": 1917008.9,
+    "cache_write_tokens": 1409111.0,
+    "cache_write_units": 2818222.0,
+    "compactions": 4,
+    "context_tokens": 39749289.0,
+    "loss": {
+     "100": {
+      "excess": null,
+      "raw": {
+       "missed": 880.0,
+       "missed_paths": 148.0,
+       "refetch_calls": 104.0,
+       "refetch_requests": 100.0,
+       "refetch_tokens": 231605.6
+      }
+     },
+     "20": {
+      "excess": null,
+      "raw": {
+       "missed": 132.0,
+       "missed_paths": 56.0,
+       "refetch_calls": 36.0,
+       "refetch_requests": 36.0,
+       "refetch_tokens": 139724.0
+      }
+     },
+     "rest": {
+      "excess": null,
+      "raw": {
+       "missed": 880.0,
+       "missed_paths": 148.0,
+       "refetch_calls": 104.0,
+       "refetch_requests": 100.0,
+       "refetch_tokens": 231605.6
+      }
+     }
+    },
+    "loss_v2": {
+     "100": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 104.0,
+        "tokens": 231605.6
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 148.0,
+        "tokens": 269844.4
+       }
+      }
+     },
+     "20": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": {
+        "calls": 34.0,
+        "tokens": 136476.8
+       },
+       "real": {
+        "calls": 36.0,
+        "tokens": 139724.0
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": {
+        "calls": 48.0,
+        "tokens": 144668.8
+       },
+       "real": {
+        "calls": 56.0,
+        "tokens": 154894.4
+       }
+      }
+     },
+     "20-99": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 68.0,
+        "tokens": 91881.2
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 92.0,
+        "tokens": 114950.4
+       }
+      }
+     },
+     "rest": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 104.0,
+        "tokens": 231605.6
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 148.0,
+        "tokens": 269844.4
+       }
+      }
+     }
+    },
+    "mean_fill": 189282.3,
+    "requests": 210,
+    "summarizer_read_tokens": 1190727.0
+   },
+   {
+    "X": 400000,
+    "cache_read_tokens": 54424831.0,
+    "cache_read_units": 2721241.6,
+    "cache_write_tokens": 1168726.0,
+    "cache_write_units": 2337452.0,
+    "compactions": 2,
+    "context_tokens": 55593557.0,
+    "loss": {
+     "100": {
+      "excess": null,
+      "raw": {
+       "missed": 440.0,
+       "missed_paths": 74.0,
+       "refetch_calls": 52.0,
+       "refetch_requests": 50.0,
+       "refetch_tokens": 115802.8
+      }
+     },
+     "20": {
+      "excess": null,
+      "raw": {
+       "missed": 66.0,
+       "missed_paths": 28.0,
+       "refetch_calls": 18.0,
+       "refetch_requests": 18.0,
+       "refetch_tokens": 69862.0
+      }
+     },
+     "rest": {
+      "excess": null,
+      "raw": {
+       "missed": 440.0,
+       "missed_paths": 74.0,
+       "refetch_calls": 52.0,
+       "refetch_requests": 50.0,
+       "refetch_tokens": 115802.8
+      }
+     }
+    },
+    "loss_v2": {
+     "100": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 52.0,
+        "tokens": 115802.8
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 74.0,
+        "tokens": 134922.2
+       }
+      }
+     },
+     "20": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": {
+        "calls": 17.0,
+        "tokens": 68238.4
+       },
+       "real": {
+        "calls": 18.0,
+        "tokens": 69862.0
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": {
+        "calls": 24.0,
+        "tokens": 72334.4
+       },
+       "real": {
+        "calls": 28.0,
+        "tokens": 77447.2
+       }
+      }
+     },
+     "20-99": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 34.0,
+        "tokens": 45940.6
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 46.0,
+        "tokens": 57475.2
+       }
+      }
+     },
+     "rest": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 52.0,
+        "tokens": 115802.8
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 74.0,
+        "tokens": 134922.2
+       }
+      }
+     }
+    },
+    "mean_fill": 264731.2,
+    "requests": 210,
+    "summarizer_read_tokens": 781279.0
+   },
+   {
+    "X": 500000,
+    "cache_read_tokens": 55870969.0,
+    "cache_read_units": 2793548.5,
+    "cache_write_tokens": 1213510.0,
+    "cache_write_units": 2427020.0,
+    "compactions": 2,
+    "context_tokens": 57084479.0,
+    "loss": {
+     "100": {
+      "excess": null,
+      "raw": {
+       "missed": 440.0,
+       "missed_paths": 74.0,
+       "refetch_calls": 52.0,
+       "refetch_requests": 50.0,
+       "refetch_tokens": 115802.8
+      }
+     },
+     "20": {
+      "excess": null,
+      "raw": {
+       "missed": 66.0,
+       "missed_paths": 28.0,
+       "refetch_calls": 18.0,
+       "refetch_requests": 18.0,
+       "refetch_tokens": 69862.0
+      }
+     },
+     "rest": {
+      "excess": null,
+      "raw": {
+       "missed": 440.0,
+       "missed_paths": 74.0,
+       "refetch_calls": 52.0,
+       "refetch_requests": 50.0,
+       "refetch_tokens": 115802.8
+      }
+     }
+    },
+    "loss_v2": {
+     "100": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 52.0,
+        "tokens": 115802.8
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 74.0,
+        "tokens": 134922.2
+       }
+      }
+     },
+     "20": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": {
+        "calls": 17.0,
+        "tokens": 68238.4
+       },
+       "real": {
+        "calls": 18.0,
+        "tokens": 69862.0
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": {
+        "calls": 24.0,
+        "tokens": 72334.4
+       },
+       "real": {
+        "calls": 28.0,
+        "tokens": 77447.2
+       }
+      }
+     },
+     "20-99": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 34.0,
+        "tokens": 45940.6
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 46.0,
+        "tokens": 57475.2
+       }
+      }
+     },
+     "rest": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 52.0,
+        "tokens": 115802.8
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 74.0,
+        "tokens": 134922.2
+       }
+      }
+     }
+    },
+    "mean_fill": 271830.9,
+    "requests": 210,
+    "summarizer_read_tokens": 995126.0
+   },
+   {
+    "X": 600000,
+    "cache_read_tokens": 70051506.0,
+    "cache_read_units": 3502575.3,
+    "cache_write_tokens": 1116517.0,
+    "cache_write_units": 2233034.0,
+    "compactions": 1,
+    "context_tokens": 71168023.0,
+    "loss": {
+     "100": {
+      "excess": null,
+      "raw": {
+       "missed": 220.0,
+       "missed_paths": 37.0,
+       "refetch_calls": 26.0,
+       "refetch_requests": 25.0,
+       "refetch_tokens": 57901.4
+      }
+     },
+     "20": {
+      "excess": null,
+      "raw": {
+       "missed": 33.0,
+       "missed_paths": 14.0,
+       "refetch_calls": 9.0,
+       "refetch_requests": 9.0,
+       "refetch_tokens": 34931.0
+      }
+     },
+     "rest": {
+      "excess": null,
+      "raw": {
+       "missed": 220.0,
+       "missed_paths": 37.0,
+       "refetch_calls": 26.0,
+       "refetch_requests": 25.0,
+       "refetch_tokens": 57901.4
+      }
+     }
+    },
+    "loss_v2": {
+     "100": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 26.0,
+        "tokens": 57901.4
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 37.0,
+        "tokens": 67461.1
+       }
+      }
+     },
+     "20": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": {
+        "calls": 8.5,
+        "tokens": 34119.2
+       },
+       "real": {
+        "calls": 9.0,
+        "tokens": 34931.0
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": {
+        "calls": 12.0,
+        "tokens": 36167.2
+       },
+       "real": {
+        "calls": 14.0,
+        "tokens": 38723.6
+       }
+      }
+     },
+     "20-99": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 17.0,
+        "tokens": 22970.3
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 23.0,
+        "tokens": 28737.6
+       }
+      }
+     },
+     "rest": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 26.0,
+        "tokens": 57901.4
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 37.0,
+        "tokens": 67461.1
+       }
+      }
+     }
+    },
+    "mean_fill": 338895.3,
+    "requests": 210,
+    "summarizer_read_tokens": 597892.0
+   },
+   {
+    "X": 700000,
+    "cache_read_tokens": 75118271.0,
+    "cache_read_units": 3755913.6,
+    "cache_write_tokens": 1113018.0,
+    "cache_write_units": 2226036.0,
+    "compactions": 1,
+    "context_tokens": 76231289.0,
+    "loss": {
+     "100": {
+      "excess": null,
+      "raw": {
+       "missed": 220.0,
+       "missed_paths": 37.0,
+       "refetch_calls": 26.0,
+       "refetch_requests": 25.0,
+       "refetch_tokens": 57901.4
+      }
+     },
+     "20": {
+      "excess": null,
+      "raw": {
+       "missed": 33.0,
+       "missed_paths": 14.0,
+       "refetch_calls": 9.0,
+       "refetch_requests": 9.0,
+       "refetch_tokens": 34931.0
+      }
+     },
+     "rest": {
+      "excess": null,
+      "raw": {
+       "missed": 220.0,
+       "missed_paths": 37.0,
+       "refetch_calls": 26.0,
+       "refetch_requests": 25.0,
+       "refetch_tokens": 57901.4
+      }
+     }
+    },
+    "loss_v2": {
+     "100": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 26.0,
+        "tokens": 57901.4
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 37.0,
+        "tokens": 67461.1
+       }
+      }
+     },
+     "20": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": {
+        "calls": 8.5,
+        "tokens": 34119.2
+       },
+       "real": {
+        "calls": 9.0,
+        "tokens": 34931.0
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": {
+        "calls": 12.0,
+        "tokens": 36167.2
+       },
+       "real": {
+        "calls": 14.0,
+        "tokens": 38723.6
+       }
+      }
+     },
+     "20-99": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 17.0,
+        "tokens": 22970.3
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 23.0,
+        "tokens": 28737.6
+       }
+      }
+     },
+     "rest": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 26.0,
+        "tokens": 57901.4
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 37.0,
+        "tokens": 67461.1
+       }
+      }
+     }
+    },
+    "mean_fill": 363006.1,
+    "requests": 210,
+    "summarizer_read_tokens": 695476.0
+   },
+   {
+    "X": 785000,
+    "cache_read_tokens": 85889849.0,
+    "cache_read_units": 4294492.5,
+    "cache_write_tokens": 1115714.0,
+    "cache_write_units": 2231428.0,
+    "compactions": 1,
+    "context_tokens": 87005563.0,
+    "loss": {
+     "100": {
+      "excess": null,
+      "raw": {
+       "missed": 220.0,
+       "missed_paths": 37.0,
+       "refetch_calls": 26.0,
+       "refetch_requests": 25.0,
+       "refetch_tokens": 57901.4
+      }
+     },
+     "20": {
+      "excess": null,
+      "raw": {
+       "missed": 33.0,
+       "missed_paths": 14.0,
+       "refetch_calls": 9.0,
+       "refetch_requests": 9.0,
+       "refetch_tokens": 34931.0
+      }
+     },
+     "rest": {
+      "excess": null,
+      "raw": {
+       "missed": 220.0,
+       "missed_paths": 37.0,
+       "refetch_calls": 26.0,
+       "refetch_requests": 25.0,
+       "refetch_tokens": 57901.4
+      }
+     }
+    },
+    "loss_v2": {
+     "100": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 26.0,
+        "tokens": 57901.4
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 37.0,
+        "tokens": 67461.1
+       }
+      }
+     },
+     "20": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": {
+        "calls": 8.5,
+        "tokens": 34119.2
+       },
+       "real": {
+        "calls": 9.0,
+        "tokens": 34931.0
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": {
+        "calls": 12.0,
+        "tokens": 36167.2
+       },
+       "real": {
+        "calls": 14.0,
+        "tokens": 38723.6
+       }
+      }
+     },
+     "20-99": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 17.0,
+        "tokens": 22970.3
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 23.0,
+        "tokens": 28737.6
+       }
+      }
+     },
+     "rest": {
+      "refetch_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 26.0,
+        "tokens": 57901.4
+       }
+      },
+      "with_loose_total": {
+       "C1": null,
+       "C2": null,
+       "C5": null,
+       "real": {
+        "calls": 37.0,
+        "tokens": 67461.1
+       }
+      }
+     }
+    },
+    "mean_fill": 414312.2,
+    "requests": 210,
+    "summarizer_read_tokens": 784279.0
+   }
+  ],
+  "steps": 209,
+  "write_ratio": 2.0
+ },
+ "label": "sub-ac9c149483559ffec",
+ "params": {
+  "bootstrap": 2000,
+  "c5_start": 100,
+  "c5_step": 20,
+  "class_split": 400000,
+  "cost_points": [
+   300000,
+   400000,
+   500000,
+   600000,
+   700000,
+   785000
+  ],
+  "directions": [
+   "read",
+   "script",
+   "other",
+   "write",
+   "commit"
+  ],
+  "fill_bin": 100000,
+  "gates": [
+   {
+    "gate": "future_stamp",
+    "marker": "COMMIT BLOCKED by the future-stamp gate",
+    "rule": "line"
+   },
+   {
+    "gate": "lint_delta",
+    "marker": "COMMIT BLOCKED by lint_delta",
+    "rule": "line"
+   },
+   {
+    "gate": "mutant_anchor",
+    "marker": "COMMIT BLOCKED by mutant_anchor_precommit",
+    "rule": "line"
+   },
+   {
+    "gate": "mirror",
+    "marker": "COMMIT BLOCKED by the MIRROR gate",
+    "rule": "line"
+   },
+   {
+    "gate": "never_a_gate",
+    "marker": "COMMIT BLOCKED by the never-a-gate screen",
+    "rule": "line"
+   },
+   {
+    "gate": "push_in_flight",
+    "marker": "COMMIT BLOCKED: a push is in flight",
+    "rule": "line"
+   },
+   {
+    "gate": "commit_blocked_other",
+    "marker": "COMMIT BLOCKED",
+    "rule": "line"
+   },
+   {
+    "gate": "push_blocked",
+    "marker": "PUSH BLOCKED",
+    "rule": "line"
+   },
+   {
+    "gate": "stale_ids",
+    "marker": "REFUSED by stale_ids",
+    "rule": "line"
+   },
+   {
+    "gate": "ci_gate",
+    "marker": "REFUSED by ci-gate",
+    "rule": "line"
+   },
+   {
+    "gate": "search_intercept",
+    "marker": "SEARCH INTERCEPT (search-intercept.py)",
+    "rule": "error"
+   },
+   {
+    "gate": "quirk_guard",
+    "marker": "QUIRK GUARD (search-intercept.py",
+    "rule": "error"
+   }
+  ],
+  "git_read": [
+   "blame",
+   "cat-file",
+   "describe",
+   "diff",
+   "grep",
+   "log",
+   "ls-files",
+   "merge-base",
+   "reflog",
+   "rev-parse",
+   "shortlog",
+   "show",
+   "status"
+  ],
+  "grep_programs": [
+   "egrep",
+   "fgrep",
+   "grep",
+   "rg"
+  ],
+  "loose_labels": [
+   "grep_known_token",
+   "git_any"
+  ],
+  "position_buckets": [
+   "0-19",
+   "20-99",
+   "100+"
+  ],
+  "pseudo_gap": 100,
+  "read_programs": [
+   "awk",
+   "cat",
+   "cmp",
+   "cut",
+   "diff",
+   "du",
+   "egrep",
+   "fgrep",
+   "file",
+   "find",
+   "grep",
+   "head",
+   "jq",
+   "less",
+   "ls",
+   "md5sum",
+   "more",
+   "nl",
+   "od",
+   "readlink",
+   "realpath",
+   "rg",
+   "sed",
+   "sha256sum",
+   "sort",
+   "stat",
+   "strings",
+   "tac",
+   "tail",
+   "tree",
+   "uniq",
+   "wc",
+   "xxd"
+  ],
+  "search_markers": {
+   "search_ledger": [
+    [
+     "BUILD-TASKLIST.md"
+    ]
+   ],
+   "search_live_state": [
+    [
+     "live-state.md"
+    ]
+   ],
+   "search_transcript": [
+    [
+     ".claude/projects/"
+    ],
+    [
+     "/tasks/",
+     ".output"
+    ],
+    [
+     "chat_tail.py"
+    ],
+    [
+     "session_export.py"
+    ],
+    [
+     "transcript_export.py"
+    ],
+    [
+     "hiccup_scan.py"
+    ],
+    [
+     "replay_transcript_edits.py"
+    ]
+   ]
+  },
+  "shape_set": "v2",
+  "shapes": [
+   "read_known_path",
+   "rerun_command",
+   "identical_other_call",
+   "search_transcript",
+   "search_ledger",
+   "search_live_state"
+  ],
+  "strict_labels": [
+   "bash_view_known_file",
+   "read_bash_viewed_file",
+   "git_repeated_args",
+   "read_known_path_respelled"
+  ],
+  "stub_tokens": 40,
+  "tail_items": 6,
+  "user_cpt": 2.9,
+  "view_programs": [
+   "awk",
+   "cat",
+   "head",
+   "less",
+   "nl",
+   "sed",
+   "tail"
+  ],
+  "windows": [
+   "20",
+   "20-99",
+   "100",
+   "rest"
+  ]
+ },
+ "pin": 5663224,
+ "quality": {
+  "bins": {
+   "0k-100k": {
+    "bash": 0,
+    "calls": 1,
+    "calls_without_a_result": 0,
+    "edits": 0,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 84833.0,
+    "reads": 1,
+    "refusals_by_gate": {},
+    "requests": 1,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "100k-200k": {
+    "bash": 21,
+    "calls": 31,
+    "calls_without_a_result": 0,
+    "edits": 1,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 155270.2,
+    "reads": 9,
+    "refusals_by_gate": {},
+    "requests": 25,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "200k-300k": {
+    "bash": 45,
+    "calls": 59,
+    "calls_without_a_result": 0,
+    "edits": 7,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 252077.7,
+    "reads": 7,
+    "refusals_by_gate": {},
+    "requests": 54,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "300k-400k": {
+    "bash": 22,
+    "calls": 38,
+    "calls_without_a_result": 0,
+    "edits": 13,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 320351.8,
+    "reads": 1,
+    "refusals_by_gate": {},
+    "requests": 35,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "400k-500k": {
+    "bash": 12,
+    "calls": 12,
+    "calls_without_a_result": 0,
+    "edits": 0,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 458149.2,
+    "reads": 0,
+    "refusals_by_gate": {},
+    "requests": 12,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "500k-600k": {
+    "bash": 15,
+    "calls": 25,
+    "calls_without_a_result": 0,
+    "edits": 8,
+    "errors": 2,
+    "errors_by_tool": {
+     "Bash": 2
+    },
+    "failed_edits": 0,
+    "mean_fill": 558758.6,
+    "reads": 1,
+    "refusals_by_gate": {},
+    "requests": 22,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "600k-700k": {
+    "bash": 23,
+    "calls": 33,
+    "calls_without_a_result": 0,
+    "edits": 10,
+    "errors": 1,
+    "errors_by_tool": {
+     "Bash": 1
+    },
+    "failed_edits": 0,
+    "mean_fill": 651927.6,
+    "reads": 0,
+    "refusals_by_gate": {},
+    "requests": 30,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "700k-800k": {
+    "bash": 29,
+    "calls": 31,
+    "calls_without_a_result": 0,
+    "edits": 1,
+    "errors": 1,
+    "errors_by_tool": {
+     "Bash": 1
+    },
+    "failed_edits": 0,
+    "mean_fill": 746951.8,
+    "reads": 0,
+    "refusals_by_gate": {},
+    "requests": 31,
+    "rereads": 0,
+    "reruns": 0
+   }
+  },
+  "by_model": {
+   "claude-opus-5-5 0k-100k": {
+    "bash": 0,
+    "calls": 1,
+    "calls_without_a_result": 0,
+    "edits": 0,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 84833.0,
+    "reads": 1,
+    "refusals_by_gate": {},
+    "requests": 1,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "claude-opus-5-5 100k-200k": {
+    "bash": 21,
+    "calls": 31,
+    "calls_without_a_result": 0,
+    "edits": 1,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 155270.2,
+    "reads": 9,
+    "refusals_by_gate": {},
+    "requests": 25,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "claude-opus-5-5 200k-300k": {
+    "bash": 45,
+    "calls": 59,
+    "calls_without_a_result": 0,
+    "edits": 7,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 252077.7,
+    "reads": 7,
+    "refusals_by_gate": {},
+    "requests": 54,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "claude-opus-5-5 300k-400k": {
+    "bash": 22,
+    "calls": 38,
+    "calls_without_a_result": 0,
+    "edits": 13,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 320351.8,
+    "reads": 1,
+    "refusals_by_gate": {},
+    "requests": 35,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "claude-opus-5-5 400k-500k": {
+    "bash": 12,
+    "calls": 12,
+    "calls_without_a_result": 0,
+    "edits": 0,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 458149.2,
+    "reads": 0,
+    "refusals_by_gate": {},
+    "requests": 12,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "claude-opus-5-5 500k-600k": {
+    "bash": 15,
+    "calls": 25,
+    "calls_without_a_result": 0,
+    "edits": 8,
+    "errors": 2,
+    "errors_by_tool": {
+     "Bash": 2
+    },
+    "failed_edits": 0,
+    "mean_fill": 558758.6,
+    "reads": 1,
+    "refusals_by_gate": {},
+    "requests": 22,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "claude-opus-5-5 600k-700k": {
+    "bash": 23,
+    "calls": 33,
+    "calls_without_a_result": 0,
+    "edits": 10,
+    "errors": 1,
+    "errors_by_tool": {
+     "Bash": 1
+    },
+    "failed_edits": 0,
+    "mean_fill": 651927.6,
+    "reads": 0,
+    "refusals_by_gate": {},
+    "requests": 30,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "claude-opus-5-5 700k-800k": {
+    "bash": 29,
+    "calls": 31,
+    "calls_without_a_result": 0,
+    "edits": 1,
+    "errors": 1,
+    "errors_by_tool": {
+     "Bash": 1
+    },
+    "failed_edits": 0,
+    "mean_fill": 746951.8,
+    "reads": 0,
+    "refusals_by_gate": {},
+    "requests": 31,
+    "rereads": 0,
+    "reruns": 0
+   }
+  },
+  "calls": 230,
+  "calls_without_a_request": 0,
+  "requests": 210,
+  "segments_with_requests": 2,
+  "stats": {},
+  "thirds": {
+   "first": {
+    "bash": 58,
+    "calls": 81,
+    "calls_without_a_result": 0,
+    "edits": 9,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 231765.1,
+    "reads": 13,
+    "refusals_by_gate": {},
+    "requests": 71,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "last": {
+    "bash": 52,
+    "calls": 74,
+    "calls_without_a_result": 0,
+    "edits": 19,
+    "errors": 2,
+    "errors_by_tool": {
+     "Bash": 2
+    },
+    "failed_edits": 0,
+    "mean_fill": 599822.0,
+    "reads": 1,
+    "refusals_by_gate": {},
+    "requests": 69,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "middle": {
+    "bash": 57,
+    "calls": 75,
+    "calls_without_a_result": 0,
+    "edits": 12,
+    "errors": 2,
+    "errors_by_tool": {
+     "Bash": 2
+    },
+    "failed_edits": 0,
+    "mean_fill": 449312.4,
+    "reads": 5,
+    "refusals_by_gate": {},
+    "requests": 70,
+    "rereads": 0,
+    "reruns": 0
+   }
+  }
+ },
+ "rc": {
+  "boundaries": [
+   {
+    "boundary": 1,
+    "class": "1M_window",
+    "day": "2026-09-25",
+    "kept": {
+     "distinct_tokens": 3329,
+     "files_reinjected": 5,
+     "first_context": 101421,
+     "items": 17,
+     "post_tokens": 19649,
+     "tokens_by_kind": {
+      "hook_context": 1060.3,
+      "other_attachment": 45068.3,
+      "other_user_text": 11718.6
+     },
+     "tokens_modeled": 57847.2
+    },
+    "offset": 4076728,
+    "post_requests": 62,
+    "pre": {
+     "commands": 117,
+     "distinct_tokens": 7757,
+     "files_edited": 6,
+     "files_read": 12,
+     "last_context": 783019,
+     "requests": 148,
+     "segment": 0,
+     "tokens_by_kind": {
+      "assistant_text": 4432.4,
+      "hook_context": 2867.9,
+      "other_attachment": 215685.5,
+      "other_user_text": 104.8,
+      "thinking": 214160.0,
+      "tool_input": 122974.0,
+      "tool_result": 165485.2,
+      "typed_user_text": 1223.1
+     },
+     "tokens_modeled": 726932.9
+    },
+    "windows": {
+     "100": {
+      "directions": {
+       "search_ledger": {
+        "commit": 0,
+        "other": 0,
+        "read": 0,
+        "script": 0,
+        "write": 0
+       },
+       "search_live_state": {
+        "commit": 0,
+        "other": 0,
+        "read": 0,
+        "script": 0,
+        "write": 0
+       },
+       "search_transcript": {
+        "commit": 0,
+        "other": 1,
+        "read": 6,
+        "script": 2,
+        "write": 6
+       }
+      },
+      "k1_total": {
+       "calls": 15,
+       "requests": 14,
+       "tokens": 46505.9
+      },
+      "loose": {
+       "git_any": {
+        "calls": 5,
+        "requests": 5,
+        "tokens": 4157.5
+       },
+       "grep_known_token": {
+        "calls": 6,
+        "requests": 6,
+        "tokens": 5402.2
+       }
+      },
+      "loose_total": {
+       "calls": 11,
+       "requests": 11,
+       "tokens": 9559.8
+      },
+      "missed": 220,
+      "missed_paths": 37,
+      "missed_paths_edited_before": 1,
+      "missed_paths_neither": 34,
+      "missed_paths_read_before": 2,
+      "read_known_path_reinjected": 4,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 6,
+        "requests": 5,
+        "tokens": 19120.9
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 9,
+        "requests": 9,
+        "tokens": 27385.1
+       }
+      },
+      "refetch_total": {
+       "calls": 26,
+       "requests": 25,
+       "tokens": 57901.4
+      },
+      "requests": 62,
+      "reused": 640,
+      "strict": {
+       "bash_view_known_file": {
+        "calls": 9,
+        "requests": 9,
+        "tokens": 9988.3
+       },
+       "git_repeated_args": {
+        "calls": 2,
+        "requests": 2,
+        "tokens": 1407.1
+       },
+       "read_bash_viewed_file": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path_respelled": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       }
+      },
+      "strict_total": {
+       "calls": 11,
+       "requests": 11,
+       "tokens": 11395.4
+      },
+      "used": 997,
+      "with_loose_total": {
+       "calls": 37,
+       "requests": 35,
+       "tokens": 67461.1
+      }
+     },
+     "20": {
+      "directions": {
+       "search_ledger": {
+        "commit": 0,
+        "other": 0,
+        "read": 0,
+        "script": 0,
+        "write": 0
+       },
+       "search_live_state": {
+        "commit": 0,
+        "other": 0,
+        "read": 0,
+        "script": 0,
+        "write": 0
+       },
+       "search_transcript": {
+        "commit": 0,
+        "other": 0,
+        "read": 2,
+        "script": 2,
+        "write": 0
+       }
+      },
+      "k1_total": {
+       "calls": 6,
+       "requests": 6,
+       "tokens": 28851.5
+      },
+      "loose": {
+       "git_any": {
+        "calls": 2,
+        "requests": 2,
+        "tokens": 2384.9
+       },
+       "grep_known_token": {
+        "calls": 3,
+        "requests": 3,
+        "tokens": 1407.7
+       }
+      },
+      "loose_total": {
+       "calls": 5,
+       "requests": 5,
+       "tokens": 3792.5
+      },
+      "missed": 33,
+      "missed_paths": 14,
+      "missed_paths_edited_before": 1,
+      "missed_paths_neither": 12,
+      "missed_paths_read_before": 1,
+      "read_known_path_reinjected": 0,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 2,
+        "requests": 2,
+        "tokens": 9984.6
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 4,
+        "requests": 4,
+        "tokens": 18866.8
+       }
+      },
+      "refetch_total": {
+       "calls": 9,
+       "requests": 9,
+       "tokens": 34931.0
+      },
+      "requests": 20,
+      "reused": 99,
+      "strict": {
+       "bash_view_known_file": {
+        "calls": 2,
+        "requests": 2,
+        "tokens": 5183.2
+       },
+       "git_repeated_args": {
+        "calls": 1,
+        "requests": 1,
+        "tokens": 896.3
+       },
+       "read_bash_viewed_file": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path_respelled": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       }
+      },
+      "strict_total": {
+       "calls": 3,
+       "requests": 3,
+       "tokens": 6079.6
+      },
+      "used": 164,
+      "with_loose_total": {
+       "calls": 14,
+       "requests": 13,
+       "tokens": 38723.6
+      }
+     },
+     "20-99": {
+      "directions": {
+       "search_ledger": {
+        "commit": 0,
+        "other": 0,
+        "read": 0,
+        "script": 0,
+        "write": 0
+       },
+       "search_live_state": {
+        "commit": 0,
+        "other": 0,
+        "read": 0,
+        "script": 0,
+        "write": 0
+       },
+       "search_transcript": {
+        "commit": 0,
+        "other": 1,
+        "read": 4,
+        "script": 0,
+        "write": 6
+       }
+      },
+      "k1_total": {
+       "calls": 9,
+       "requests": 8,
+       "tokens": 17654.5
+      },
+      "loose": {
+       "git_any": {
+        "calls": 3,
+        "requests": 3,
+        "tokens": 1772.7
+       },
+       "grep_known_token": {
+        "calls": 3,
+        "requests": 3,
+        "tokens": 3994.6
+       }
+      },
+      "loose_total": {
+       "calls": 6,
+       "requests": 6,
+       "tokens": 5767.2
+      },
+      "missed": 205,
+      "missed_paths": 31,
+      "missed_paths_edited_before": 1,
+      "missed_paths_neither": 28,
+      "missed_paths_read_before": 2,
+      "read_known_path_reinjected": 4,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 4,
+        "requests": 3,
+        "tokens": 9136.2
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 5,
+        "requests": 5,
+        "tokens": 8518.2
+       }
+      },
+      "refetch_total": {
+       "calls": 17,
+       "requests": 16,
+       "tokens": 22970.3
+      },
+      "requests": 42,
+      "reused": 615,
+      "strict": {
+       "bash_view_known_file": {
+        "calls": 7,
+        "requests": 7,
+        "tokens": 4805.0
+       },
+       "git_repeated_args": {
+        "calls": 1,
+        "requests": 1,
+        "tokens": 510.8
+       },
+       "read_bash_viewed_file": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path_respelled": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       }
+      },
+      "strict_total": {
+       "calls": 8,
+       "requests": 8,
+       "tokens": 5315.8
+      },
+      "used": 956,
+      "with_loose_total": {
+       "calls": 23,
+       "requests": 22,
+       "tokens": 28737.6
+      }
+     },
+     "rest": {
+      "directions": {
+       "search_ledger": {
+        "commit": 0,
+        "other": 0,
+        "read": 0,
+        "script": 0,
+        "write": 0
+       },
+       "search_live_state": {
+        "commit": 0,
+        "other": 0,
+        "read": 0,
+        "script": 0,
+        "write": 0
+       },
+       "search_transcript": {
+        "commit": 0,
+        "other": 1,
+        "read": 6,
+        "script": 2,
+        "write": 6
+       }
+      },
+      "k1_total": {
+       "calls": 15,
+       "requests": 14,
+       "tokens": 46505.9
+      },
+      "loose": {
+       "git_any": {
+        "calls": 5,
+        "requests": 5,
+        "tokens": 4157.5
+       },
+       "grep_known_token": {
+        "calls": 6,
+        "requests": 6,
+        "tokens": 5402.2
+       }
+      },
+      "loose_total": {
+       "calls": 11,
+       "requests": 11,
+       "tokens": 9559.8
+      },
+      "missed": 220,
+      "missed_paths": 37,
+      "missed_paths_edited_before": 1,
+      "missed_paths_neither": 34,
+      "missed_paths_read_before": 2,
+      "read_known_path_reinjected": 4,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 6,
+        "requests": 5,
+        "tokens": 19120.9
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 9,
+        "requests": 9,
+        "tokens": 27385.1
+       }
+      },
+      "refetch_total": {
+       "calls": 26,
+       "requests": 25,
+       "tokens": 57901.4
+      },
+      "requests": 62,
+      "reused": 640,
+      "strict": {
+       "bash_view_known_file": {
+        "calls": 9,
+        "requests": 9,
+        "tokens": 9988.3
+       },
+       "git_repeated_args": {
+        "calls": 2,
+        "requests": 2,
+        "tokens": 1407.1
+       },
+       "read_bash_viewed_file": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path_respelled": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       }
+      },
+      "strict_total": {
+       "calls": 11,
+       "requests": 11,
+       "tokens": 11395.4
+      },
+      "used": 997,
+      "with_loose_total": {
+       "calls": 37,
+       "requests": 35,
+       "tokens": 67461.1
+      }
+     }
+    }
+   }
+  ],
+  "control": [],
+  "control_c2": [],
+  "control_c5": [
+   {
+    "class": "1M_window",
+    "offset": 3271807,
+    "position": 100,
+    "requests": 148,
+    "segment": 0,
+    "windows": {
+     "20": {
+      "directions": {
+       "search_ledger": {
+        "commit": 0,
+        "other": 0,
+        "read": 0,
+        "script": 0,
+        "write": 0
+       },
+       "search_live_state": {
+        "commit": 0,
+        "other": 0,
+        "read": 0,
+        "script": 0,
+        "write": 0
+       },
+       "search_transcript": {
+        "commit": 0,
+        "other": 0,
+        "read": 0,
+        "script": 0,
+        "write": 0
+       }
+      },
+      "k1_total": {
+       "calls": 0,
+       "requests": 0,
+       "tokens": 0.0
+      },
+      "loose": {
+       "git_any": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "grep_known_token": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       }
+      },
+      "loose_total": {
+       "calls": 0,
+       "requests": 0,
+       "tokens": 0.0
+      },
+      "missed": 0,
+      "missed_paths": 0,
+      "missed_paths_edited_before": 0,
+      "missed_paths_neither": 0,
+      "missed_paths_read_before": 0,
+      "read_known_path_reinjected": 0,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       }
+      },
+      "refetch_total": {
+       "calls": 1,
+       "requests": 1,
+       "tokens": 1623.6
+      },
+      "requests": 20,
+      "reused": 332,
+      "strict": {
+       "bash_view_known_file": {
+        "calls": 1,
+        "requests": 1,
+        "tokens": 1623.6
+       },
+       "git_repeated_args": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_bash_viewed_file": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path_respelled": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       }
+      },
+      "strict_total": {
+       "calls": 1,
+       "requests": 1,
+       "tokens": 1623.6
+      },
+      "used": 576,
+      "with_loose_total": {
+       "calls": 1,
+       "requests": 1,
+       "tokens": 1623.6
+      }
+     }
+    }
+   },
+   {
+    "class": "1M_window",
+    "offset": 3670754,
+    "position": 120,
+    "requests": 148,
+    "segment": 0,
+    "windows": {
+     "20": {
+      "directions": {
+       "search_ledger": {
+        "commit": 0,
+        "other": 0,
+        "read": 0,
+        "script": 0,
+        "write": 0
+       },
+       "search_live_state": {
+        "commit": 0,
+        "other": 0,
+        "read": 0,
+        "script": 0,
+        "write": 0
+       },
+       "search_transcript": {
+        "commit": 0,
+        "other": 0,
+        "read": 0,
+        "script": 0,
+        "write": 0
+       }
+      },
+      "k1_total": {
+       "calls": 0,
+       "requests": 0,
+       "tokens": 0.0
+      },
+      "loose": {
+       "git_any": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "grep_known_token": {
+        "calls": 3,
+        "requests": 3,
+        "tokens": 3489.1
+       }
+      },
+      "loose_total": {
+       "calls": 3,
+       "requests": 3,
+       "tokens": 3489.1
+      },
+      "missed": 0,
+      "missed_paths": 0,
+      "missed_paths_edited_before": 0,
+      "missed_paths_neither": 0,
+      "missed_paths_read_before": 0,
+      "read_known_path_reinjected": 0,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       }
+      },
+      "refetch_total": {
+       "calls": 0,
+       "requests": 0,
+       "tokens": 0.0
+      },
+      "requests": 20,
+      "reused": 269,
+      "strict": {
+       "bash_view_known_file": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "git_repeated_args": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_bash_viewed_file": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path_respelled": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       }
+      },
+      "strict_total": {
+       "calls": 0,
+       "requests": 0,
+       "tokens": 0.0
+      },
+      "used": 464,
+      "with_loose_total": {
+       "calls": 3,
+       "requests": 3,
+       "tokens": 3489.1
+      }
+     }
+    }
+   }
+  ],
+  "shape_set": "v2",
+  "skipped": []
+ },
+ "schema": 2,
+ "sidechain": true,
+ "timeline": {
+  "boundaries_on_the_thread": 1,
+  "requests": 210,
+  "requests_by_model": {
+   "claude-opus-5-5": 210
+  },
+  "segments_with_requests": 2,
+  "stats": {
+   "items_after_their_segments_last_request": 6,
+   "items_in_segments_without_a_request": 0,
+   "requests": 210,
+   "segments": 2,
+   "thinking_blocks": 261,
+   "thinking_blocks_stored_empty": 177,
+   "thinking_sized_exact": 174,
+   "thinking_sized_model": 3,
+   "visible_output_sized_exact": 206,
+   "visible_output_sized_model": 4
+  }
+ },
+ "transcript": "agent-ac9c149483559ffec.jsonl"
+}

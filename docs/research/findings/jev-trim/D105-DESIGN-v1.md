@@ -379,3 +379,15 @@ VERIFY-K1 attacks them).
   cache-read cut. K1 round 2 (`tasks/briefs/jev-trim/K1-R2-brief.md`) re-measures with the corrected shapes. Until
   then the first live arm stays 500000 on that inference, not on the struck reason. For §10.3: the dominant re-fetch
   after a boundary is a Bash view of a known file, which is what K2's file packs trigger on.
+- **K1 round 2 (2026-09-29 06:0xZ; `tasks/briefs/jev-trim/K1-R2-report.md`, outputs under `compaction-2026-09-29-r2/`;
+  GATED-PENDING-VERIFY).** Measured with the corrected shapes (writes and commits out, the strict set in, the loose set
+  apart) against three controls. Main, 1M class: the first 20 requests after a compaction carry 38.07 re-fetch calls per
+  100 against 17.51 to 18.52 at the controls, +3.9 to +4.1 calls and +9.2k to +9.6k tokens per boundary, every 95%
+  interval clear of 0; requests 20 to 99 carry +2.9 to +3.6 per 100, the first 100 +6.0 to +7.1. Subagents pooled: +25.8
+  to +31.9 per 100 in the first 20 requests. The main forms: a Bash view of a known file (11.95 per 100 against 3.60 to
+  5.00) and a ledger read (8.89 against 1.92 to 2.54). The position-aware cost model, calibrated to the observed 121 at
+  785k, gives 246 compactions at 500k (the flat model 206). Moving from 785k to 500k adds about 0.8 to 1.2 million
+  re-fetched tokens over the first 20 requests after each compaction (1.1 to 1.8 million over 100), against 3.1 to 3.4
+  billion fewer cache-read tokens. So 500k stays cheap in cache terms, now measured; the extra calls (about four per
+  compaction) are the live test's to weigh. The builder's excess is larger than VERIFY-K1's because its direction rules
+  exclude more writes and commits at the controls (its DISCREPANCIES 1 to 8); the resumed verifier checks that.
