@@ -1,15 +1,15 @@
 # Project status
 
-**Proof anchors: PENDING the owner's re-sign (the issue #59 batch, task #315, 2026-09-28).** The batch re-minted all twelve
-proofs on new tooling bytes, deleted the twelve committed tag files (`docs/governance/tags/accepted-S0-NN.tag`) and set every
-anchor to `PROOF-ANCHOR: S0-NN = PENDING-OWNER-TAG`; `scripts/check-proof-status.py` reports each proof as ACCEPTED with its
-anchor PENDING, not owner-verifiable yet. The signatures, commits and tag files named below are the state before the batch.
-They become current again only when the owner re-signs the twelve.
+**Proof anchors: RE-SIGNED 2026-09-29 (D-107).** The issue #59 batch (task #315) re-minted all twelve proofs on new
+tooling bytes; the owner re-signed all twelve on 975523a at 10:19Z, and the twelve tag objects are committed again as
+`docs/governance/tags/accepted-S0-NN.tag`. `scripts/check-proof-status.py` verifies every signature against the committed
+owner key with no warning. The commits and dates in the proof table below are each proof's original acceptance; every
+current tag points at 975523a.
 
 **Phase:** Stage 0 proof pack COMPLETE: all twelve proofs are minted and ACCEPTED by the owner's GPG-signed tags (the last eight signed
 together 2026-09-24 10:26Z); S0-04 was re-minted 2026-09-25 after its leak-screen fix (D-091) and the owner re-signed it
-2026-09-26 (D-094). Open verify follow-ups are GitHub issues; the issue #59 tooling batch will need one re-sign of every
-accepted proof. Since D-029 (owner 2026-09-15) proof-backed components build in parallel with the
+2026-09-26 (D-094). Open verify follow-ups are GitHub issues; the issue #59 tooling batch's one re-sign of every accepted
+proof is done (2026-09-29, D-107). Since D-029 (owner 2026-09-15) proof-backed components build in parallel with the
 remaining proofs. Spine-dependent feature work waits until the proof pack validates the spine
 (Buzz → `buzz-acp` → Hermes → OmniRoute, memory composition, Fubuki seams, policy failure behaviour, gVisor compatibility).
 **Implementation:** branch `claude/soundbox-kit-migration-iz1jwf`. The proof machinery is built. The Wave 0 spikes are all
@@ -67,7 +67,7 @@ a distillation and the ledger wins on any disagreement).
   (the three conformance-checked decisions, each an ADR with a check); S0-11 evaluation hardening ACCEPTED 2026-09-04 as an explicit
   owner process decision (recorded honestly as not machine-enforced, AF-AP-32).
 
-## Stage 0 proof table (rows refreshed 2026-09-22 for the minted proofs; since the issue #59 batch every row's tag is PENDING the owner's re-sign; the ledger `todo/BUILD-TASKLIST.md` wins)
+## Stage 0 proof table (rows refreshed 2026-09-22 for the minted proofs; every row's tag was re-signed on 975523a on 2026-09-29, D-107; the ledger `todo/BUILD-TASKLIST.md` wins)
 
 | proof | kind | status |
 |---|---|---|
