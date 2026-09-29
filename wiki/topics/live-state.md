@@ -21,6 +21,7 @@ last_compiled: 2026-09-03
 - **RETRO 01:4xZ:** two quirks baked into `env-tool-quirks` (a re-landed evidence set is the prior mint's file list; the task view names a task from the first body mention of its id); task #354 registered (backlog: an S0-05 re-capture landing script); LS-B9 round 4 gains item 6b (the harvest lists local commit ids).
 - **RETRO 02:2xZ:** `session-continuity` gains the newest-block rule for live-state edits; task #355 registered (backlog: `ci_gate.py` once read a runs list without the newest run).
 - **RETRO 03:0xZ:** task #356 registered (backlog: a gate that runs a test set under CI's Python).
+- **RETRO 04:3xZ:** AF-AP-240 (a measure keyed on the tool named for an action sees a fraction of it; VERIFY-K1's F3) with its bug-echo (task #360, backlog); `deep-work` Phase 2 and `orchestration` 0p baked; task #361 registered (backlog: the gate stack flags a mention that only names a path inside a temporary fixture tree). Not greppable as a screen rule: the Read-only detectors it names are legitimate in other code.
 
 **2026-09-29 00:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin 0e6d4a1, plus local commits; the main tree is the primary.**
