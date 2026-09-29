@@ -114,3 +114,14 @@ def test_nonexistent_path_yields_exit_4():
     assert exit_line, f"No pytest-exit line in output:\n{result.stdout}"
     assert exit_line[-1] == "pytest-exit: 4"
     assert result.returncode == 4
+
+
+def test_a_basetemp_whose_parent_is_missing_is_made_first(tmp_path):
+    # 2026-09-29: a brief's premise line passed --basetemp=/tmp/premise-jevrelay/bt with no parent, and all 24 relay
+    # tests errored at setup (FileNotFoundError); the same shape read every mutant as KILLED in AF-AP-223.
+    test = tmp_path / "test_uses_tmp.py"
+    test.write_text("def test_tmp(tmp_path):\n    assert tmp_path.is_dir()\n")
+    for form in (["--basetemp=%s" % (tmp_path / "gone1" / "bt")], ["--basetemp", str(tmp_path / "gone2" / "bt")]):
+        r = subprocess.run(["bash", SCRIPT, str(test), *form], capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, (form, r.stdout)
+        assert r.stdout.splitlines()[-1].startswith("pytest-summary: 1 passed"), (form, r.stdout)

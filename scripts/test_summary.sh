@@ -19,6 +19,15 @@ export FUBUKI_OTHER_ROOT="${FUBUKI_OTHER_ROOT:-/root/fubuki-pin/fubuki-os-other}
 
 paths=("${@:-tests/}")
 
+# A --basetemp whose parent is missing errors every test that takes tmp_path at setup (a premise line's 24 relay tests,
+# 2026-09-29; AF-AP-223 read every mutant KILLED that way): make the parent first. pytest removes and remakes the basetemp.
+for ((i = 0; i < ${#paths[@]}; i++)); do
+  case "${paths[i]}" in
+    --basetemp=*) mkdir -p -- "$(dirname -- "${paths[i]#--basetemp=}")" ;;
+    --basetemp) if [ $((i + 1)) -lt ${#paths[@]} ]; then mkdir -p -- "$(dirname -- "${paths[i + 1]}")"; fi ;;
+  esac
+done
+
 output=$(python3 -m pytest "${paths[@]}" -q -rs -p no:cacheprovider 2>&1)
 rc=$?
 
