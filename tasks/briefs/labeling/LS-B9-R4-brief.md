@@ -37,6 +37,11 @@ files stay untouched.
 5. **R3-F5.** A headline's control characters (CR, ESC and the rest of C0 and C1) are escaped in the header.
 6. **The catalog notes.** Each stack in `stacks.toml` may carry short notes, and `stack.py list` prints them under its
    line. Put in the seven notes of issue #80's last section, each under the stack it concerns, and an eighth under `harvest`: `report=` names an existing file to lint and hash; the hand-back itself is saved under the run directory as `handback.md` (the coordinator read `report=` as a save path on 2026-09-28 and the lint step failed on a missing file).
+6b. **Local commit ids in a hand-back.** `harvest` gains one advisory step (not required, like `lint_handback`): it
+   lists each commit id in the hand-back that `git log origin/<branch>..HEAD` shows as local, with its line, because
+   the push rewrites those ids and `stale_ids` then refuses the push (T1-LCM-AUDIT's report cited two on 2026-09-29;
+   the coordinator caught them by hand before the commit). A test with a planted local id, a control with an origin
+   id, and a mutant the test kills.
 7. **The SessionStart wiring.** `install_session_hooks.py` also registers a SessionStart hook (on start, resume and
    compact) that prints one short heading line, `stack.py list`'s output, and one line on ratings (`--rate <run
    id>=<rel>/<use>`, content stacks only). It exits 0 always; if the catalog cannot be built it prints ONE line naming
