@@ -945,6 +945,66 @@ def edit_context(file_path, old_string, root=None, replace_all=False):
     return dict(res, ranges=ranges)
 
 
+FILE_SYMBOLS = 8                    # symbols a file-level entry names
+
+
+def file_entry(path, line=None, end_line=None, root=None):
+    """The file-level entry of `path` from its pack, for a touch that names no one symbol (L2b, task #353: a Read, a
+    Write, a shell reader, or a Read range that no one symbol holds): the symbol count and the first FILE_SYMBOLS
+    top-level symbols with their spans (with `line`: the symbols that overlap lines [line, end_line] instead), the
+    tests that cover the file, its registry rows (those in the range, with `line`) and the instruments line. A dict
+    like lookup's: `status` (file, range, miss, out-of-scope), `stale` (the working file's blob differs from the
+    pack's; None when there is no pack) and `text` (at most TEXT_CAP bytes). Reads one pack and hashes the working
+    file: no subprocess."""
+    root = Path(root or ROOT)
+    rel = rel_path(root, path)
+    end_line = line if end_line is None else end_line
+    res = {"path": rel or str(path), "line": line, "end_line": end_line, "stale": None, "symbol": None,
+           "pack": None if rel is None else pack_path(Path("."), rel).as_posix()}
+    if not in_scope(rel) or not language(root, rel):
+        return dict(res, status="out-of-scope", pack=None, text="codemap: %s is outside the code map (code files "
+                    "under %s)" % (res["path"], ", ".join(PREFIXES)))
+    pack, why = _load_pack(root, rel)
+    if pack is None:
+        return dict(res, status="miss", text="codemap: no file entry for %s: %s" % (rel, why))
+    try:
+        stale = pack["blob"] != blob_sha((root / rel).read_bytes())
+    except OSError:
+        stale = True
+    res["stale"] = stale
+    syms = sorted(pack["symbols"], key=lambda s: (s["start"], -s["end"], s["qualname"]))
+    rows = pack.get("registry") or []
+    if line is None:
+        shown = [s for s in syms if "." not in s["qualname"]]
+        head = "codemap %s — %d symbols, %d at top level" % (rel, len(syms), len(shown))
+    else:
+        if line < 1 or end_line < line:
+            return dict(res, status="miss", text="codemap: %d-%d is not a line range" % (line, end_line))
+        shown = [s for s in syms if s.get("from", s["start"]) <= end_line and s["end"] >= line]
+        rows = [h for h in rows if line <= h["line"] <= end_line]
+        head = "codemap %s:%d-%d — %d of the file's %d symbols in range" % (rel, line, end_line, len(shown), len(syms))
+    lines = [head + "  [pack %s]" % res["pack"]]
+    if stale:
+        lines.append("STALE: the file changed since this pack was built (blob %s); lines may have moved" %
+                     pack["blob"][:7])
+    if shown:
+        lines.append(("symbols: " if line is None else "symbols in range: ") + " · ".join(
+            "%s L%d-%d" % (s["qualname"], s.get("from", s["start"]), s["end"]) for s in shown[:FILE_SYMBOLS])
+            + (" · +%d more" % (len(shown) - FILE_SYMBOLS) if len(shown) > FILE_SYMBOLS else ""))
+    t = pack.get("tests") or []
+    crg = pack["instruments"].get("code-review-graph") or {}
+    if crg.get("status") == "ok":
+        lines.append("tests of the file (code-review-graph) %d%s" % (len(t), ": " + " · ".join(
+            "%s:%s %s" % (x["file"], x["line"], x["name"]) for x in t[:SAMPLE]) + (" · +%d more" % (len(t) - SAMPLE)
+                                                                                   if len(t) > SAMPLE else "")
+            if t else " (none found; a test that runs the file as a subprocess leaves no edge)"))
+    if rows:
+        lines.append("registry rows %s%d: " % ("" if line is None else "in range ", len(rows)) + ", ".join(
+            "%s :%d" % (h["row"], h["line"]) for h in rows[:8]) + (" …" if len(rows) > 8 else ""))
+    lines.append(_instruments_line(pack))
+    return dict(res, status="file" if line is None else "range", text=_cap("\n".join(lines)))
+
+
 # ---------- the CLI ----------
 
 def _refresh(ns):

@@ -1,0 +1,918 @@
+#!/usr/bin/env python3
+"""filepacks.py — a context pack for every tracked file (P2) and the hook that shows it when a file is touched (P1).
+
+Task #353 (D-106): K2 of docs/research/findings/jev-trim/D105-DESIGN-v1.md §10.4, items P1 and P2 of §10.3. The brief
+is tasks/briefs/jev-trim/K2-FILE-PACKS-brief.md.
+
+P2, `build` (after each commit, from scripts/hooks/post-commit, in the background): HEAD is resolved ONCE and that SHA
+is threaded to every read (AF-AP-175). One pass over each source finds the tracked files it names, on a whole-path
+boundary (`scripts/stack.py` never matches inside `scripts/stack.py.json` or `x/scripts/stack.py`):
+  - the ledger, the decision log, the incident log and nine project skills (SKILLS): per file and source the newest 3
+    lines (the highest line numbers), each with its line number, the registry id when the line is a registry row
+    (D-NNN, AF-AP-NNN), the ledger line's bold headline (at most 160 characters) and a snippet of at most 240
+    characters around the file's first mention in the line;
+  - the briefs and reports tasks/briefs/**/*.md: a mention is the brief's path, the newest 3 by the brief's last commit;
+  - the last 400 commits, from one `git log --name-only`: the newest 3 that changed the file, with their subjects.
+A file that has anything gets <state>/filepacks/<path>.json, written atomically and only when its bytes change; the pack
+of a file that has nothing any more is removed. <state>/filepacks/TRACKED.txt lists the tracked files (the hook's
+boundary) and <state>/filepacks/BUILD.json records the SHA, the counts and the milliseconds. A named path can only be
+matched when all of its characters are path characters (PATH_RX); the tree's paths use none other (measured).
+
+P1, `hook` (PreToolUse on Read, Edit, Write and Bash, through scripts/hook_context.py): the first time a context window
+touches a tracked file, its entry is injected (`entry`): for a code file with a code-map pack (scripts/codemap.py, L2a)
+the code part first (the enclosing symbol for an Edit, the symbols in range for a Read with offset and limit, else the
+file's own entry, each keeping the code map's STALE mark), then the pack's lines, the sources taken in turn (GROUPS),
+all cut at a line boundary within PACK_BUDGET bytes. A Bash call touches the files named as arguments of a reader
+command word (READERS) at a command position, as the System-1 hook's shell parser finds them: quoted text, heredoc
+bodies and comments are data; a `cd` at a command position moves the directory later relative paths resolve against.
+Once per window: `file:<path>` (Read, Write, Bash; an Edit sets it too) and `sym:<path>:<symbol>` (Edit) go into
+<state>/filepacks-seen/<window>.json under the System-1 WindowLock. At most CALL_MAX files a call (the first named that
+inject) and PACK_WINDOW_MAX a window. `hook --reset` (SessionStart) has the System-1 reset's semantics: a compaction
+forgets the compacted window, a resume or a clear every window of its session, and a marker idle 7 days goes.
+
+Boundary: only files tracked at the last build (TRACKED.txt). A path outside the root or with a `..` component, an
+untracked file, a pack reached through a symbolic link and a working file that is not a regular file give nothing.
+Advisory, never a gate: every path exits 0 and prints nothing on an error; a decision or an error is one JSON line in
+<state>/filepacks.jsonl (the System-1 record shape: keys, bytes, sha, why; never the tool input). Off switch: the file
+<state>/filepacks-off (a dangling link counts; the reset still runs). A call that names no tracked file, or that comes
+before the first build, logs nothing and creates nothing.
+
+`replay` runs the main loop's recorded tool calls through the hook's planner, window by window (split at the compaction
+boundaries), with the seen keys in memory, never the live markers. It reads only compaction boundaries and tool_use
+inputs, and prints only counts, bytes and milliseconds. `--wrapper K` also times K recorded calls through the real
+wrapper and hook, on a temporary copy of the packs.
+
+The System-1 hook (.claude/hooks/system1-context.py) is imported by path, never copied: its shell parser, window ids,
+lock, safe opens and bounded stdin. Its bytecode cache goes under <state>/pycache, never beside it in .claude/hooks.
+
+<state> is <repo>/.jev. Test seam, read once at start: AF_FILEPACKS_STATE (the state directory instead of <repo>/.jev).
+
+Usage:
+  filepacks.py build
+  filepacks.py hook [--reset]
+  filepacks.py replay --transcript PATH --bytes N [--wrapper K]
+"""
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import json
+import os
+import re
+import stat
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SCHEMA = 1
+PACK_BUDGET = 1200                   # bytes per file
+CALL_MAX = 2                         # files per call: the first named that inject
+PACK_WINDOW_MAX = 64                 # files per context window (the K2 probe: p90 60 files touched per window)
+TOOLS = ("Read", "Edit", "Write", "Bash")
+READERS = frozenset(("cat", "head", "tail", "sed", "awk", "grep", "egrep", "rg", "less", "more", "nl", "wc", "diff",
+                     "cmp"))
+LINE_SOURCES = (("ledger", "todo/BUILD-TASKLIST.md"), ("decisions", "docs/08_DECISION_LOG.md"),
+                ("incidents", "docs/INCIDENT-LOG.md"))
+SKILLS = ("env-tool-quirks", "pc-bridge-lanes", "orchestration", "build-loop", "deep-work", "anti-hollow-green",
+          "session-continuity", "code-intel-trio", "ouroboros-stdio")
+BRIEFS = "tasks/briefs/"
+COMMITS = 400
+KEEP = 3                             # mentions kept per file and source, per file of briefs, per file of commits
+SNIPPET = 240                        # characters
+HEADLINE = 160                       # characters
+GROUPS = ("ledger", "incidents", "decisions", "briefs", "skills", "commits")   # the order an entry takes them in
+GIT_TIMEOUT = 300
+STALE_MARK = "STALE: the file changed"     # the code map's own freshness mark, in each of its entries
+
+# A path token: a maximal run of path characters that holds a "." or a "/". The lookbehind starts a match only at the
+# start of a run, so the scan is linear.
+PATH_RX = re.compile(r"(?<![A-Za-z0-9_.@+/-])[A-Za-z0-9_@+-]*[./][A-Za-z0-9_.@+/-]*")
+HEADLINE_RX = re.compile(r"\*\*(.+?)\*\*")
+REGISTRY_RX = re.compile(r"\|\s*(D-\d+|AF-AP-\d+)\s*\|")
+WS_RX = re.compile(r"\s+")
+WORD_RX = re.compile(r"[^\s;&|()`]+")                  # a command word, as the System-1 CMD_POS reads one
+SEP_RX = re.compile(r"[;&|()\n`]|\$\(")                # where a simple command's words end, in its shell code
+NONSPACE_RX = re.compile(r"\S+")
+REDIR_RX = re.compile(r"(?:\d+|&)?(?:>>|>&|>\||<<<|<<-|<<|<&|<>|>|<)")
+
+_S1 = None
+_CM = None
+
+
+# ---------------------------------------------------------------- the two modules this one reads through
+
+def s1(cache=None):
+    """The System-1 hook, imported by path once per process (its file name has a hyphen). With `cache` its bytecode
+    is cached under that directory; without it none is written. Never beside the hook in .claude/hooks."""
+    global _S1
+    if _S1 is None:
+        spec = importlib.util.spec_from_file_location("filepacks_system1",
+                                                      ROOT / ".claude" / "hooks" / "system1-context.py")
+        mod = importlib.util.module_from_spec(spec)
+        saved = sys.pycache_prefix, sys.dont_write_bytecode
+        if cache:
+            sys.pycache_prefix = str(cache)
+        else:
+            sys.dont_write_bytecode = True
+        try:
+            spec.loader.exec_module(mod)
+        finally:
+            sys.pycache_prefix, sys.dont_write_bytecode = saved
+        _S1 = mod
+    return _S1
+
+
+def codemap():
+    """scripts/codemap.py (L2a), imported once per process: its pack paths and its readers."""
+    global _CM
+    if _CM is None:
+        spec = importlib.util.spec_from_file_location("filepacks_codemap", ROOT / "scripts" / "codemap.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _CM = mod
+    return _CM
+
+
+# ---------------------------------------------------------------- paths
+
+def repo_rel(path, cwd, root=ROOT):
+    """`path` (absolute, `~/`, or relative to `cwd`) as a repo-relative path, or None: not a non-empty string, a `..`
+    component, a relative path with no absolute cwd, or outside the root."""
+    if not isinstance(path, str) or not path or "\0" in path or "\n" in path or ".." in path.split("/"):
+        return None
+    if path.startswith("~/"):
+        path = os.path.expanduser(path)
+    if not path.startswith("/"):
+        if not (isinstance(cwd, str) and cwd.startswith("/")):
+            return None
+        path = cwd + "/" + path
+    norm, base = os.path.normpath(path), os.path.normpath(str(root))
+    return norm[len(base) + 1:] if norm.startswith(base + "/") else None
+
+
+def _inside(path, base):
+    """The directory of `path` resolves inside `base`: no symbolic link on the way leads out of it."""
+    d, b = os.path.realpath(os.path.dirname(path)), os.path.realpath(base)
+    return d == b or d.startswith(b + os.sep)
+
+
+def _args(code, cmd, start):
+    """The argument words (quotes removed) of the simple command whose command word ends at `start`, up to the next
+    separator of its shell code `code` (the words are read from `cmd`, at the same offsets); a redirection operator and
+    its target are not arguments."""
+    import shlex
+    m = SEP_RX.search(code, start)
+    out, skip = [], False
+    for w in NONSPACE_RX.finditer(code, start, m.start() if m else len(code)):
+        if skip:
+            skip = False
+            continue
+        r = REDIR_RX.match(w.group(0))
+        if r:
+            skip = r.end() == len(w.group(0))            # the operator alone: its target is the next word
+            continue
+        try:
+            parts = shlex.split(cmd[w.start():w.end()])
+        except ValueError:
+            continue
+        if len(parts) == 1:
+            out.append(parts[0])
+    return out
+
+
+def _cd(words, cwd):
+    """Where a `cd` with these arguments moves to; None when that is unknown (`cd -`, a variable)."""
+    if words[:1] == ["-"]:
+        return None
+    args = [w for w in words if not w.startswith("-")]
+    d = os.path.expanduser(args[0] if args else "~")
+    if "$" in d or "`" in d:
+        return None
+    if not d.startswith("/"):
+        if not (isinstance(cwd, str) and cwd.startswith("/")):
+            return None
+        d = cwd + "/" + d
+    return os.path.normpath(d)
+
+
+def bash_paths(cmd, cwd, root=ROOT):
+    """The repo-relative paths a shell command line reads, in order: the arguments of each reader command word at a
+    command position of its shell code (the System-1 parser: quoted text, heredoc bodies and comments are data, so
+    `echo "cat x"` and `git add x` name nothing). A `cd` at a command position moves the directory the later relative
+    arguments resolve against (a subshell's `cd` is not undone)."""
+    sys1 = s1()
+    code = sys1.shell_code(cmd)
+    out = []
+    for p in sys1.command_positions(code):
+        m = WORD_RX.match(code, p)
+        word = m.group(0) if m else ""
+        if word != "cd" and word not in READERS:
+            continue
+        words = _args(code, cmd, m.end())
+        if word == "cd":
+            cwd = _cd(words, cwd)
+            continue
+        for w in words:
+            r = None if w.startswith("-") else repo_rel(w, cwd, root)
+            if r and r not in out:
+                out.append(r)
+    return out
+
+
+def targets(tool, ti, cwd, root=ROOT):
+    """The repo-relative paths one tool call touches, in the order named: a Read, Edit or Write's file_path, a Bash
+    command's reader arguments."""
+    if not isinstance(ti, dict):
+        return []
+    if tool in ("Read", "Edit", "Write"):
+        r = repo_rel(ti.get("file_path"), cwd, root)
+        return [r] if r else []
+    cmd = ti.get("command") if tool == "Bash" else None
+    return bash_paths(cmd, cwd, root) if isinstance(cmd, str) and cmd.strip() else []
+
+
+# ---------------------------------------------------------------- the reader
+
+class Packs:
+    """The packs one hook call or one replay reads: the tracked list and the build's SHA, each read once."""
+
+    def __init__(self, root=ROOT, state=None):
+        self.root = Path(root)
+        self.state = Path(state) if state else self.root / ".jev"
+        self.dir = self.state / "filepacks"
+        self._tracked = None
+        self._commit = None
+
+    def built(self):
+        """True once a build wrote TRACKED.txt (a link or another kind of file raises)."""
+        if self._tracked is None:
+            try:
+                self._tracked = s1().read_regular(str(self.dir / "TRACKED.txt"))
+            except FileNotFoundError:
+                self._tracked = b""
+        return bool(self._tracked)
+
+    def tracked(self, rel):
+        return self.built() and ("\n%s\n" % rel).encode("utf-8") in self._tracked
+
+    def commit(self):
+        if self._commit is None:
+            try:
+                self._commit = str(json.loads(s1().read_regular(str(self.dir / "BUILD.json")))["commit"])[:7]
+            except (OSError, ValueError, KeyError, TypeError):
+                self._commit = "?"
+        return self._commit
+
+    def shown(self, path):
+        """A pack's path as the entry names it: repo-relative when it is inside the root."""
+        p = str(path)
+        return p[len(str(self.root)) + 1:] if p.startswith(str(self.root) + os.sep) else p
+
+
+class PackError(Exception):
+    """A pack that exists and cannot be used: `why` is link, unreadable or corrupt."""
+
+    def __init__(self, why):
+        super().__init__(why)
+        self.why = why
+
+
+def _group(source):
+    return "skills" if source.startswith("skill:") else {"brief": "briefs", "commit": "commits"}.get(source, source)
+
+
+def render(m):
+    """One pack mention as one entry line."""
+    src = m["source"]
+    if src == "commit":
+        return "commit %s %s: %s" % (m["commit"], m["date"], m["subject"])
+    if src == "brief":
+        return "brief %s L%d (%s %s)" % (m["path"], m["line"], m["date"], m["commit"])
+    head = "%s L%d" % (src.replace("skill:", "skill "), m["line"])
+    if m.get("id"):
+        head += " " + m["id"]
+    if m.get("headline") and m.get("at"):             # the snippet does not start at the line's headline
+        head += " **%s**" % m["headline"]
+    return "%s: %s" % (head, m["snippet"])
+
+
+def _p2_lines(rel, packs):
+    """The pack's lines: a head line (the counts and the pack's path), then the mentions, the newest of each source
+    group first, the groups taken in turn (GROUPS). [] when the file has no pack; PackError when it cannot be used."""
+    path = packs.dir / (rel + ".json")
+    if not os.path.lexists(path):
+        return []
+    if os.path.islink(path) or not _inside(path, packs.dir):
+        raise PackError("link")
+    try:
+        pack = json.loads(s1().read_regular(str(path)).decode("utf-8"))
+    except OSError:
+        raise PackError("unreadable") from None
+    except ValueError:
+        raise PackError("corrupt") from None
+    try:
+        if not isinstance(pack, dict) or pack.get("schema") != SCHEMA or pack.get("path") != rel:
+            raise ValueError("another schema or path")
+        counts = pack["counts"]
+        by = {g: [] for g in GROUPS}
+        for m in pack["mentions"]:
+            by[_group(m["source"])].append(render(m))
+        head = "filepack %s @%s: %s (pack %s)" % (rel, packs.commit(), " · ".join(
+            "%s %d" % (g, counts[g]) for g in GROUPS if counts.get(g)), packs.shown(path))
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise PackError("corrupt") from None
+    out = [head]
+    for rank in range(max(len(v) for v in by.values())):
+        out += [by[g][rank] for g in GROUPS if rank < len(by[g])]
+    return out
+
+
+def _code_part(rel, ti, root):
+    """(status, text, symbol, stale) of the code map's entry for this touch; status None when the file has no code-map
+    pack. An Edit placed in one symbol gives that symbol's entry (a module-level one `<module>`); an Edit that cannot be
+    placed gives the file's entry. A Read with offset and limit gives the enclosing symbol's entry, or the symbols in
+    range when no one symbol holds the range. PackError when the pack exists and cannot be read."""
+    cm = codemap()
+    pack = cm.pack_path(root, rel)
+    try:
+        st = os.lstat(pack)
+    except FileNotFoundError:
+        return None, "", None, None
+    if not stat.S_ISREG(st.st_mode) or not _inside(pack, Path(root) / cm.PACK_DIR):
+        raise PackError("link" if stat.S_ISLNK(st.st_mode) else "unreadable")
+    try:
+        wst = os.lstat(Path(root) / rel)
+        if not stat.S_ISREG(wst.st_mode):
+            return None, "", None, None                  # a link, a FIFO: the code map never reads it
+    except FileNotFoundError:
+        pass                                             # gone from the working tree: the code map says STALE
+
+    def use(r):
+        if r["status"] == "miss":
+            raise PackError("corrupt" if os.path.lexists(pack) else "gone")
+        if r["status"] == "out-of-scope":
+            return None, "", None, None
+        return r["status"], r["text"], None, r.get("stale")
+
+    old = ti.get("old_string")
+    if isinstance(old, str) and old:
+        r = cm.edit_context(str(Path(root) / rel), old, root=root, replace_all=ti.get("replace_all") is True)
+        if r["status"] in ("hit", "module"):
+            sym = r["symbol"]["qualname"] if r["status"] == "hit" else "<module>"
+            return r["status"], r["text"], sym, r["stale"]
+        if r["status"] == "miss" and r.get("ranges"):    # placed, and its pack did not load
+            return use(r)
+        return use(cm.file_entry(rel, root=root))       # not placed: the file's own entry
+    off, lim = ti.get("offset"), ti.get("limit")
+    if type(off) is int and type(lim) is int and off >= 0 and lim >= 1:
+        lo = max(off, 1)
+        r = cm.lookup(rel, lo, lo + lim - 1, root=root)
+        if r["status"] == "module":                    # no one symbol holds the range: the symbols in it
+            r = cm.file_entry(rel, lo, lo + lim - 1, root=root)
+        return use(r)
+    return use(cm.file_entry(rel, root=root))
+
+
+def entry(rel, tool_input, budget=PACK_BUDGET, *, packs=None, p2=True):
+    """What the hook injects for one touch of the tracked file `rel`: the code part (see _code_part), then the pack's
+    lines (unless `p2` is false), cut at a line boundary within `budget` bytes. A stale code part is never shown without
+    its STALE mark: when the mark does not fit, nothing is. Returns {text, symbol (an Edit's), code (the code part's
+    status or None), stale, lines, cut, error (why nothing: link, unreadable, corrupt or gone)}."""
+    packs = packs or Packs()
+    ti = tool_input if isinstance(tool_input, dict) else {}
+    res = {"text": "", "symbol": None, "code": None, "stale": None, "lines": 0, "cut": 0, "error": None}
+    try:
+        status, text, sym, stale = _code_part(rel, ti, packs.root)
+        lines = text.split("\n") if text else []
+        lines += _p2_lines(rel, packs) if p2 else []
+    except PackError as e:
+        return dict(res, error=e.why)
+    kept, used = [], 0
+    for ln in lines:
+        cost = len(ln.encode("utf-8")) + (1 if kept else 0)
+        if used + cost > budget:
+            break
+        kept.append(ln)
+        used += cost
+    if stale and not any(STALE_MARK in ln for ln in kept):
+        kept = []                                        # a stale code part never passes as fresh
+    return dict(res, text="\n".join(kept), symbol=sym, code=status, stale=stale, lines=len(kept),
+                cut=len(lines) - len(kept))
+
+
+# ---------------------------------------------------------------- the hook
+
+def touched(payload, packs):
+    """The tracked files one PreToolUse payload touches, in the order named; [] before the first build."""
+    tool = payload.get("tool_name")
+    if tool not in TOOLS or not packs.built():
+        return []
+    return [r for r in targets(tool, payload.get("tool_input"), payload.get("cwd"), packs.root) if packs.tracked(r)]
+
+
+def plan(payload, rels, seen, packs, budget=PACK_BUDGET, timings=None):
+    """(text, record, new keys) for the tracked files `rels` one PreToolUse payload touches. `seen` (the window's keys)
+    is not changed. `timings` collects each entry's milliseconds (the replay's measure)."""
+    tool, ti, tuid = payload.get("tool_name"), payload.get("tool_input"), payload.get("tool_use_id")
+    rec = {"event": "PreToolUse", "tool": tool, "tool_use_id": tuid if isinstance(tuid, str) else None,
+           "injected": [], "skipped": [], "bytes": 0}
+    taken = set(seen)
+    files = sum(1 for k in taken if k.startswith("file:"))
+    blocks, new = [], []
+    for rel in rels:
+        fkey = "file:" + rel
+        if len(blocks) >= CALL_MAX:
+            rec["skipped"].append({"key": fkey, "why": "call-max"})
+            continue
+        if fkey not in taken and files >= PACK_WINDOW_MAX:
+            rec["skipped"].append({"key": fkey, "why": "window-max"})
+            continue
+        if tool != "Edit" and fkey in taken:
+            rec["skipped"].append({"key": fkey, "why": "duplicate"})
+            continue
+        t0 = time.perf_counter()
+        e = entry(rel, ti, budget, packs=packs, p2=fkey not in taken)
+        if timings is not None:
+            timings.append((time.perf_counter() - t0) * 1000)
+        key = "sym:%s:%s" % (rel, e["symbol"]) if tool == "Edit" and e["symbol"] else fkey
+        if e["error"]:
+            rec["skipped"].append({"key": key, "why": e["error"]})
+            continue
+        if key in taken:
+            rec["skipped"].append({"key": key, "why": "duplicate"})
+            continue
+        if not e["text"]:
+            rec["skipped"].append({"key": key, "why": "budget" if e["cut"] else "no-pack"})
+            continue
+        keys = [key] + ([fkey] if fkey != key and fkey not in taken else [])
+        files += fkey not in taken
+        taken.update(keys)
+        new += keys
+        blocks.append(e["text"])
+        inj = {"key": key, "bytes": len(e["text"].encode("utf-8")), "lines": e["lines"],
+               "sha": hashlib.sha256(e["text"].encode("utf-8")).hexdigest()[:16], "code": e["code"]}
+        if e["cut"]:
+            inj["cut"] = e["cut"]
+        if e["stale"]:
+            inj["stale"] = True
+        rec["injected"].append(inj)
+    text = "\n".join(blocks)
+    rec["bytes"] = len(text.encode("utf-8")) if text else 0
+    return text, rec, new
+
+
+def reset(payload, state, now):
+    """SessionStart, with the System-1 reset's semantics on <state>/filepacks-seen: a compaction forgets the compacted
+    window, a resume or a clear every window of the session; a marker idle MARKER_MAX_AGE_S goes whatever the source."""
+    sys1 = s1()
+    seen_dir = Path(state) / "filepacks-seen"
+    src = payload.get("source")
+    wid = sys1.window_id(payload)
+    sid = wid.split(".", 1)[0]
+    removed = 0
+    for name in sorted(os.listdir(seen_dir)) if seen_dir.is_dir() else []:
+        path = seen_dir / name
+        hit = (src == "compact" and name in (wid + ".json", wid + ".json.lock")) or (
+            src in ("resume", "clear") and name.startswith(sid + "."))
+        try:
+            if hit or now - os.lstat(path).st_mtime > sys1.MARKER_MAX_AGE_S:
+                os.unlink(path)
+                removed += name.endswith(".json")
+        except FileNotFoundError:
+            pass
+    return {"event": "SessionStart", "source": src if isinstance(src, str) else None, "removed": removed}
+
+
+def log(state, rec):
+    """One JSON line in <state>/filepacks.jsonl (0600, never through a link, never blocking on a FIFO); it moves to
+    .1 past the System-1 log's size. A failed write loses the line, never the hook."""
+    try:
+        sys1 = s1()
+        path = os.path.join(state, "filepacks.jsonl")
+        os.makedirs(state, mode=0o700, exist_ok=True)
+        try:
+            if os.path.getsize(path) > sys1.LOG_MAX_BYTES:
+                os.replace(path, path + ".1")
+        except FileNotFoundError:
+            pass
+        fd = sys1.open_regular(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+        try:
+            os.write(fd, (json.dumps(rec, sort_keys=True) + "\n").encode("utf-8"))
+        finally:
+            os.close(fd)
+    except Exception:
+        pass                                             # telemetry never breaks the hook
+
+
+def hook(argv, state):
+    """`hook` (PreToolUse) and `hook --reset` (SessionStart). Always exits 0; prints the entries or nothing."""
+    started = time.monotonic()
+    resetting = argv == ["--reset"]
+    if not resetting and os.path.lexists(state / "filepacks-off"):          # a dangling link counts
+        return 0
+    rec, text, tool, wid = None, "", None, None
+    try:
+        sys1 = s1(state / "pycache" if state.is_dir() else None)
+        payload = json.loads(sys1.read_stdin().decode("utf-8") or "null")
+        if not isinstance(payload, dict):
+            return 0
+        tool = payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else None
+        if resetting:
+            if not state.is_dir():
+                return 0                                 # nothing to forget
+            rec = reset(payload, state, time.time())
+        elif payload.get("hook_event_name") == "PreToolUse":
+            packs = Packs(ROOT, state)
+            rels = touched(payload, packs)
+            if not rels:
+                return 0                                 # no tracked file, or no build yet: nothing decided or created
+            wid = sys1.window_id(payload)
+            marker = str(state / "filepacks-seen" / (wid + ".json"))
+            with sys1.WindowLock(marker):
+                seen = sys1.load_seen(marker)
+                text, rec, new = plan(payload, rels, seen, packs)
+                if new:
+                    sys1.write_json_atomic(marker, {"keys": sorted(seen | set(new))})
+            rec["window"] = wid
+        else:
+            return 0
+    except BaseException as exc:                         # fail quiet: nothing injected, the type logged
+        text = ""
+        rec = {"event": "SessionStart" if resetting else "PreToolUse", "tool": tool, "error": type(exc).__name__}
+        if wid:
+            rec["window"] = wid
+    rec["t"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    rec["ms"] = round((time.monotonic() - started) * 1000, 1)
+    log(state, rec)
+    if text:
+        sys.stdout.write(text + "\n")
+    return 0
+
+
+# ---------------------------------------------------------------- the builder (P2)
+
+def _git(root, *args, data=None):
+    import subprocess
+    r = subprocess.run(["git", "-c", "core.quotePath=false", *args], cwd=root, input=data, capture_output=True,
+                       timeout=GIT_TIMEOUT)
+    if r.returncode != 0:
+        raise RuntimeError("git %s exited %d: %s" % (args[0], r.returncode,
+                                                     r.stderr.decode("utf-8", "replace").strip()[-200:]))
+    return r.stdout
+
+
+def _blobs(root, sha, paths):
+    """{path: text} of each path at `sha`, from one `git cat-file --batch`; None for one that is not a blob there."""
+    out = _git(root, "cat-file", "--batch", data="".join("%s:%s\n" % (sha, p) for p in paths).encode("utf-8"))
+    res, i = {}, 0
+    for p in paths:
+        nl = out.index(b"\n", i)
+        head = out[i:nl].split()
+        if len(head) == 3 and head[1] == b"blob":
+            size = int(head[2])
+            res[p] = out[nl + 1:nl + 1 + size].decode("utf-8", "replace")
+            i = nl + 1 + size + 1
+        else:
+            res[p] = None
+            i = nl + 1 + (int(head[2]) + 1 if len(head) == 3 else 0)
+    return res
+
+
+def _log(root, sha, limit=None, path=None):
+    """[(sha, date, subject, [paths])], newest first, from one `git log --name-only` at `sha`: at most `limit`
+    commits, only those that changed something under `path`."""
+    out = _git(root, "log", "--no-renames", "--format=%x1e%H%x1f%cs%x1f%s", "--name-only",
+               *(["-n", str(limit)] if limit else []), sha, *(["--", path] if path else [])).decode("utf-8", "replace")
+    res = []
+    for chunk in out.split("\x1e")[1:]:
+        head, _, names = chunk.partition("\n")
+        h, d, s = (head.split("\x1f") + ["", ""])[:3]
+        res.append((h, d, s, [n for n in names.split("\n") if n]))
+    return res
+
+
+def _cut(text, width):
+    text = WS_RX.sub(" ", text).strip()
+    return text if len(text) <= width else text[:width - 1] + "…"
+
+
+def _snippet(line, pos, n):
+    """At most SNIPPET characters of `line` around its characters [pos, pos + n), whitespace folded, each cut end marked
+    `…`; and the column it starts at (0: the line's start)."""
+    if len(line) <= SNIPPET:
+        return WS_RX.sub(" ", line).strip(), 0
+    a = max(0, min(pos - (SNIPPET - n) // 2, len(line) - SNIPPET))
+    s = line[a:a + SNIPPET]
+    if a > 0:
+        s = "…" + s[1:]
+    if a + SNIPPET < len(line):
+        s = s[:-1] + "…"
+    return WS_RX.sub(" ", s).strip(), a
+
+
+def _line_mention(source, n, line, m):
+    snip, at = _snippet(line, m.start(), m.end() - m.start())
+    rec = {"source": source, "line": n, "snippet": snip, "at": at}
+    rid = REGISTRY_RX.match(line)
+    if rid:
+        rec["id"] = rid.group(1)
+    h = HEADLINE_RX.match(line) if source == "ledger" else None
+    if h:
+        rec["headline"] = _cut(h.group(1), HEADLINE)
+    return rec
+
+
+def _path(tok, tracked, prefix):
+    """The tracked file a path token names: as written or without a trailing `.` (a sentence's end), after the repo
+    root's absolute prefix or a `./`; None when it names none."""
+    for t in (tok, tok.rstrip(".")):
+        if t.startswith(prefix):
+            t = t[len(prefix):]
+        elif t.startswith("./"):
+            t = t[2:]
+        if t in tracked:
+            return t
+    return None
+
+
+def _write(path, raw):
+    """`raw` into <path>.<pid>.tmp, renamed over `path` (0600, never through a link); a failed write leaves no temp."""
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    fd = s1().open_regular(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+    try:
+        try:
+            view = memoryview(raw)
+            while view:
+                view = view[os.write(fd, view):]
+        finally:
+            os.close(fd)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _clean(pdir, keep):
+    """Remove from `pdir` every pack whose file is not in `keep`, every temp file, every symbolic link (never ours) and
+    each directory left empty. Returns the number of packs removed."""
+    removed = 0
+    for dirpath, dirnames, filenames in os.walk(pdir, topdown=False):
+        top = os.path.samefile(dirpath, pdir)
+        for name in filenames + [d for d in dirnames if os.path.islink(os.path.join(dirpath, d))]:
+            full = os.path.join(dirpath, name)
+            link = os.path.islink(full)
+            if top and name in ("BUILD.json", "TRACKED.txt") and not link:
+                continue
+            rel = os.path.relpath(full, pdir)
+            if link or not name.endswith(".json") or rel[:-5] not in keep:
+                try:
+                    os.unlink(full)
+                    removed += name.endswith(".json") and not link
+                except OSError:
+                    pass
+        if not top:
+            try:
+                os.rmdir(dirpath)                        # only when empty
+            except OSError:
+                pass
+    return removed
+
+
+def build(root=ROOT, state=None, sha=None):
+    """Build every pack at one commit: `sha`, else HEAD resolved once here (AF-AP-175). One build at a time (a lock in
+    <state>). Returns the BUILD.json record."""
+    import fcntl
+    t0 = time.monotonic()
+    root = Path(root)
+    state = Path(state) if state else root / ".jev"
+    os.makedirs(state, mode=0o700, exist_ok=True)
+    lock = s1(state / "pycache").open_regular(str(state / "filepacks.lock"), os.O_WRONLY | os.O_CREAT)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _build(root, state, sha, t0)
+    finally:
+        os.close(lock)
+
+
+def _build(root, state, sha, t0):
+    if sha is None:
+        sha = _git(root, "rev-parse", "--verify", "HEAD^{commit}").decode("ascii").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ValueError("not a full commit id: %r" % sha[:80])
+    tracked = [p for p in _git(root, "ls-tree", "-r", "-z", "--name-only", sha).decode("utf-8", "replace").split("\0")
+               if p and "\n" not in p]
+    tset = set(tracked)
+    line_sources = list(LINE_SOURCES) + [("skill:" + s, ".claude/skills/%s/SKILL.md" % s) for s in SKILLS]
+    briefs = sorted(p for p in tracked if p.startswith(BRIEFS) and p.endswith(".md"))
+    missing = [path for _, path in line_sources if path not in tset]
+    texts = _blobs(root, sha, [path for _, path in line_sources if path in tset] + briefs)
+    counts, kept = {}, {}
+
+    def hit(p, source, make):
+        c = counts.setdefault(p, {})
+        c[_group(source)] = c.get(_group(source), 0) + 1
+        lst = kept.setdefault(p, {}).setdefault(source, [])
+        if len(lst) < KEEP:
+            lst.append(make())
+
+    prefix = str(root) + "/"
+    for source, path in line_sources:                    # the newest (highest) lines first
+        lines = (texts.get(path) or "").split("\n")
+        for i in range(len(lines) - 1, -1, -1):
+            found = {}
+            for m in PATH_RX.finditer(lines[i]):
+                p = _path(m.group(0), tset, prefix)
+                if p and p not in found:
+                    found[p] = m
+            for p, m in found.items():
+                hit(p, source, lambda: _line_mention(source, i + 1, lines[i], m))
+    order, dated = [], set()                             # the briefs, newest first by their last commit
+    for h, d, _, names in _log(root, sha, path=BRIEFS):
+        for n in names:
+            if n in texts and n not in dated and n.startswith(BRIEFS):
+                dated.add(n)
+                order.append((n, h[:7], d))
+    order += [(b, "?", "?") for b in briefs if b not in dated]
+    for b, bsha, bdate in order:                         # a mention is the brief's path
+        text, named, line_no, last = texts.get(b) or "", set(), 1, 0
+        for m in PATH_RX.finditer(text):
+            p = _path(m.group(0), tset, prefix)
+            if not p or p == b or p in named:
+                continue
+            named.add(p)
+            line_no += text.count("\n", last, m.start())
+            last = m.start()
+            hit(p, "brief", lambda: {"source": "brief", "path": b, "line": line_no, "commit": bsha, "date": bdate})
+    for h, d, subj, names in _log(root, sha, limit=COMMITS):
+        for p in dict.fromkeys(names):
+            if p in tset:
+                hit(p, "commit", lambda: {"source": "commit", "commit": h[:7], "date": d, "subject": _cut(subj, SNIPPET)})
+    sources = [s for s, _ in line_sources] + ["brief", "commit"]
+    packs = {p: {"schema": SCHEMA, "path": p, "counts": counts[p],
+                 "mentions": [m for s in sources for m in by.get(s, ())]}
+             for p, by in kept.items() if p != "BUILD"}      # a root file named BUILD would be BUILD.json
+    pdir = state / "filepacks"
+    os.makedirs(pdir, mode=0o700, exist_ok=True)
+    removed = _clean(pdir, set(packs))
+    written = failed = 0
+    sys1 = s1()
+    for p in sorted(packs):
+        raw = (json.dumps(packs[p], sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
+        path = str(pdir / (p + ".json"))
+        try:
+            if sys1.read_regular(path) == raw:
+                continue
+        except OSError:
+            pass
+        try:
+            _write(path, raw)
+            written += 1
+        except OSError:
+            failed += 1                                  # a path the pack tree cannot hold: that file goes without
+    _write(str(pdir / "TRACKED.txt"), ("\n" + "\n".join(tracked) + "\n").encode("utf-8"))
+    rec = {"schema": SCHEMA, "commit": sha, "tracked": len(tracked), "files": len(packs), "written": written,
+           "removed": removed, "failed": failed, "missing": missing, "ms": round((time.monotonic() - t0) * 1000)}
+    _write(str(pdir / "BUILD.json"), (json.dumps(rec, sort_keys=True) + "\n").encode("utf-8"))
+    return rec
+
+
+# ---------------------------------------------------------------- the dry run
+
+def _recorded(transcript, cap):
+    """[[(tool, input)] per context window]: the main loop's Read, Edit, Write and Bash tool_use inputs in the first
+    `cap` bytes of a transcript, split at its compaction boundaries. Only lines naming a compaction boundary or a
+    tool_use are parsed, and only those two parts are read; sidechain (subagent) records are left out."""
+    windows, read = [[]], 0
+    with open(transcript, "rb") as fh:
+        for raw in fh:
+            if read >= cap:
+                break
+            raw = raw[:cap - read]                       # the line the cap cuts no longer parses
+            read += len(raw)
+            if b'"compact_boundary"' not in raw and b'"tool_use"' not in raw:
+                continue
+            try:
+                rec = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("type") == "system" and rec.get("subtype") == "compact_boundary":
+                windows.append([])
+                continue
+            msg = rec.get("message")
+            content = msg.get("content") if isinstance(msg, dict) else None
+            if rec.get("type") != "assistant" or rec.get("isSidechain") or not isinstance(content, list):
+                continue
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in TOOLS:
+                    windows[-1].append((block["name"], block.get("input")))
+    return windows
+
+
+def _pct(vals, q):
+    s = sorted(vals)
+    return s[min(len(s) - 1, int(q * len(s)))] if s else 0
+
+
+def replay(transcript, cap, root=ROOT, state=None, wrapper=0, out=None):
+    """The hook's planner over the recorded calls, window by window, the seen keys in memory. Prints per window the
+    calls, the injections and their bytes, then the median, p90 and max, and the milliseconds of each entry."""
+    import statistics
+    out = out or sys.stdout
+    packs = Packs(root, state)
+    if not packs.built():
+        print("filepacks replay: no build in %s (run `filepacks.py build` first)" % packs.dir, file=sys.stderr)
+        return 2
+    windows = _recorded(transcript, cap)
+    per, timings = [], []
+    for calls in windows:
+        seen, inj, nbytes = set(), 0, 0
+        for name, ti in calls:
+            payload = {"hook_event_name": "PreToolUse", "tool_name": name, "tool_input": ti, "cwd": str(root)}
+            rels = touched(payload, packs)
+            if rels:
+                text, rec, new = plan(payload, rels, seen, packs, timings=timings)
+                seen |= set(new)
+                inj += len(rec["injected"])
+                nbytes += rec["bytes"]
+        per.append((len(calls), inj, nbytes))
+    for k, (n, i, b) in enumerate(per):
+        print("window %d: calls %d injections %d bytes %d" % (k, n, i, b), file=out)
+    for label, vals in (("injections", [i for _, i, _ in per]), ("bytes", [b for _, _, b in per])):
+        print("%s per window: median %s p90 %s max %s (windows %d)" % (
+            label, statistics.median(vals), _pct(vals, .9), max(vals), len(vals)), file=out)
+    print("entry ms: p50 %.3f p95 %.3f max %.3f over %d entries" % (
+        _pct(timings, .5), _pct(timings, .95), max(timings or [0]), len(timings)), file=out)
+    if wrapper:
+        _wrapper_latency(windows, wrapper, root, packs, out)
+    return 0
+
+
+def _wrapper_latency(windows, k, root, packs, out):
+    """K recorded calls, spread evenly over the transcript, through the real wrapper and hook (a subprocess each), on a
+    temporary copy of the packs: the milliseconds each call takes."""
+    import shutil
+    import subprocess
+    import tempfile
+    calls = [(w, name, ti) for w, cs in enumerate(windows) for name, ti in cs]
+    step = max(1, len(calls) // k)
+    tmp = Path(tempfile.mkdtemp(prefix="filepacks-replay-"))
+    try:
+        shutil.copytree(packs.dir, tmp / "filepacks", symlinks=True)
+        env = dict(os.environ, AF_FILEPACKS_STATE=str(tmp), AF_S1_RATE_STATE=str(tmp))
+        cmd = ["python3", str(root / "scripts" / "hook_context.py"), "PreToolUse", "--", "python3",
+               str(root / "scripts" / "filepacks.py"), "hook"]
+        ms, printed = [], 0
+        for w, name, ti in calls[::step][:k]:
+            data = json.dumps({"hook_event_name": "PreToolUse", "tool_name": name, "tool_input": ti,
+                               "cwd": str(root), "session_id": "replay-%d" % w}).encode("utf-8")
+            t0 = time.monotonic()
+            r = subprocess.run(cmd, input=data, capture_output=True, env=env, timeout=60)
+            ms.append((time.monotonic() - t0) * 1000)
+            printed += bool(r.stdout.strip())
+            if r.returncode != 0:
+                raise RuntimeError("the wrapped hook exited %d" % r.returncode)
+        print("wrapper ms: p50 %.1f p95 %.1f max %.1f over %d calls (%d injected)" % (
+            _pct(ms, .5), _pct(ms, .95), max(ms or [0]), len(ms), printed), file=out)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- the command line
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    state = Path(os.environ.get("AF_FILEPACKS_STATE") or ROOT / ".jev")
+    if argv[:1] == ["hook"]:
+        return hook(argv[1:], state)
+    import argparse
+    ap = argparse.ArgumentParser(prog="filepacks.py", description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("build")
+    rp = sub.add_parser("replay")
+    rp.add_argument("--transcript", required=True)
+    rp.add_argument("--bytes", type=int, required=True)
+    rp.add_argument("--wrapper", type=int, default=0)
+    ns = ap.parse_args(argv)
+    if ns.cmd == "build":
+        rec = build(ROOT, state)
+        print("filepacks build: %s %d packs (%d written, %d removed, %d failed) of %d tracked files in %d ms%s" % (
+            rec["commit"][:7], rec["files"], rec["written"], rec["removed"], rec["failed"], rec["tracked"], rec["ms"],
+            "; not tracked: " + ", ".join(rec["missing"]) if rec["missing"] else ""), flush=True)
+        return 0
+    return replay(ns.transcript, ns.bytes, ROOT, state, ns.wrapper)
+
+
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["hook"]:
+        try:
+            sys.exit(main())
+        except BaseException:
+            sys.exit(0)
+    sys.exit(main())

@@ -398,9 +398,43 @@ def check_record_that_lies(repo, base):
     assert "from a STALE GitNexus graph" in load(repo).lookup("scripts/alpha.py", 14, root=repo)["text"]
 
 
+def check_file_entry(repo, base):
+    """L2b (task #353): codemap.file_entry, the file-level reader the file-pack hook shows for a touch that names no
+    one symbol. The whole file: the symbol count and the top-level symbols with their spans (the oracle: the file's own
+    AST), the tests and the registry rows; a range: every symbol that overlaps it and the rows in it; an edited file:
+    the STALE mark on the second line."""
+    build(repo, base, "scripts/alpha.py")
+    cm = load(repo)
+    syms = sorted(ast_symbols((repo / "scripts" / "alpha.py").read_text()), key=lambda s: (s[1], -s[2], s[0]))
+    top = [s for s in syms if "." not in s[0]]
+
+    def spans(ss):
+        return " · ".join("%s L%d-%d" % (q, f, e) for q, _, e, f in ss)
+    r = cm.file_entry("scripts/alpha.py", root=repo)
+    lines = r["text"].split("\n")
+    assert (r["status"], r["stale"]) == ("file", False), r
+    assert "symbols: " + spans(top) in lines, "the file entry does not name the top-level symbols with their spans"
+    assert lines[0].startswith("codemap scripts/alpha.py — %d symbols, %d at top level" % (len(syms), len(top)))
+    assert any(x.startswith("tests of the file (code-review-graph) 1: tests/test_alpha.py:")
+               and x.endswith(" test_helper_adds_one") for x in lines), lines
+    assert "registry rows 2: AP-1 :6, AP-32 :26" in lines, lines
+    r = cm.file_entry("scripts/alpha.py", 18, 26, root=repo)
+    lines = r["text"].split("\n")
+    assert r["status"] == "range" and "symbols in range: " + spans(
+        [s for s in syms if s[3] <= 26 and s[2] >= 18]) in lines, "a range does not name every symbol that overlaps it"
+    assert "registry rows in range 1: AP-32 :26" in lines, lines
+    f = repo / "scripts" / "alpha.py"
+    f.write_text(f.read_text() + "\n# edited\n")
+    r = cm.file_entry("scripts/alpha.py", root=repo)
+    assert r["stale"] is True and r["text"].split("\n")[1].startswith("STALE: the file changed"), \
+        "an edited file's entry does not say STALE"
+    assert cm.file_entry("README.md", root=repo)["status"] == "out-of-scope"
+    assert cm.file_entry("scripts/beta.py", root=repo)["status"] == "miss"       # no pack was built for beta.py
+
+
 LOOKUP_CHECKS = {"pack-fields": check_pack_fields, "record-that-lies": check_record_that_lies, "lookup-positions": check_lookup_positions, "stale": check_stale,
                  "miss": check_miss, "byte-cap": check_byte_cap, "absent": check_absent,
-                 "identical": check_identical, "edit-context": check_edit_context}
+                 "identical": check_identical, "edit-context": check_edit_context, "file-entry": check_file_entry}
 # one mutation per property: (the check it must fail, old text, new text, the failure it must fail with)
 MUTANTS = {
     "blob-without-header": ("pack-fields", 'hashlib.sha1(b"blob %d\\0" % len(data) + data)', "hashlib.sha1(data)",
@@ -428,6 +462,14 @@ MUTANTS = {
     "first-line-only": ("edit-context", "ranges, i = [], content.find(old_string)",
                         'ranges, i = [], content.find(old_string.split("\\n", 1)[0])',
                         "the edit was not placed at 32-33: codemap: old_string occurs 2 times"),
+    "file-entry-nested": ("file-entry", '        shown = [s for s in syms if "." not in s["qualname"]]',
+                          "        shown = syms", "the file entry does not name the top-level symbols with their spans"),
+    "file-entry-enclosed-only": ("file-entry",
+                                 'shown = [s for s in syms if s.get("from", s["start"]) <= end_line and s["end"] >= line]',
+                                 'shown = [s for s in syms if s.get("from", s["start"]) >= line and s["end"] <= end_line]',
+                                 "a range does not name every symbol that overlaps it"),
+    "file-entry-never-stale": ("file-entry", 'stale = pack["blob"] != blob_sha((root / rel).read_bytes())', "stale = False",
+                               "an edited file's entry does not say STALE"),
 }
 
 
