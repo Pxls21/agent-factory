@@ -313,3 +313,27 @@ files, packs per task.
 | K5 | R-D, the live A/B | this session | K0, K1 |
 | K6 | Jev in shadow, scored on the replay | PC | K1, K3 |
 | H1 | LCM for the Hermes lanes, pinned in `upstream.lock.yaml`, its thresholds from K0's Qwen rows | PC | T1's verdict |
+
+### 10.5 K0: what the published evidence says (2026-09-29)
+
+Source: `tasks/briefs/jev-trim/K0-COMPACTION-POINT-report.md` (evidence only; the reading at the end is the main loop's).
+
+- **Our Claude models.** No per-length curve exists for Opus 5.5 or Fable 5. Their nearest measured siblings on the
+  hardest retrieval test (MRCR v2 with 8 needles, Context Arena, independent) fall below 85% of their 8k score at 128k to
+  256k and below 50% by 512k (Opus 5: 91.3 at 128k, 65.6 at 256k, 42.5 at 512k). On graph reasoning, Mythos 5 (Fable 5's
+  sibling) scores 91.1 at 256k and 79.4 at 1M (GraphWalks BFS). Long-document QA near 100k (AA-LCR) is 82 to 85 for all
+  three models we run.
+- **Qwen3.8-27B** (the PC lanes, served at 131k with 4-bit weights): 97.9 at 64k and 78.9 at 128k on the same retrieval
+  test.
+- **The vendors' own practice.** Anthropic's evaluations compact at 200k (orchestrators at 100k); the API's threshold
+  compaction defaults to 150k (minimum 50k); Claude Code compacts native-1M models at about 967k by default; the docs
+  name the effect "context rot". Hermes compresses at 0.75 of the window below 512k.
+- **A compaction costs.** Compactors kept 17% of injected state on average (COMPINT, contexts of 100k); a 24-turn agent
+  under 5x compression kept its completion rate but made up to three times as many retrieval calls; summaries keep later
+  content better than earlier content.
+- **A setting trap.** `CLAUDE_CODE_AUTO_COMPACT_WINDOW=500k` reads as 500 and clamps to the 100K minimum; write `500000`
+  (the Claude Code docs, K0's G8).
+- **The main loop's reading.** The evidence argues for compacting well below this session's 786k. Our post-compaction
+  start is about 130k, so a point near Anthropic's 200k would leave about 70k of working room and compact every few turns.
+  K1 measures what each of our compactions loses and models the count at 300k to 785k; the point comes from K1's table,
+  then the live test (R-D).
