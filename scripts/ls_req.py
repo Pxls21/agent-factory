@@ -52,7 +52,14 @@ transcript, never only last_assistant_message: PM P3a, P3b), skips thinking reco
 them (a record holding a thinking block beside a text block is skipped whole: measured, every assistant record holds
 one block), and cross-checks last_assistant_message: the harness writes the transcript asynchronously (its hooks docs),
 so when that text holds a nonce line the transcript does not show yet, the hook waits up to CATCHUP_S for the
-transcript and then takes the text itself (the ledger row then has no record uuid until the record appears). The
+transcript and then takes the text itself. Every line is matched by occurrence, never by text (VERIFY-LS-B10 F1): a
+byte-identical repeat of a request line is a request of its own (`refused: duplicate id`). A line of that text belongs
+to a message the transcript does not show yet (it is the final response's last block, PM P3a, so the transcript shows
+it only in a record no earlier round answered or bound), so it is never "the same" as another line. Its ledger row has
+no record uuid; it carries `fb` (a token) and `after` (the offset its round read up to), and when its record appears,
+the first line of that request text in the same transcript, at or after `after`, that no row holds yet is tied to it
+by a `bind` row (that record's uuid and line): a fallback receipt absorbs ONE transcript line, so its record is not
+answered twice. The
 round's requests run one after another under ROUND_BUDGET_S (the registration timeout is 300 s): a request is not
 started with less than MIN_START_S left, and a run past the budget is stopped (SIGTERM to the runner, which kills its
 steps' process groups; SIGKILL KILL_GRACE_S later); both answer `refused: budget`. It never keys execution on
@@ -60,11 +67,15 @@ stop_hook_active (PM P1). The harness ends a turn above CLAUDE_CODE_STOP_HOOK_BL
 blocking Stops with no tool call between them and drops the pending feedback (PM P2); the hook counts them from the
 transcript (a blocking stop_hook_summary adds one; a tool_use, a non-blocking summary or a new prompt record resets; a
 compaction's summary record carries turnOrigin too and does not reset) and from its own blocks, takes the larger, and
-at cap-1 refuses every request of the round loudly (`continue with tool calls`) and runs nothing. A Stop with no
-current-nonce request line never blocks for a request; the one block it can make then is the chain-end git report (PM
-P4): after a receipt round the harness git check (/root/.claude/stop-hook-git-check.sh) stays silent for the rest of
-the turn, because stop_hook_active stays true, so at the chain's end this hook runs that check's dirty and unpushed
-checks in the payload's cwd and reports the first hit in its words, once per chain.
+from cap-1 on refuses every request of the round loudly (`continue with tool calls`) and runs nothing; above the cap,
+where the harness would drop the feedback, it blocks nothing and writes nothing for it: the refusals stay undelivered
+and the next prompt reports them (VERIFY-LS-B10 F4). A Stop with no current-nonce request line never blocks for a
+request; the one block it can make then is the chain-end git report (PM P4): after a receipt round the harness git
+check (/root/.claude/stop-hook-git-check.sh) stays silent for the rest of the turn, because stop_hook_active stays
+true, so at the chain's end this hook runs that check's dirty and unpushed checks in the payload's cwd and reports the
+first hit in its words, once per chain. That block is contract item 7's, by the coordinator's ruling on VERIFY-LS-B10
+F11: item 7's specific wording governs, so the chain-end git report reports as the harness's own check would, once
+per chain, and item 10's never-block rule covers request handling only.
 
 THE NONCE. Every UserPromptSubmit mints a fresh nonce. The turn's valid set keeps the last KEEP_NONCES nonces while
 the harness query is still running (UserPromptSubmit fires for messages absorbed mid-turn and, per the premortem,
@@ -83,7 +94,9 @@ without blocking (a stale nonce alone never blocks) are reported there too.
 STATE: <main>/.jev/req/ (the MAIN tree through git's common dir, as the stack runner finds its log; AF_REQ_STATE, read
 once at start, replaces <main>/.jev for tests): ledger.jsonl (one row per receipt: the session, nonce, id, label,
 status, the stack run id and its run dir, the transcript and the uuid of the record that carried the request, so an
-export can pair the chat before a request with its label and its result), sessions/<session>.json (the nonces and
+export can pair the chat before a request with its label and its result; plus one `bind` row, kind bind and status
+bound, when the record of a last_assistant_message receipt appears: its uuid and line, and the receipt's `fb`, which
+completes that receipt's pairing), sessions/<session>.json (the nonces and
 the byte offsets), out/<session>/ (each runner print in full) and hooks.jsonl (one line per hook run: its time in ms
 and the transcript bytes it read). OFF SWITCH: while <main>/.jev/req-off exists every subcommand exits at once and
 injects nothing (defer-check exits 1). A hook error prints one line naming what failed and exits 0: a broken hook
@@ -331,7 +344,10 @@ def classify(raw, off):
         return None
     if not isinstance(obj, dict) or obj.get("isSidechain") is True:
         return None
-    kind, uuid = obj.get("type"), obj.get("uuid") if isinstance(obj.get("uuid"), str) else None
+    # every transcript line has an identity (known() matches by occurrence): a record with no uuid, never measured, is
+    # known by its byte offset
+    kind = obj.get("type")
+    uuid = obj.get("uuid") if isinstance(obj.get("uuid"), str) and obj.get("uuid") else "@%d" % off
     if kind == "assistant":
         msg = obj.get("message") if isinstance(obj.get("message"), dict) else {}
         blocks = [b for b in (msg.get("content") or []) if isinstance(b, dict)] if isinstance(msg.get("content"),
@@ -512,16 +528,18 @@ def parse_message(blocks, nonces, source):
     return out
 
 
-def lam_missing(lam, recs, nonces):
+def lam_missing(lam, recs, nonces, earlier=()):
     """True when last_assistant_message holds a request line or a current-nonce line that no text record of the
-    window holds: the transcript has not caught up."""
+    window holds: the transcript has not caught up. A record in `earlier` (one an earlier round answered or bound) does
+    not count: that text is the final response's last block (PM P3a), newer than any such record, so a byte-identical
+    line there is another occurrence (VERIFY-LS-B10 F1)."""
     if not lam:
         return False
     want = [s for s in (ln.rstrip(" \t\r") for ln in lam.split("\n"))
             if HEAD_RE.fullmatch(s) or any(n in s.lower() for n in nonces)]
     if not want:
         return False
-    have = {ln.rstrip(" \t\r") for r in recs if r.kind == "text" for ln in r.text.split("\n")}
+    have = {ln.rstrip(" \t\r") for r in recs if r.kind == "text" and r.uuid not in earlier for ln in r.text.split("\n")}
     return any(w not in have for w in want)
 
 
@@ -537,16 +555,23 @@ def collect(recs, lam, nonces):
 
 # ---------------------------------------------------------------- the ledger
 
-def ledger_index(ctx, session, nonces):
-    """{(nonce, id): [row]} of this session's rows for these nonces (bad lines are counted, never trusted)."""
-    idx, bad = {}, 0
+def read_ledger(ctx):
+    """The ledger's bytes (empty before its first row); HookError when it cannot be read."""
     try:
         with open(ctx.path("ledger.jsonl"), "rb") as fh:
-            data = fh.read()
+            return fh.read()
     except FileNotFoundError:
-        return idx, 0
+        return b""
     except OSError as e:                  # never read as empty: every answered request would look unanswered
         raise HookError("the ledger %s is unreadable (%s)" % (ctx.path("ledger.jsonl"), type(e).__name__))
+
+
+def ledger_index(ctx, session, nonces, data=None):
+    """{(nonce, id): [row]} of this session's rows for these nonces (bad lines are counted, never trusted); `data`: the
+    ledger's bytes, when the caller read them already (read_ledger)."""
+    idx, bad = {}, 0
+    if data is None:
+        data = read_ledger(ctx)
     needles = [n.encode() for n in nonces]
     sneedle = session.encode()
     for raw in data.split(b"\n"):
@@ -581,15 +606,25 @@ def append_rows(ctx, rows):
         os.close(lock)
 
 
-def known(c, idx, seen):
-    """"same" when this line already has its receipt (the same record and line, or the same request text where one
-    side came from last_assistant_message), "dup" when its (nonce, id) is taken by another line, else None."""
+def known(c, idx, seen, path):
+    """How a line stands against the ledger and this run's earlier lines (`seen`), matched by occurrence, never by text
+    (VERIFY-LS-B10 F1): "same" when a row carries its record and line (its receipt, or the `bind` row of a
+    last_assistant_message receipt); the fallback row itself when this transcript line is the record of that receipt (a
+    row with no uuid, carrying `fb`): the first such row of the same request text, in ledger order, from this
+    transcript, whose round read up to at or before this line's record (`after`) and that no bind row holds yet, so a
+    fallback receipt absorbs ONE transcript line (the caller binds them); "dup" when another line holds its (nonce, id);
+    else None. A last_assistant_message line (no uuid) is a line of a message the transcript does not show yet: a new
+    occurrence, never "same" as another line, a byte-identical one included."""
     rows = idx.get((c.nonce, c.id), []) + seen.get((c.nonce, c.id), [])
-    for row in rows:
-        if c.uuid is not None and row.get("uuid") == c.uuid and row.get("line") == c.line:
-            return "same"
-        if row.get("sha") == c.sha and (row.get("uuid") is None or c.uuid is None):
-            return "same"
+    if c.uuid is not None:
+        for row in rows:
+            if row.get("uuid") == c.uuid and row.get("line") == c.line:
+                return "same"
+        held = {row.get("binds") for row in rows}
+        for row in rows:
+            if (row.get("fb") and row["fb"] not in held and row.get("sha") == c.sha and row.get("transcript") == path
+                    and type(row.get("after")) is int and c.off >= row["after"]):
+                return row
     if c.kind == "request" and rows:
         return "dup"
     return None
@@ -601,6 +636,12 @@ def row_of(ctx, session, transcript, c, status, reason, delivered, **extra):
            "transcript": transcript, "delivered": delivered}
     row.update(extra)
     return row
+
+
+def bind_row(ctx, session, transcript, c, fbrow):
+    """The row that ties a transcript line to the last_assistant_message receipt it is the record of: the line's record
+    and line, and the receipt's `fb` (item 6's pairing for that receipt). It is not a receipt: its status is `bound`."""
+    return row_of(ctx, session, transcript, c, "bound", None, None, kind="bind", binds=fbrow["fb"])
 
 
 def receipt_of(c, status, reason=None, rc=None, run=None):
@@ -854,7 +895,11 @@ def reconcile(ctx, st, recs=None, restart=None):
     idx, _bad = ledger_index(ctx, st["session"], sorted({c.nonce for c in cands}))
     seen = {}
     for c in cands:
-        k = known(c, idx, seen)
+        k = known(c, idx, seen, path)
+        if isinstance(k, dict):                   # the record of a last_assistant_message receipt: tied to it, once
+            rows.append(bind_row(ctx, st["session"], path, c, k))
+            seen.setdefault((c.nonce, c.id), []).append(rows[-1])
+            continue
         if k == "same":
             continue
         if c.kind == "request" and c.nonce not in st["nonces"]:
@@ -1005,14 +1050,30 @@ def cmd_stop(ctx, payload):
         st.update(transcript=transcript, turn_start=start, read=start)
     recs, end, nbytes = scan(transcript, start, align=align)
     lam = payload.get("last_assistant_message") if isinstance(payload.get("last_assistant_message"), str) else ""
+    ledger = read_ledger(ctx)                     # read once: the catch-up wait judges the window against it
+
+    def earlier():
+        """The uuids of the window's records that an earlier round answered or bound (see lam_missing)."""
+        cs = collect(recs, None, nonces)
+        idx, seen, out = ledger_index(ctx, session, sorted({c.nonce for c in cs}), ledger)[0], {}, set()
+        for c in cs:
+            k = known(c, idx, seen, transcript)
+            if isinstance(k, dict):
+                seen.setdefault((c.nonce, c.id), []).append({"uuid": c.uuid, "line": c.line, "binds": k["fb"]})
+            if isinstance(k, dict) or k == "same":
+                out.add(c.uuid)
+        return out
+
+    def missing():
+        return lam_missing(lam, recs, nonces, earlier() if lam else ())
     waited, use_lam = 0.0, False
-    if lam_missing(lam, recs, nonces):
+    if missing():
         stop_at = time.monotonic() + ctx.opts["catchup"]
-        while time.monotonic() < stop_at and lam_missing(lam, recs, nonces):
+        while time.monotonic() < stop_at and missing():
             time.sleep(CATCHUP_POLL_S)
             recs, end, nbytes = scan(transcript, start, align=align)
         waited = time.monotonic() - t0
-        use_lam = lam_missing(lam, recs, nonces)
+        use_lam = missing()
     # the consecutive blocking Stops with no tool call between them, as the harness counts them (PM P2)
     t_blocks, o_blocks = st["t_blocks"], st["o_blocks"]
     for r in recs:
@@ -1022,14 +1083,21 @@ def cmd_stop(ctx, payload):
             t_blocks += 1
     count = max(t_blocks, o_blocks)
     cands = collect(recs, lam if use_lam else None, nonces)
-    idx, bad_rows = ledger_index(ctx, session, sorted({c.nonce for c in cands}))
-    pending, seen = [], {}
+    idx, bad_rows = ledger_index(ctx, session, sorted({c.nonce for c in cands}), ledger)
+    pending, seen, binds = [], {}, []
     for c in cands:
-        k = known(c, idx, seen)
+        k = known(c, idx, seen, transcript)
+        if isinstance(k, dict):                   # the record of a last_assistant_message receipt: tied to it, once
+            binds.append(bind_row(ctx, session, transcript, c, k))
+            seen.setdefault((c.nonce, c.id), []).append(binds[-1])
+            continue
         if k == "same":
             continue
         pending.append((c, k))
         seen.setdefault((c.nonce, c.id), []).append({"uuid": c.uuid, "line": c.line, "sha": c.sha})
+
+    def lam_fields(c):                            # a fallback row: the token its record's bind row names, and the
+        return {"fb": secrets.token_hex(8), "after": end} if c.uuid is None else {}   # offset its record lands after
     current = [(c, k) for c, k in pending if c.nonce in nonces]
     st.update(read=end, t_blocks=t_blocks, o_blocks=o_blocks)
     log = {"event": "stop", "session": session, "bytes": nbytes, "candidates": len(cands), "pending": len(pending),
@@ -1038,9 +1106,9 @@ def cmd_stop(ctx, payload):
     if not current:
         # stale lines alone never block (a quoted old line must not continue the turn): their receipts wait for the
         # next prompt's report
-        rows = [row_of(ctx, session, transcript, c, "refused", "stale nonce (not this turn's)", "no")
+        rows = [row_of(ctx, session, transcript, c, "refused", "stale nonce (not this turn's)", "no", **lam_fields(c))
                 for c, _k in pending]
-        append_rows(ctx, rows)
+        append_rows(ctx, binds + rows)            # a bind is written before `read` passes its record
         st["undelivered"] += [receipt_of(c, "refused", "stale nonce (not this turn's)") for c, _k in pending]
         message = None
         if st["chain_open"]:
@@ -1064,11 +1132,17 @@ def cmd_stop(ctx, payload):
         signal.signal(sig, on_term)
     n = count + 1
     at_cap = n >= ctx.cap - 1
+    over = n > ctx.cap                            # above the cap the harness drops a blocking Stop's feedback (PM P2)
     labels, registry_error = (None, None) if at_cap else stack_labels(ctx)
     deadline = t0 + ctx.opts["budget"]
     runs_base = ctx.opts["log_dir"] or os.path.join(main_tree(ctx.opts["tree"]) or ctx.opts["tree"], ".jev", "stacks")
     sections, ran, failures = [], 0, []
-    st.update(o_blocks=n, chain_open=True)
+    if not over:
+        st.update(o_blocks=n, chain_open=True)
+    try:
+        append_rows(ctx, binds)                   # before any save of the state moves `read` past their records
+    except OSError as e:
+        failures.append("the bind rows (%s)" % e)
     for c, k in pending:
         status, reason, rc, run, text = "refused", None, None, None, ""
         if c.kind == "malformed":
@@ -1079,6 +1153,10 @@ def cmd_stop(ctx, payload):
             reason = "duplicate id (%s is taken for this nonce: every request line takes a new id)" % c.id
         elif c.reason:
             reason = "malformed (%s)" % c.reason
+        elif over:                                # the advice first, as below
+            reason = ("cap: nothing ran; continue with tool calls (python3 scripts/stack.py %s ...): this was Stop %d "
+                      "in a row with no tool call, above the harness's cap of %d, where it drops a Stop hook's "
+                      "feedback, so this receipt waited for the next prompt%s" % (c.label, n, ctx.cap, ctx.cap_note))
         elif at_cap:                              # the advice first: a long cap_note is cut at REASON_MAX, never it
             reason = ("cap: nothing ran; continue with tool calls (python3 scripts/stack.py %s ...): this is blocking "
                       "Stop %d in a row with no tool call, and above %d the harness ends the turn%s" % (
@@ -1093,8 +1171,9 @@ def cmd_stop(ctx, payload):
         saved = save_print(ctx, session, c, text) if text else None
         res = receipt_of(c, status, reason, rc, run)
         try:
-            append_rows(ctx, [row_of(ctx, session, transcript, c, status, reason, "feedback", rc=rc, run=run,
-                                     run_dir=os.path.join(runs_base, run) if run else None, out=saved, receipt=res)])
+            append_rows(ctx, [row_of(ctx, session, transcript, c, status, reason, "no" if over else "feedback", rc=rc,
+                                     run=run, run_dir=os.path.join(runs_base, run) if run else None, out=saved,
+                                     receipt=res, **lam_fields(c))])
         except OSError as e:
             failures.append("the ledger row of %s (%s)" % (c.id, e))
         sections.append((res, text.rstrip("\n"), saved))
@@ -1105,6 +1184,13 @@ def cmd_stop(ctx, payload):
         except OSError as e:
             if not any(f.startswith("the session state") for f in failures):
                 failures.append("the session state (%s)" % e)
+    if over and not any(f.startswith("the session state") for f in failures):
+        # above the cap nothing is written for the harness to drop and nothing blocks: the refusals stay undelivered
+        # in the saved state, and the next prompt reports them (VERIFY-LS-B10 F4); a state that could not be saved
+        # cannot carry them, so then they go out below as at the cap
+        hook_log(ctx, dict(log, ms=round((time.monotonic() - t0) * 1000, 1), outcome="over-cap", ran=ran,
+                           receipts=len(sections), shown=0))
+        return 0
     neutralize, neut_error = neutralizer()
     head = ["Chat form (LS-B10) receipts, one per request line (%d; nonce %s%s):" % (
         len(sections), nonces[-1], ", the last_assistant_message fallback" if use_lam else "")]

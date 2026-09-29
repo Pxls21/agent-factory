@@ -233,6 +233,16 @@ def receipts(r, nonce):
     return out
 
 
+def receipt_rows(w):
+    """The ledger's receipt rows (every row but a bind row)."""
+    return [x for x in w.ledger() if x["kind"] != "bind"]
+
+
+def binds(w):
+    """The ledger's bind rows: each ties the record of a last_assistant_message receipt to that receipt."""
+    return [x for x in w.ledger() if x["kind"] == "bind"]
+
+
 def end_step(pidfile, wait_s=5.0):
     """None when no step wrote its pid; False when the step is gone within wait_s; True when it outlived that (it is
     then killed, so no test leaves a sleeper behind)."""
@@ -1043,8 +1053,9 @@ def test_the_stop_hook_time_on_a_large_transcript_is_bounded(w):
 def test_the_transcript_catch_up_wait_and_the_last_assistant_message_fallback(w):
     """The harness writes the transcript asynchronously: when last_assistant_message holds a request the transcript
     does not show, the hook waits (bounded) and then answers from that text, the row with no record uuid; when the
-    record appears later, it is the same request, not a duplicate. Mutants: no fallback (a silent drop); the later
-    record answered again as a duplicate."""
+    record appears later, it is the same request, not a duplicate: a bind row ties that record to the receipt
+    (VERIFY-LS-B10 F1; item 6's pairing). Mutants: no fallback (a silent drop); the later record answered again as a
+    duplicate."""
     n = w.prompt()
     last = "REQ %s r1 premise files=a.txt" % n
     r = w.stop(lam=last, args=("--catchup", "0.3"))
@@ -1052,7 +1063,335 @@ def test_the_transcript_catch_up_wait_and_the_last_assistant_message_fallback(w)
     assert "the last_assistant_message fallback" in r.stderr.decode()
     [row] = w.ledger()
     assert (row["uuid"], row["source"]) == (None, "last_assistant_message")
-    w.text(last)                                   # the record reaches the transcript after the Stop
+    record = w.text(last)                          # the record reaches the transcript after the Stop
     w.summary(blocking=True)
     r = w.stop(active=True)
-    assert (r.returncode, r.stderr) == (0, b"") and len(w.ledger()) == 1 and len(w.runs()) == 1
+    assert (r.returncode, r.stderr) == (0, b"") and len(receipt_rows(w)) == 1 and len(w.runs()) == 1
+    [bind] = binds(w)
+    assert (bind["uuid"], bind["line"], bind["binds"], bind["status"]) == (record, 0, row["fb"], "bound")
+
+
+# ---------------------------------------------------------------- round 2: every line by occurrence (VERIFY-LS-B10 F1)
+
+DUP = "refused: duplicate id (r1 is taken for this nonce: every request line takes a new id)"
+
+
+def test_the_same_line_twice_through_the_fallback_gets_two_receipts_and_its_record_none(w):
+    """VERIFY-LS-B10 F1 (S1, S1b): the same request line twice in one last_assistant_message text is two requests,
+    answered `ran` and `refused: duplicate id` as on the transcript path; when their record arrives, each of its two
+    lines is bound to one receipt, so nothing is answered or run twice, and the next prompt reports nothing. Mutants: a
+    fallback line read as "same" as a row of the same text (the second line silent); no binding (the record's lines
+    answered again, exit 2); a fallback row absorbing more than one line (both record lines bound to the first)."""
+    n = w.prompt()
+    line = "REQ %s r1 premise files=a.txt" % n
+    lam = line + "\n" + line
+    r = w.stop(lam=lam, args=("--catchup", "0.3"))
+    got = receipts(r, n)
+    assert r.returncode == 2 and got["r1"][0].startswith("ran rc=0") and got["r1"][1:] == [DUP], got
+    rows = receipt_rows(w)
+    assert [(x["line"], x["uuid"], x["source"], x["status"]) for x in rows] == [
+        (0, None, "last_assistant_message", "ran"), (1, None, "last_assistant_message", "refused")]
+    assert len(w.runs()) == 1 and len({x["fb"] for x in rows}) == 2
+    record = w.text(lam)                           # the record arrives: two lines, each already answered
+    w.summary(blocking=True)
+    r = w.stop(active=True)
+    assert (r.returncode, r.stderr) == (0, b"") and len(receipt_rows(w)) == 2 and len(w.runs()) == 1
+    assert [(x["uuid"], x["line"], x["binds"]) for x in binds(w)] == [(record, 0, rows[0]["fb"]),
+                                                                       (record, 1, rows[1]["fb"])]
+    w.summary(blocking=False)
+    n2 = w.prompt()
+    assert w.context == M.NONCE_LINE.format(n=n2), w.context
+
+
+def test_an_identical_re_issue_after_a_fallback_round_is_refused_as_a_duplicate(w):
+    """VERIFY-LS-B10 F1 (S2): after a fallback round ran r1, a later message re-issues the identical r1 line. With both
+    records in the transcript, the first is bound to the fallback receipt and the re-issue gets `refused: duplicate
+    id` with exit 2, as on the transcript path. When the re-issue is in last_assistant_message only (the transcript lags
+    again) while the first record has arrived, that record is an earlier round's, so the transcript does not show the
+    re-issue: the fallback takes it and refuses it the same way, and its record, when it arrives, is bound to that
+    refusal. Mutants: a fallback row absorbing every matching line (the re-issue silent, exit 0); lam_missing counting
+    an earlier round's record (the lagging re-issue never collected, exit 0)."""
+    n = w.prompt()
+    line = "REQ %s r1 premise files=a.txt" % n
+    assert receipts(w.stop(lam=line, args=("--catchup", "0.3")), n)["r1"][0].startswith("ran rc=0")
+    first = w.text(line)                           # the fallback receipt's record
+    w.summary(blocking=True)
+    w.tool_use()
+    second = w.text(line)                          # the identical re-issue, in the transcript as well
+    r = w.stop(active=True, lam=line)
+    assert r.returncode == 2 and receipts(r, n)["r1"] == [DUP], r.stderr
+    assert len(w.runs()) == 1 and [(x["uuid"], x["line"]) for x in binds(w)] == [(first, 0)]
+    assert [(x["uuid"], x["status"]) for x in receipt_rows(w)] == [(None, "ran"), (second, "refused")]
+    lag = World(w.tmp / "lag")                     # the same, the re-issue lagging
+    m = lag.prompt()
+    line = "REQ %s r1 premise files=a.txt" % m
+    assert receipts(lag.stop(lam=line, args=("--catchup", "0.3")), m)["r1"][0].startswith("ran rc=0")
+    first = lag.text(line)                         # only the first record has arrived
+    lag.summary(blocking=True)
+    lag.tool_use()
+    r = lag.stop(active=True, lam=line, args=("--catchup", "0.3"))
+    assert r.returncode == 2 and receipts(r, m)["r1"] == [DUP], r.stderr
+    assert "the last_assistant_message fallback" in r.stderr.decode()
+    assert len(lag.runs()) == 1 and [(x["uuid"], x["line"]) for x in binds(lag)] == [(first, 0)]
+    refusal = receipt_rows(lag)[-1]
+    assert (refusal["uuid"], refusal["status"], refusal["source"]) == (None, "refused", "last_assistant_message")
+    late = lag.text(line)                          # the re-issue's record arrives: it is that refusal's
+    lag.summary(blocking=True)
+    r = lag.stop(active=True)
+    assert (r.returncode, r.stderr) == (0, b"") and len(receipt_rows(lag)) == 2
+    assert [(x["uuid"], x["binds"]) for x in binds(lag)] == [(first, receipt_rows(lag)[0]["fb"]),
+                                                             (late, refusal["fb"])]
+
+
+def test_a_fallback_line_repeating_an_answered_line_is_refused_as_a_duplicate(w):
+    """VERIFY-LS-B10 F1, the reverse order the verifier left static: r1 answered on the transcript path, then the final
+    message repeats the identical line while the transcript lags. The fallback line is another occurrence: `refused:
+    duplicate id` with exit 2; its record, when it arrives, is bound to that refusal (answered once). Mutant: a fallback
+    line read as "same" as a transcript row of the same text (the repeat silent, exit 0)."""
+    n = w.prompt()
+    line = "REQ %s r1 premise files=a.txt" % n
+    w.text(line)
+    assert receipts(w.stop(), n)["r1"][0].startswith("ran rc=0")
+    w.summary(blocking=True)
+    w.tool_use()
+    r = w.stop(active=True, lam=line, args=("--catchup", "0.3"))
+    assert r.returncode == 2 and receipts(r, n)["r1"] == [DUP] and len(w.runs()) == 1, r.stderr
+    refusal = receipt_rows(w)[-1]
+    assert (refusal["uuid"], refusal["source"]) == (None, "last_assistant_message")
+    record = w.text(line)
+    w.summary(blocking=True)
+    r = w.stop(active=True)
+    assert (r.returncode, r.stderr) == (0, b"") and len(receipt_rows(w)) == 2
+    assert [(x["uuid"], x["line"], x["binds"]) for x in binds(w)] == [(record, 0, refusal["fb"])]
+
+
+def test_two_identical_malformed_lines_through_the_fallback_get_a_receipt_each(w):
+    """VERIFY-LS-B10 F1: two identical malformed current-nonce lines in one last_assistant_message text are two lines,
+    so two `refused: malformed` receipts, and their record's two lines are bound to them, one each. Mutant: a malformed
+    fallback line read as "same" as a row of the same text (the second line silent)."""
+    n = w.prompt()
+    lam = "see %s here\nsee %s here" % (n, n)
+    r = w.stop(lam=lam, args=("--catchup", "0.3"))
+    want = "RES %s ? refused: malformed (the nonce outside a request line: write it only in request lines)" % n
+    assert r.returncode == 2 and res_lines(r) == [want, want], r.stderr
+    rows = receipt_rows(w)
+    assert [(x["kind"], x["line"], x["uuid"]) for x in rows] == [("malformed", 0, None), ("malformed", 1, None)]
+    record = w.text(lam)
+    w.summary(blocking=True)
+    r = w.stop(active=True)
+    assert (r.returncode, r.stderr) == (0, b"") and len(receipt_rows(w)) == 2
+    assert [(x["uuid"], x["line"], x["binds"]) for x in binds(w)] == [(record, 0, rows[0]["fb"]),
+                                                                       (record, 1, rows[1]["fb"])]
+
+
+def test_a_bind_holds_across_rounds_and_needs_the_fallback_rounds_offset(w):
+    """A fallback receipt absorbs ONE transcript line, for good: once its record is bound (a bind row in the ledger), an
+    identical line a round later is a new request, `refused: duplicate id`, though that round's window no longer holds
+    the bound record. And only a line at or after the offset the fallback round read up to (`after`) can be its
+    record: an unanswered identical line before it (the stored offset moved past it, as a state edit can) is a request
+    of its own, which the reconciler refuses as a duplicate, while the record is bound. Mutants: the bind rows not
+    written (the later line bound to the receipt again, exit 0); `after` not checked (the earlier line bound)."""
+    n = w.prompt()
+    line = "REQ %s r1 premise files=a.txt" % n
+    assert receipts(w.stop(lam=line, args=("--catchup", "0.3")), n)["r1"][0].startswith("ran rc=0")
+    record = w.text(line)                          # the record arrives, a new request beside it
+    w.summary(blocking=True)
+    w.tool_use()
+    w.text("REQ %s r2 premise files=b.txt" % n)
+    r = w.stop(active=True)
+    assert r.returncode == 2 and list(receipts(r, n)) == ["r2"] and [x["uuid"] for x in binds(w)] == [record]
+    w.summary(blocking=True)
+    w.tool_use()
+    w.text(line)                                   # the identical r1 line, a round later
+    r = w.stop(active=True)
+    assert r.returncode == 2 and receipts(r, n)["r1"] == [DUP] and len(w.runs()) == 2, r.stderr
+    early = World(w.tmp / "after")
+    m = early.prompt()
+    line = "REQ %s r1 premise files=a.txt" % m
+    early.text(line)                               # a line no Stop reads: the stored offset moves past it
+    st = early.st()
+    st["read"] = early.tx.stat().st_size
+    (early.state / "req" / "sessions" / "s1.json").write_text(json.dumps(st))
+    assert receipts(early.stop(lam=line, args=("--catchup", "0.3")), m)["r1"][0].startswith("ran rc=0")
+    record = early.text(line)                      # the fallback receipt's record
+    early.summary(blocking=False)
+    early.prompt()
+    assert "RES %s r1 refused: duplicate id (r1 is taken for nonce %s)" % (m, m) in early.context, early.context
+    assert [(x["uuid"], x["binds"]) for x in binds(early)] == [(record, receipt_rows(early)[0]["fb"])]
+
+
+def test_a_fallback_receipt_binds_only_a_line_of_its_own_transcript(w):
+    """A fallback row's `after` is an offset in the transcript its round read, so only a line of that transcript can be
+    its record: after the session's transcript changes (a resume that ran no SessionStart), an identical line in the new
+    file is a request of its own, `refused: duplicate id` with exit 2, and nothing is bound. Mutant: the transcript not
+    checked (the new file's line bound to the old receipt: no receipt, exit 0)."""
+    n = w.prompt()
+    line = "REQ %s r1 premise files=a.txt" % n
+    assert receipts(w.stop(lam=line, args=("--catchup", "0.3")), n)["r1"][0].startswith("ran rc=0")
+    w.tx = w.tmp / "transcript2.jsonl"
+    w.tool_use()
+    w.text(line)                                   # the new file: the identical line, past offset 0
+    r = w.stop(active=True)
+    assert r.returncode == 2 and receipts(r, n)["r1"] == [DUP] and len(w.runs()) == 1, r.stderr
+    assert binds(w) == [] and w.st()["transcript"] == str(w.tx)
+    assert receipt_rows(w)[0]["after"] == 0        # the old file was read to offset 0: `after` alone would bind it
+
+
+def test_a_lagging_re_issue_is_refused_when_a_re_read_window_holds_its_answered_line(w):
+    """When the Stop reads a window that holds a line an earlier round answered (here the transcript shrank, so the
+    Stop re-reads its tail) while the final message re-issues that line and the transcript lags, the answered record
+    does not show the re-issue: the fallback takes it, `refused: duplicate id` with exit 2. Mutant: lam_missing
+    counting a record an earlier round answered on the transcript path (the re-issue never collected, exit 0)."""
+    n = w.prompt()
+    line = "REQ %s r1 premise files=a.txt" % n
+    w.text(line)
+    assert receipts(w.stop(), n)["r1"][0].startswith("ran rc=0")
+    kept = w.tx.read_bytes()
+    w.tool_use()
+    w.text("More work.")
+    assert w.stop().returncode == 0                # the offset moves past the tool call and the text
+    w.tx.write_bytes(kept)                         # the file restored shorter: only the answered line's record
+    r = w.stop(active=True, lam=line, args=("--catchup", "0.3"))
+    assert r.returncode == 2 and receipts(r, n)["r1"] == [DUP] and len(w.runs()) == 1, r.stderr
+    assert "the last_assistant_message fallback" in r.stderr.decode()
+
+
+def test_a_record_without_a_uuid_is_known_by_its_offset_and_answered_once(w):
+    """Matching by occurrence needs an identity for every transcript line: a record with no uuid (never measured: every
+    record carries one) is known by its byte offset, so the Stop answers its line and the next prompt's reconciler,
+    which reads the turn again, reports nothing. Mutant: such a record left with no identity (the reconciler refuses
+    its line again as a duplicate)."""
+    n = w.prompt()
+    off = w.tx.stat().st_size
+    w.rec({"type": "assistant", "message": {"id": "m9", "role": "assistant", "content": [
+        {"type": "text", "text": "REQ %s r1 premise files=a.txt" % n}]}})
+    assert receipts(w.stop(), n)["r1"][0].startswith("ran rc=0")
+    assert w.ledger()[0]["uuid"] == "@%d" % off
+    w.summary(blocking=False)
+    n2 = w.prompt()
+    assert w.context == M.NONCE_LINE.format(n=n2), w.context
+
+
+# ---------------------------------------------------------------- round 2: above the cap (VERIFY-LS-B10 F4)
+
+def test_above_the_cap_the_refusals_wait_for_the_next_prompt_and_nothing_blocks(w):
+    """VERIFY-LS-B10 F4: above CLAUDE_CODE_STOP_HOOK_BLOCK_CAP the harness ends the turn and drops a blocking Stop's
+    feedback (PM P2), so there the hook writes nothing for it and blocks nothing: exit 0, the refusal's row delivered
+    `no`, its receipt kept undelivered, and the next prompt reports it. At the cap itself, as at cap-1, it refuses
+    with exit 2 and delivers. Mutants: exit 2 above the cap; the receipt dropped from the undelivered list; the row
+    delivered `feedback`; `>=` for `>` (the cap itself quiet)."""
+    env = dict(w.env, CLAUDE_CODE_STOP_HOOK_BLOCK_CAP="4")
+    n = w.prompt()
+    for _ in range(3):
+        w.summary(blocking=True)
+    w.text("REQ %s r1 premise files=a.txt" % n)
+    r = w.stop(active=True, env=env)               # blocking Stop 4 in a row: the cap itself
+    assert r.returncode == 2 and receipts(r, n)["r1"][0].startswith("refused: cap: nothing ran;"), r.stderr
+    assert "blocking Stop 4 in a row" in res_lines(r)[0] and w.st()["undelivered"] == []
+    assert w.ledger()[-1]["delivered"] == "feedback"
+    for i, stop in ((2, 5), (3, 6)):              # the harness recorded the last Stop as blocking: above the cap
+        w.summary(blocking=True)
+        w.text("REQ %s r%d premise files=a.txt" % (n, i))
+        r = w.stop(active=True, env=env)
+        assert (r.returncode, r.stdout, r.stderr) == (0, b"", b""), r.stderr
+        row = w.ledger()[-1]
+        assert (row["id"], row["status"], row["delivered"]) == ("r%d" % i, "refused", "no"), row
+        assert row["receipt"] == w.st()["undelivered"][-1] and "this was Stop %d in a row" % stop in row["receipt"]
+    assert w.runs() == [] and len(w.st()["undelivered"]) == 2
+    assert [x["outcome"] for x in w.hooklog() if x["event"] == "stop"] == ["cap", "over-cap", "over-cap"]
+    w.summary(blocking=False)
+    w.prompt()
+    late = [x for x in w.context.split("\n") if x.startswith("delivered late: RES %s " % n)]
+    assert [x.split(" ")[4] for x in late] == ["r2", "r3"], w.context
+    assert all("refused: cap: nothing ran; continue with tool calls" in x for x in late) and w.st()["undelivered"] == []
+
+
+# ---------------------------------------------------------------- round 2: the never-run sources and the window (F6)
+
+def test_v1_a_stop_whose_payload_carries_an_agent_id_runs_nothing_and_writes_nothing(w):
+    """VERIFY-LS-B10 F6, V1 (standing rule 14: the injection boundary): a Stop payload with an agent_id is a
+    subagent's, never the main thread's, so the pending current-nonce request does not run, nothing is written and the
+    state keeps its offset; the same Stop without it runs the request (the control: the request was live). Mutant: the
+    agent_id guard dropped (the subagent's Stop runs the main thread's request)."""
+    n = w.prompt()
+    w.text("REQ %s r1 premise files=a.txt" % n)
+    before = w.st()
+    r = w.stop(agent_id="agent-1")
+    assert (r.returncode, r.stdout, r.stderr) == (0, b"", b"")
+    assert w.runs() == [] and w.ledger() == [] and w.st() == before
+    assert receipts(w.stop(), n)["r1"][0].startswith("ran rc=0")
+
+
+def test_v2_a_sidechain_record_is_never_read(w):
+    """VERIFY-LS-B10 F6, V2 (the injection boundary): a request line in a sidechain record (a subagent's chain in the
+    same file) never runs and gets no receipt; the same line in the main chain runs (the control). Mutant: sidechain
+    records read."""
+    n = w.prompt()
+    w.rec({"type": "assistant", "uuid": "sc1", "isSidechain": True, "message": {
+        "id": "ms", "role": "assistant", "content": [{"type": "text", "text": "REQ %s r1 premise files=a.txt" % n}]}})
+    r = w.stop()
+    assert (r.returncode, r.stderr) == (0, b"") and w.runs() == [] and w.ledger() == []
+    w.text("REQ %s r1 premise files=a.txt" % n)
+    assert receipts(w.stop(), n)["r1"][0].startswith("ran rc=0")
+
+
+def test_v3_a_tool_use_input_is_never_read_as_text(w):
+    """VERIFY-LS-B10 F6, V3 (the injection boundary): a request line inside a tool call's input (a Bash command that
+    would print one) never runs and gets no receipt; the same line as text runs (the control). Mutant: a tool_use input
+    read as text."""
+    n = w.prompt()
+    w.rec({"type": "assistant", "uuid": "tu1", "message": {"id": "mt", "role": "assistant", "content": [
+        {"type": "tool_use", "id": "toolu_9", "name": "Bash",
+         "input": {"command": "REQ %s r1 premise files=a.txt" % n}}]}})
+    r = w.stop()
+    assert (r.returncode, r.stderr) == (0, b"") and w.runs() == [] and w.ledger() == []
+    w.text("REQ %s r1 premise files=a.txt" % n)
+    assert receipts(w.stop(), n)["r1"][0].startswith("ran rc=0")
+
+
+def test_v12_a_tool_result_is_never_read_as_text(w):
+    """VERIFY-LS-B10 F6, V12 (the injection boundary): a request line inside a tool result (a file the tool printed)
+    never runs and gets no receipt; the same line as text runs (the control). Mutant: a tool_result read as text."""
+    n = w.prompt()
+    w.rec({"type": "assistant", "uuid": "tu1", "message": {"id": "mt", "role": "assistant", "content": [
+        {"type": "tool_use", "id": "toolu_9", "name": "Bash", "input": {"command": "cat notes.txt"}}]}})
+    w.rec({"type": "user", "uuid": "tr1", "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "toolu_9", "content": "REQ %s r1 premise files=a.txt" % n}]}})
+    r = w.stop()
+    assert (r.returncode, r.stderr) == (0, b"") and w.runs() == [] and w.ledger() == []
+    w.text("REQ %s r1 premise files=a.txt" % n)
+    assert receipts(w.stop(), n)["r1"][0].startswith("ran rc=0")
+
+
+def test_v5_a_stop_on_a_new_transcript_path_reads_that_files_tail(w):
+    """VERIFY-LS-B10 F6, V5: a Stop whose payload names a transcript the state did not follow (a resume that ran no
+    SessionStart) reads the new file's end, says so, answers its request, and the state follows the new file. The old
+    offset lies inside the new file's text here, so an offset carried over would start mid-file and miss the request.
+    Mutant: the Stop ignores a new transcript path."""
+    w.text("old chat " * 800)                      # the old file, read to its end at the prompt
+    n = w.prompt()
+    old_end = w.st()["read"]
+    w.tx = w.tmp / "transcript2.jsonl"
+    w.text("REQ %s r1 premise files=a.txt" % n)    # the new file: the request first, then more than the old offset
+    w.text("filler " * 1200)
+    assert old_end > 5000 and w.tx.stat().st_size > old_end
+    r = w.stop()
+    assert r.returncode == 2 and receipts(r, n)["r1"][0].startswith("ran rc=0"), r.stderr
+    assert ("(the transcript changed under this session's state: only its last %d bytes were read)" % (
+        M.DEFER_TAIL_BYTES)) in r.stderr.decode()
+    assert w.st()["transcript"] == str(w.tx)
+
+
+def test_v6_a_stop_after_the_transcript_shrank_reads_its_tail(w):
+    """VERIFY-LS-B10 F6, V6: a transcript that shrank below the stored offset (a restore) is read from its end, with
+    the same note, and its request answered; the stored offset past its end would read nothing. Mutant: the Stop
+    ignores a shrink."""
+    w.text("old chat " * 800)
+    n = w.prompt()
+    old_end = w.st()["read"]
+    w.tx.write_bytes(b"")                          # the file restored shorter than the stored offset
+    w.text("REQ %s r1 premise files=a.txt" % n)
+    assert w.tx.stat().st_size < old_end
+    r = w.stop()
+    assert r.returncode == 2 and receipts(r, n)["r1"][0].startswith("ran rc=0"), r.stderr
+    assert "(the transcript changed under this session's state: only its last" in r.stderr.decode()

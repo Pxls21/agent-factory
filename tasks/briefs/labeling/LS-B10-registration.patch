@@ -71,9 +71,16 @@ index b411221..27c0f5f 100644
      ],
      "PreToolUse": [
 diff --git a/scripts/install_session_hooks.py b/scripts/install_session_hooks.py
-index 96b35f6..3ccbcac 100755
+index 96b35f6..af04a3d 100755
 --- a/scripts/install_session_hooks.py
 +++ b/scripts/install_session_hooks.py
+@@ -1,5 +1,5 @@
+ #!/usr/bin/env python3
+-"""install_session_hooks.py — register the eight project hooks for a session rooted ABOVE the repository.
++"""install_session_hooks.py — register the project hooks for a session rooted ABOVE the repository.
+ 
+ Claude Code loads `.claude/settings.json` from the session's project root only. A session rooted in `/home/user` (the
+ CCR default here) never loads `agent-factory/.claude/settings.json`, so none of the five project hooks fired there
 @@ -20,6 +20,14 @@ output style, so this line does the style's job (LS-DESIGN v2 §6, LS-B6). When
  ONE line naming why, and the command exits 0 always: stack.py catches its own failures, and a python3 that cannot run
  at all ends in the echo.
@@ -89,7 +96,7 @@ index 96b35f6..3ccbcac 100755
  The tool hooks run through scripts/hook_context.py: edit-snapshot prints plain text, which the wrapper turns into
  additionalContext the model reads (the Codex and Hermes adapters parse that plain text); search-intercept (task #228,
  PreToolUse on Grep and Bash) answers a semantic search or stops a known Bash quirk with exit 2 and its text on stderr,
-@@ -30,7 +38,8 @@ that match the prompt, beside wiki-context); session-start.sh resets its once-pe
+@@ -30,13 +38,19 @@ that match the prompt, beside wiki-context); session-start.sh resets its once-pe
  the wrapper too since D-095, so its excerpt carries the S1-RATE stamp and score request like every other injection.
  
  Merge rule, hook by hook: an install replaces every hook whose command names `<repo>/.claude/hooks/`,
@@ -99,7 +106,19 @@ index 96b35f6..3ccbcac 100755
  out only our exact current commands. A foreign hook in the same group as one of ours
  stays, in that group with its matcher (S1-L1-R1 F19); every other key and entry in the file is kept. An existing file
  that is not a JSON object is refused (exit 1), never overwritten.
-@@ -66,6 +75,10 @@ def our_hooks(root: Path) -> dict:
+ 
++The count of hooks an install registers is counted from our_hooks() (hook_count), never written as a literal: --help
++states it and the install line prints it (VERIFY-LS-B10 F10: a literal count went stale when the chat form's hooks
++were added).
++
+ Usage: install_session_hooks.py [--target PATH] [--check | --remove]
+-  (default)  write or refresh our entries; prints `session hooks: installed|unchanged ...`
++  (default)  write or refresh our entries; prints `session hooks: installed N in ...` (N from hook_count) or
++             `session hooks: unchanged in ...`
+   --check    exit 0 when the file already holds exactly our entries, 1 otherwise; writes nothing
+   --remove   delete our entries (the owner's opt-out); keeps everything else
+ """
+@@ -66,6 +80,10 @@ def our_hooks(root: Path) -> dict:
          return {"hooks": [{"type": "command", "command": guarded(
              "scripts/task_sync.py", f"python3 {r}/scripts/task_sync.py --hook {event}"), "timeout": 30}]}
  
@@ -110,7 +129,7 @@ index 96b35f6..3ccbcac 100755
      catalog = {"matcher": "startup|resume|compact", "hooks": [{"type": "command", "command": guarded(
          "scripts/stack.py",
          f'python3 {r}/scripts/stack.py catalog || echo "stacks: no catalog (scripts/stack.py catalog exited $?)"'),
-@@ -74,13 +87,14 @@ def our_hooks(root: Path) -> dict:
+@@ -74,13 +92,14 @@ def our_hooks(root: Path) -> dict:
      return {
          "SessionStart": [{"hooks": [{"type": "command", "command": guarded(
              ".claude/hooks/session-start.sh", f"CLAUDE_PROJECT_DIR={r} bash {r}/.claude/hooks/session-start.sh")}]},
@@ -127,7 +146,7 @@ index 96b35f6..3ccbcac 100755
          "PostToolUse": [{"matcher": "Edit|Write|Read", "hooks": [{"type": "command", "command": guarded(
              ".claude/hooks/edit-snapshot.py", f"{wrap} PostToolUse -- python3 {r}/.claude/hooks/edit-snapshot.py", True)}]}],
          "PreToolUse": [{"matcher": "Grep|Bash", "hooks": [{"type": "command", "command": guarded(
-@@ -91,7 +105,7 @@ def our_hooks(root: Path) -> dict:
+@@ -91,10 +110,15 @@ def our_hooks(root: Path) -> dict:
                  True)}]}],
          "Stop": [{"hooks": [{"type": "command", "command": guarded(
              ".claude/hooks/turn-retro-gate.sh", f"bash {r}/.claude/hooks/turn-retro-gate.sh")}]},
@@ -136,7 +155,15 @@ index 96b35f6..3ccbcac 100755
      }
  
  
-@@ -111,10 +125,11 @@ def merged(current: dict, root: Path, remove: bool) -> dict:
++def hook_count(hooks: dict) -> int:
++    """How many hooks an our_hooks() mapping registers: every command in every group of every event."""
++    return sum(len(g["hooks"]) for groups in hooks.values() for g in groups)
++
++
+ def _without(entry: object, ours) -> object:
+     """The group without our hooks: None when it held only ours, the group itself when it held none, else a copy that
+     keeps the foreign hooks under the group's matcher."""
+@@ -111,10 +135,11 @@ def merged(current: dict, root: Path, remove: bool) -> dict:
      marker = f"{shlex.quote(str(root))}/.claude/hooks/"  # as the commands spell it (VERIFY-COORD-0924 F-L1-1)
      sync_marker = f"{shlex.quote(str(root))}/scripts/task_sync.py"
      catalog_marker = f"{shlex.quote(str(root))}/scripts/stack.py catalog"
@@ -149,13 +176,35 @@ index 96b35f6..3ccbcac 100755
      out = dict(current)
      hooks = dict(out.get("hooks") or {})
      for event in sorted(set(hooks) | set(mine)):
+@@ -133,7 +158,8 @@ def merged(current: dict, root: Path, remove: bool) -> dict:
+ 
+ 
+ def main(argv: list[str]) -> int:
+-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
++    n = hook_count(our_hooks(ROOT))
++    ap = argparse.ArgumentParser(description=f"{__doc__.splitlines()[0]} It registers {n} hooks.")
+     ap.add_argument("--target", type=Path, default=ROOT.parent / ".claude" / "settings.json")
+     mode = ap.add_mutually_exclusive_group()
+     mode.add_argument("--check", action="store_true")
+@@ -173,7 +199,7 @@ def main(argv: list[str]) -> int:
+     else:
+         os.chmod(tmp, 0o644)
+     os.replace(tmp, target)
+-    verb = "removed ours from" if args.remove else "installed 8 in"
++    verb = "removed ours from" if args.remove else f"installed {n} in"
+     print(f"session hooks: {verb} {target} (live from the next tool call)")
+     return 0
+ 
 diff --git a/tests/test_session_hooks.py b/tests/test_session_hooks.py
-index c3383a3..cf3bf07 100644
+index c3383a3..5c8c044 100644
 --- a/tests/test_session_hooks.py
 +++ b/tests/test_session_hooks.py
-@@ -3,7 +3,9 @@
+@@ -1,9 +1,11 @@
+ """scripts/hook_context.py and scripts/install_session_hooks.py (task #214, AF-AP-172).
+ 
  hook_context turns a hook's plain stdout into additionalContext (the only PreToolUse/PostToolUse output the model reads,
- measured live 2026-09-24); install_session_hooks registers the eight project hooks for a session rooted above the repo
+-measured live 2026-09-24); install_session_hooks registers the eight project hooks for a session rooted above the repo
++measured live 2026-09-24); install_session_hooks registers 13 project hooks for a session rooted above the repo
  (task_sync.py, LS-B7, on Stop and SessionStart with a 30-second timeout; its own behavior is tests/test_task_sync.py's;
 -the stack catalog, LS-B9 round 4, on SessionStart for start, resume and compact; its text is tests/test_stack.py's).
 +the stack catalog, LS-B9 round 4, on SessionStart for start, resume and compact; its text is tests/test_stack.py's;
@@ -172,7 +221,20 @@ index c3383a3..cf3bf07 100644
  STAMP = re.compile(r"\[S1 (s1-[0-9a-f]{8}) ([A-Za-z0-9_.-]+)\]")
  REQUEST = ('Begin your next text with "S1-RATE {id} rel=R use=U" (+ a note <=120 chars: why, if a 0), one line per '
             'unscored injection. rel 0 unrelated,1 same area not this step,2 relevant to this step,3 governs it; '
-@@ -121,9 +124,9 @@ def test_fresh_install_registers_the_eight_hooks(tmp_path):
+@@ -114,16 +117,27 @@ def test_real_edit_snapshot_screen_reaches_the_model_form():
+ 
+ # ---- install_session_hooks.py ----
+ 
+-def test_fresh_install_registers_the_eight_hooks(tmp_path):
++def test_fresh_install_registers_and_prints_13_hooks(tmp_path):
++    """13 hooks since LS-B10, and the installer says so: its install line prints the count and --help states it, both
++    counted from what it registers, never a literal, and the help names no other count (VERIFY-LS-B10 F10). Mutants:
++    the old literal 8 in either line; a count of the events (5) in place of the hooks; a count written into the
++    docstring's first line ("eight", or a 13 that the next hook would make stale)."""
+     target = tmp_path / ".claude" / "settings.json"
+     r = install(target)
+-    assert r.returncode == 0 and "installed 8" in r.stdout
++    assert r.returncode == 0 and "installed 13 in" in r.stdout
      hooks = json.loads(target.read_text())["hooks"]
      assert sorted(hooks) == ["PostToolUse", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"]
      cmds = {ev: [h["command"] for e in v for h in e["hooks"]] for ev, v in hooks.items()}
@@ -181,11 +243,18 @@ index c3383a3..cf3bf07 100644
 -    assert all(MARKER in c or SYNC in c or CATALOG in c for cs in cmds.values() for c in cs)
 +    assert {ev: len(c) for ev, c in cmds.items()} == {"PostToolUse": 1, "PreToolUse": 2, "SessionStart": 4, "Stop": 3,
 +                                                      "UserPromptSubmit": 3}
++    assert f"installed {sum(map(len, cmds.values()))} in" in r.stdout     # the count printed is the count written
++    h = install(tmp_path / "help.json", "--help")
++    assert h.returncode == 0 and "It registers 13 hooks." in " ".join(h.stdout.split()), h.stdout
++    assert not (tmp_path / "help.json").exists()
++    said = re.findall(r"\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|"
++                      r"fifteen)\b", " ".join(h.stdout.split()).lower())
++    assert said == ["13"], said                    # no written count beside the counted one (F10: it said eight)
 +    assert all(MARKER in c or SYNC in c or CATALOG in c or REQ in c for cs in cmds.values() for c in cs)
      assert cmds["SessionStart"][1].endswith(f"python3 {SYNC} --hook session-start")       # LS-B7: after the others
      assert CATALOG in cmds["SessionStart"][2]                                              # LS-B9 round 4: after it
      assert cmds["Stop"][1].endswith(f"python3 {SYNC} --hook stop")
-@@ -227,7 +230,7 @@ def _sh(cmd, stdin="{}", cwd="/", env=None):
+@@ -227,7 +241,7 @@ def _sh(cmd, stdin="{}", cwd="/", env=None):
  
  def test_every_installed_command_fails_open_when_the_repo_is_absent(tmp_path):
      cmds = _all_commands(tmp_path / "no-such-repo")
@@ -194,7 +263,7 @@ index c3383a3..cf3bf07 100644
      for ev, cmd in cmds:
          r = _sh(cmd)
          assert (r.returncode, r.stdout) == (0, ""), (ev, r.returncode, r.stdout, r.stderr)
-@@ -290,7 +293,7 @@ def test_a_repo_path_that_needs_quoting_stays_idempotent_and_removable(tmp_path)
+@@ -290,7 +304,7 @@ def test_a_repo_path_that_needs_quoting_stays_idempotent_and_removable(tmp_path)
      foreign = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo other"}]}]}}
      once = ish.merged(foreign, root, remove=False)
      assert ish.merged(once, root, remove=False) == once
@@ -203,7 +272,7 @@ index c3383a3..cf3bf07 100644
      assert ish.merged(once, root, remove=True) == foreign
  
  
-@@ -364,7 +367,8 @@ def test_the_task_sync_hooks_are_installed_with_a_30_second_timeout(tmp_path):
+@@ -364,7 +378,8 @@ def test_the_task_sync_hooks_are_installed_with_a_30_second_timeout(tmp_path):
          assert h[0]["command"] == (f"[ -f {ROOT}/scripts/task_sync.py ] || exit 0; cd {ROOT} || exit 0; "
                                     f"python3 {SYNC} --hook {arg}")
      others = [h for v in hooks.values() for g in v for h in g["hooks"]
@@ -213,7 +282,7 @@ index c3383a3..cf3bf07 100644
      assert len(others) == 7 and all("timeout" not in h for h in others)
  
  
-@@ -488,3 +492,175 @@ def test_an_older_catalog_spelling_is_replaced_on_install(tmp_path):
+@@ -488,3 +503,175 @@ def test_an_older_catalog_spelling_is_replaced_on_install(tmp_path):
      cmds = [h["command"] for g in json.loads(target.read_text())["hooks"]["SessionStart"] for h in g["hooks"]]
      assert sum("stack.py catalog" in c for c in cmds) == 1 and old["command"] not in cmds
      assert install(target, "--check").returncode == 0

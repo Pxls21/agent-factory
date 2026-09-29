@@ -1,0 +1,868 @@
+diff --git a/scripts/ls_req.py b/scripts/ls_req.py
+index d3e8af3..7d0fb26 100644
+--- a/scripts/ls_req.py
++++ b/scripts/ls_req.py
+@@ -52,7 +52,14 @@ transcript, never only last_assistant_message: PM P3a, P3b), skips thinking reco
+ them (a record holding a thinking block beside a text block is skipped whole: measured, every assistant record holds
+ one block), and cross-checks last_assistant_message: the harness writes the transcript asynchronously (its hooks docs),
+ so when that text holds a nonce line the transcript does not show yet, the hook waits up to CATCHUP_S for the
+-transcript and then takes the text itself (the ledger row then has no record uuid until the record appears). The
++transcript and then takes the text itself. Every line is matched by occurrence, never by text (VERIFY-LS-B10 F1): a
++byte-identical repeat of a request line is a request of its own (`refused: duplicate id`). A line of that text belongs
++to a message the transcript does not show yet (it is the final response's last block, PM P3a, so the transcript shows
++it only in a record no earlier round answered or bound), so it is never "the same" as another line. Its ledger row has
++no record uuid; it carries `fb` (a token) and `after` (the offset its round read up to), and when its record appears,
++the first line of that request text in the same transcript, at or after `after`, that no row holds yet is tied to it
++by a `bind` row (that record's uuid and line): a fallback receipt absorbs ONE transcript line, so its record is not
++answered twice. The
+ round's requests run one after another under ROUND_BUDGET_S (the registration timeout is 300 s): a request is not
+ started with less than MIN_START_S left, and a run past the budget is stopped (SIGTERM to the runner, which kills its
+ steps' process groups; SIGKILL KILL_GRACE_S later); both answer `refused: budget`. It never keys execution on
+@@ -60,11 +67,15 @@ stop_hook_active (PM P1). The harness ends a turn above CLAUDE_CODE_STOP_HOOK_BL
+ blocking Stops with no tool call between them and drops the pending feedback (PM P2); the hook counts them from the
+ transcript (a blocking stop_hook_summary adds one; a tool_use, a non-blocking summary or a new prompt record resets; a
+ compaction's summary record carries turnOrigin too and does not reset) and from its own blocks, takes the larger, and
+-at cap-1 refuses every request of the round loudly (`continue with tool calls`) and runs nothing. A Stop with no
+-current-nonce request line never blocks for a request; the one block it can make then is the chain-end git report (PM
+-P4): after a receipt round the harness git check (/root/.claude/stop-hook-git-check.sh) stays silent for the rest of
+-the turn, because stop_hook_active stays true, so at the chain's end this hook runs that check's dirty and unpushed
+-checks in the payload's cwd and reports the first hit in its words, once per chain.
++from cap-1 on refuses every request of the round loudly (`continue with tool calls`) and runs nothing; above the cap,
++where the harness would drop the feedback, it blocks nothing and writes nothing for it: the refusals stay undelivered
++and the next prompt reports them (VERIFY-LS-B10 F4). A Stop with no current-nonce request line never blocks for a
++request; the one block it can make then is the chain-end git report (PM P4): after a receipt round the harness git
++check (/root/.claude/stop-hook-git-check.sh) stays silent for the rest of the turn, because stop_hook_active stays
++true, so at the chain's end this hook runs that check's dirty and unpushed checks in the payload's cwd and reports the
++first hit in its words, once per chain. That block is contract item 7's, by the coordinator's ruling on VERIFY-LS-B10
++F11: item 7's specific wording governs, so the chain-end git report reports as the harness's own check would, once
++per chain, and item 10's never-block rule covers request handling only.
+ 
+ THE NONCE. Every UserPromptSubmit mints a fresh nonce. The turn's valid set keeps the last KEEP_NONCES nonces while
+ the harness query is still running (UserPromptSubmit fires for messages absorbed mid-turn and, per the premortem,
+@@ -83,7 +94,9 @@ without blocking (a stale nonce alone never blocks) are reported there too.
+ STATE: <main>/.jev/req/ (the MAIN tree through git's common dir, as the stack runner finds its log; AF_REQ_STATE, read
+ once at start, replaces <main>/.jev for tests): ledger.jsonl (one row per receipt: the session, nonce, id, label,
+ status, the stack run id and its run dir, the transcript and the uuid of the record that carried the request, so an
+-export can pair the chat before a request with its label and its result), sessions/<session>.json (the nonces and
++export can pair the chat before a request with its label and its result; plus one `bind` row, kind bind and status
++bound, when the record of a last_assistant_message receipt appears: its uuid and line, and the receipt's `fb`, which
++completes that receipt's pairing), sessions/<session>.json (the nonces and
+ the byte offsets), out/<session>/ (each runner print in full) and hooks.jsonl (one line per hook run: its time in ms
+ and the transcript bytes it read). OFF SWITCH: while <main>/.jev/req-off exists every subcommand exits at once and
+ injects nothing (defer-check exits 1). A hook error prints one line naming what failed and exits 0: a broken hook
+@@ -331,7 +344,10 @@ def classify(raw, off):
+         return None
+     if not isinstance(obj, dict) or obj.get("isSidechain") is True:
+         return None
+-    kind, uuid = obj.get("type"), obj.get("uuid") if isinstance(obj.get("uuid"), str) else None
++    # every transcript line has an identity (known() matches by occurrence): a record with no uuid, never measured, is
++    # known by its byte offset
++    kind = obj.get("type")
++    uuid = obj.get("uuid") if isinstance(obj.get("uuid"), str) and obj.get("uuid") else "@%d" % off
+     if kind == "assistant":
+         msg = obj.get("message") if isinstance(obj.get("message"), dict) else {}
+         blocks = [b for b in (msg.get("content") or []) if isinstance(b, dict)] if isinstance(msg.get("content"),
+@@ -512,16 +528,18 @@ def parse_message(blocks, nonces, source):
+     return out
+ 
+ 
+-def lam_missing(lam, recs, nonces):
++def lam_missing(lam, recs, nonces, earlier=()):
+     """True when last_assistant_message holds a request line or a current-nonce line that no text record of the
+-    window holds: the transcript has not caught up."""
++    window holds: the transcript has not caught up. A record in `earlier` (one an earlier round answered or bound) does
++    not count: that text is the final response's last block (PM P3a), newer than any such record, so a byte-identical
++    line there is another occurrence (VERIFY-LS-B10 F1)."""
+     if not lam:
+         return False
+     want = [s for s in (ln.rstrip(" \t\r") for ln in lam.split("\n"))
+             if HEAD_RE.fullmatch(s) or any(n in s.lower() for n in nonces)]
+     if not want:
+         return False
+-    have = {ln.rstrip(" \t\r") for r in recs if r.kind == "text" for ln in r.text.split("\n")}
++    have = {ln.rstrip(" \t\r") for r in recs if r.kind == "text" and r.uuid not in earlier for ln in r.text.split("\n")}
+     return any(w not in have for w in want)
+ 
+ 
+@@ -537,16 +555,23 @@ def collect(recs, lam, nonces):
+ 
+ # ---------------------------------------------------------------- the ledger
+ 
+-def ledger_index(ctx, session, nonces):
+-    """{(nonce, id): [row]} of this session's rows for these nonces (bad lines are counted, never trusted)."""
+-    idx, bad = {}, 0
++def read_ledger(ctx):
++    """The ledger's bytes (empty before its first row); HookError when it cannot be read."""
+     try:
+         with open(ctx.path("ledger.jsonl"), "rb") as fh:
+-            data = fh.read()
++            return fh.read()
+     except FileNotFoundError:
+-        return idx, 0
++        return b""
+     except OSError as e:                  # never read as empty: every answered request would look unanswered
+         raise HookError("the ledger %s is unreadable (%s)" % (ctx.path("ledger.jsonl"), type(e).__name__))
++
++
++def ledger_index(ctx, session, nonces, data=None):
++    """{(nonce, id): [row]} of this session's rows for these nonces (bad lines are counted, never trusted); `data`: the
++    ledger's bytes, when the caller read them already (read_ledger)."""
++    idx, bad = {}, 0
++    if data is None:
++        data = read_ledger(ctx)
+     needles = [n.encode() for n in nonces]
+     sneedle = session.encode()
+     for raw in data.split(b"\n"):
+@@ -581,15 +606,25 @@ def append_rows(ctx, rows):
+         os.close(lock)
+ 
+ 
+-def known(c, idx, seen):
+-    """"same" when this line already has its receipt (the same record and line, or the same request text where one
+-    side came from last_assistant_message), "dup" when its (nonce, id) is taken by another line, else None."""
++def known(c, idx, seen, path):
++    """How a line stands against the ledger and this run's earlier lines (`seen`), matched by occurrence, never by text
++    (VERIFY-LS-B10 F1): "same" when a row carries its record and line (its receipt, or the `bind` row of a
++    last_assistant_message receipt); the fallback row itself when this transcript line is the record of that receipt (a
++    row with no uuid, carrying `fb`): the first such row of the same request text, in ledger order, from this
++    transcript, whose round read up to at or before this line's record (`after`) and that no bind row holds yet, so a
++    fallback receipt absorbs ONE transcript line (the caller binds them); "dup" when another line holds its (nonce, id);
++    else None. A last_assistant_message line (no uuid) is a line of a message the transcript does not show yet: a new
++    occurrence, never "same" as another line, a byte-identical one included."""
+     rows = idx.get((c.nonce, c.id), []) + seen.get((c.nonce, c.id), [])
+-    for row in rows:
+-        if c.uuid is not None and row.get("uuid") == c.uuid and row.get("line") == c.line:
+-            return "same"
+-        if row.get("sha") == c.sha and (row.get("uuid") is None or c.uuid is None):
+-            return "same"
++    if c.uuid is not None:
++        for row in rows:
++            if row.get("uuid") == c.uuid and row.get("line") == c.line:
++                return "same"
++        held = {row.get("binds") for row in rows}
++        for row in rows:
++            if (row.get("fb") and row["fb"] not in held and row.get("sha") == c.sha and row.get("transcript") == path
++                    and type(row.get("after")) is int and c.off >= row["after"]):
++                return row
+     if c.kind == "request" and rows:
+         return "dup"
+     return None
+@@ -603,6 +638,12 @@ def row_of(ctx, session, transcript, c, status, reason, delivered, **extra):
+     return row
+ 
+ 
++def bind_row(ctx, session, transcript, c, fbrow):
++    """The row that ties a transcript line to the last_assistant_message receipt it is the record of: the line's record
++    and line, and the receipt's `fb` (item 6's pairing for that receipt). It is not a receipt: its status is `bound`."""
++    return row_of(ctx, session, transcript, c, "bound", None, None, kind="bind", binds=fbrow["fb"])
++
++
+ def receipt_of(c, status, reason=None, rc=None, run=None):
+     if status == "ran":
+         return "RES %s %s ran rc=%s run=%s" % (c.nonce, c.id, rc, run or "none")
+@@ -854,7 +895,11 @@ def reconcile(ctx, st, recs=None, restart=None):
+     idx, _bad = ledger_index(ctx, st["session"], sorted({c.nonce for c in cands}))
+     seen = {}
+     for c in cands:
+-        k = known(c, idx, seen)
++        k = known(c, idx, seen, path)
++        if isinstance(k, dict):                   # the record of a last_assistant_message receipt: tied to it, once
++            rows.append(bind_row(ctx, st["session"], path, c, k))
++            seen.setdefault((c.nonce, c.id), []).append(rows[-1])
++            continue
+         if k == "same":
+             continue
+         if c.kind == "request" and c.nonce not in st["nonces"]:
+@@ -1005,14 +1050,30 @@ def cmd_stop(ctx, payload):
+         st.update(transcript=transcript, turn_start=start, read=start)
+     recs, end, nbytes = scan(transcript, start, align=align)
+     lam = payload.get("last_assistant_message") if isinstance(payload.get("last_assistant_message"), str) else ""
++    ledger = read_ledger(ctx)                     # read once: the catch-up wait judges the window against it
++
++    def earlier():
++        """The uuids of the window's records that an earlier round answered or bound (see lam_missing)."""
++        cs = collect(recs, None, nonces)
++        idx, seen, out = ledger_index(ctx, session, sorted({c.nonce for c in cs}), ledger)[0], {}, set()
++        for c in cs:
++            k = known(c, idx, seen, transcript)
++            if isinstance(k, dict):
++                seen.setdefault((c.nonce, c.id), []).append({"uuid": c.uuid, "line": c.line, "binds": k["fb"]})
++            if isinstance(k, dict) or k == "same":
++                out.add(c.uuid)
++        return out
++
++    def missing():
++        return lam_missing(lam, recs, nonces, earlier() if lam else ())
+     waited, use_lam = 0.0, False
+-    if lam_missing(lam, recs, nonces):
++    if missing():
+         stop_at = time.monotonic() + ctx.opts["catchup"]
+-        while time.monotonic() < stop_at and lam_missing(lam, recs, nonces):
++        while time.monotonic() < stop_at and missing():
+             time.sleep(CATCHUP_POLL_S)
+             recs, end, nbytes = scan(transcript, start, align=align)
+         waited = time.monotonic() - t0
+-        use_lam = lam_missing(lam, recs, nonces)
++        use_lam = missing()
+     # the consecutive blocking Stops with no tool call between them, as the harness counts them (PM P2)
+     t_blocks, o_blocks = st["t_blocks"], st["o_blocks"]
+     for r in recs:
+@@ -1022,14 +1083,21 @@ def cmd_stop(ctx, payload):
+             t_blocks += 1
+     count = max(t_blocks, o_blocks)
+     cands = collect(recs, lam if use_lam else None, nonces)
+-    idx, bad_rows = ledger_index(ctx, session, sorted({c.nonce for c in cands}))
+-    pending, seen = [], {}
++    idx, bad_rows = ledger_index(ctx, session, sorted({c.nonce for c in cands}), ledger)
++    pending, seen, binds = [], {}, []
+     for c in cands:
+-        k = known(c, idx, seen)
++        k = known(c, idx, seen, transcript)
++        if isinstance(k, dict):                   # the record of a last_assistant_message receipt: tied to it, once
++            binds.append(bind_row(ctx, session, transcript, c, k))
++            seen.setdefault((c.nonce, c.id), []).append(binds[-1])
++            continue
+         if k == "same":
+             continue
+         pending.append((c, k))
+         seen.setdefault((c.nonce, c.id), []).append({"uuid": c.uuid, "line": c.line, "sha": c.sha})
++
++    def lam_fields(c):                            # a fallback row: the token its record's bind row names, and the
++        return {"fb": secrets.token_hex(8), "after": end} if c.uuid is None else {}   # offset its record lands after
+     current = [(c, k) for c, k in pending if c.nonce in nonces]
+     st.update(read=end, t_blocks=t_blocks, o_blocks=o_blocks)
+     log = {"event": "stop", "session": session, "bytes": nbytes, "candidates": len(cands), "pending": len(pending),
+@@ -1038,9 +1106,9 @@ def cmd_stop(ctx, payload):
+     if not current:
+         # stale lines alone never block (a quoted old line must not continue the turn): their receipts wait for the
+         # next prompt's report
+-        rows = [row_of(ctx, session, transcript, c, "refused", "stale nonce (not this turn's)", "no")
++        rows = [row_of(ctx, session, transcript, c, "refused", "stale nonce (not this turn's)", "no", **lam_fields(c))
+                 for c, _k in pending]
+-        append_rows(ctx, rows)
++        append_rows(ctx, binds + rows)            # a bind is written before `read` passes its record
+         st["undelivered"] += [receipt_of(c, "refused", "stale nonce (not this turn's)") for c, _k in pending]
+         message = None
+         if st["chain_open"]:
+@@ -1064,11 +1132,17 @@ def cmd_stop(ctx, payload):
+         signal.signal(sig, on_term)
+     n = count + 1
+     at_cap = n >= ctx.cap - 1
++    over = n > ctx.cap                            # above the cap the harness drops a blocking Stop's feedback (PM P2)
+     labels, registry_error = (None, None) if at_cap else stack_labels(ctx)
+     deadline = t0 + ctx.opts["budget"]
+     runs_base = ctx.opts["log_dir"] or os.path.join(main_tree(ctx.opts["tree"]) or ctx.opts["tree"], ".jev", "stacks")
+     sections, ran, failures = [], 0, []
+-    st.update(o_blocks=n, chain_open=True)
++    if not over:
++        st.update(o_blocks=n, chain_open=True)
++    try:
++        append_rows(ctx, binds)                   # before any save of the state moves `read` past their records
++    except OSError as e:
++        failures.append("the bind rows (%s)" % e)
+     for c, k in pending:
+         status, reason, rc, run, text = "refused", None, None, None, ""
+         if c.kind == "malformed":
+@@ -1079,6 +1153,10 @@ def cmd_stop(ctx, payload):
+             reason = "duplicate id (%s is taken for this nonce: every request line takes a new id)" % c.id
+         elif c.reason:
+             reason = "malformed (%s)" % c.reason
++        elif over:                                # the advice first, as below
++            reason = ("cap: nothing ran; continue with tool calls (python3 scripts/stack.py %s ...): this was Stop %d "
++                      "in a row with no tool call, above the harness's cap of %d, where it drops a Stop hook's "
++                      "feedback, so this receipt waited for the next prompt%s" % (c.label, n, ctx.cap, ctx.cap_note))
+         elif at_cap:                              # the advice first: a long cap_note is cut at REASON_MAX, never it
+             reason = ("cap: nothing ran; continue with tool calls (python3 scripts/stack.py %s ...): this is blocking "
+                       "Stop %d in a row with no tool call, and above %d the harness ends the turn%s" % (
+@@ -1093,8 +1171,9 @@ def cmd_stop(ctx, payload):
+         saved = save_print(ctx, session, c, text) if text else None
+         res = receipt_of(c, status, reason, rc, run)
+         try:
+-            append_rows(ctx, [row_of(ctx, session, transcript, c, status, reason, "feedback", rc=rc, run=run,
+-                                     run_dir=os.path.join(runs_base, run) if run else None, out=saved, receipt=res)])
++            append_rows(ctx, [row_of(ctx, session, transcript, c, status, reason, "no" if over else "feedback", rc=rc,
++                                     run=run, run_dir=os.path.join(runs_base, run) if run else None, out=saved,
++                                     receipt=res, **lam_fields(c))])
+         except OSError as e:
+             failures.append("the ledger row of %s (%s)" % (c.id, e))
+         sections.append((res, text.rstrip("\n"), saved))
+@@ -1105,6 +1184,13 @@ def cmd_stop(ctx, payload):
+         except OSError as e:
+             if not any(f.startswith("the session state") for f in failures):
+                 failures.append("the session state (%s)" % e)
++    if over and not any(f.startswith("the session state") for f in failures):
++        # above the cap nothing is written for the harness to drop and nothing blocks: the refusals stay undelivered
++        # in the saved state, and the next prompt reports them (VERIFY-LS-B10 F4); a state that could not be saved
++        # cannot carry them, so then they go out below as at the cap
++        hook_log(ctx, dict(log, ms=round((time.monotonic() - t0) * 1000, 1), outcome="over-cap", ran=ran,
++                           receipts=len(sections), shown=0))
++        return 0
+     neutralize, neut_error = neutralizer()
+     head = ["Chat form (LS-B10) receipts, one per request line (%d; nonce %s%s):" % (
+         len(sections), nonces[-1], ", the last_assistant_message fallback" if use_lam else "")]
+diff --git a/tasks/briefs/labeling/LS-B10-registration.patch b/tasks/briefs/labeling/LS-B10-registration.patch
+index fe63e0a..fa32879 100644
+--- a/tasks/briefs/labeling/LS-B10-registration.patch
++++ b/tasks/briefs/labeling/LS-B10-registration.patch
+@@ -71,9 +71,16 @@ index b411221..27c0f5f 100644
+      ],
+      "PreToolUse": [
+ diff --git a/scripts/install_session_hooks.py b/scripts/install_session_hooks.py
+-index 96b35f6..3ccbcac 100755
++index 96b35f6..af04a3d 100755
+ --- a/scripts/install_session_hooks.py
+ +++ b/scripts/install_session_hooks.py
++@@ -1,5 +1,5 @@
++ #!/usr/bin/env python3
++-"""install_session_hooks.py — register the eight project hooks for a session rooted ABOVE the repository.
+++"""install_session_hooks.py — register the project hooks for a session rooted ABOVE the repository.
++ 
++ Claude Code loads `.claude/settings.json` from the session's project root only. A session rooted in `/home/user` (the
++ CCR default here) never loads `agent-factory/.claude/settings.json`, so none of the five project hooks fired there
+ @@ -20,6 +20,14 @@ output style, so this line does the style's job (LS-DESIGN v2 §6, LS-B6). When
+  ONE line naming why, and the command exits 0 always: stack.py catches its own failures, and a python3 that cannot run
+  at all ends in the echo.
+@@ -89,7 +96,7 @@ index 96b35f6..3ccbcac 100755
+  The tool hooks run through scripts/hook_context.py: edit-snapshot prints plain text, which the wrapper turns into
+  additionalContext the model reads (the Codex and Hermes adapters parse that plain text); search-intercept (task #228,
+  PreToolUse on Grep and Bash) answers a semantic search or stops a known Bash quirk with exit 2 and its text on stderr,
+-@@ -30,7 +38,8 @@ that match the prompt, beside wiki-context); session-start.sh resets its once-pe
++@@ -30,13 +38,19 @@ that match the prompt, beside wiki-context); session-start.sh resets its once-pe
+  the wrapper too since D-095, so its excerpt carries the S1-RATE stamp and score request like every other injection.
+  
+  Merge rule, hook by hook: an install replaces every hook whose command names `<repo>/.claude/hooks/`,
+@@ -99,7 +106,19 @@ index 96b35f6..3ccbcac 100755
+  out only our exact current commands. A foreign hook in the same group as one of ours
+  stays, in that group with its matcher (S1-L1-R1 F19); every other key and entry in the file is kept. An existing file
+  that is not a JSON object is refused (exit 1), never overwritten.
+-@@ -66,6 +75,10 @@ def our_hooks(root: Path) -> dict:
++ 
+++The count of hooks an install registers is counted from our_hooks() (hook_count), never written as a literal: --help
+++states it and the install line prints it (VERIFY-LS-B10 F10: a literal count went stale when the chat form's hooks
+++were added).
+++
++ Usage: install_session_hooks.py [--target PATH] [--check | --remove]
++-  (default)  write or refresh our entries; prints `session hooks: installed|unchanged ...`
+++  (default)  write or refresh our entries; prints `session hooks: installed N in ...` (N from hook_count) or
+++             `session hooks: unchanged in ...`
++   --check    exit 0 when the file already holds exactly our entries, 1 otherwise; writes nothing
++   --remove   delete our entries (the owner's opt-out); keeps everything else
++ """
++@@ -66,6 +80,10 @@ def our_hooks(root: Path) -> dict:
+          return {"hooks": [{"type": "command", "command": guarded(
+              "scripts/task_sync.py", f"python3 {r}/scripts/task_sync.py --hook {event}"), "timeout": 30}]}
+  
+@@ -110,7 +129,7 @@ index 96b35f6..3ccbcac 100755
+      catalog = {"matcher": "startup|resume|compact", "hooks": [{"type": "command", "command": guarded(
+          "scripts/stack.py",
+          f'python3 {r}/scripts/stack.py catalog || echo "stacks: no catalog (scripts/stack.py catalog exited $?)"'),
+-@@ -74,13 +87,14 @@ def our_hooks(root: Path) -> dict:
++@@ -74,13 +92,14 @@ def our_hooks(root: Path) -> dict:
+      return {
+          "SessionStart": [{"hooks": [{"type": "command", "command": guarded(
+              ".claude/hooks/session-start.sh", f"CLAUDE_PROJECT_DIR={r} bash {r}/.claude/hooks/session-start.sh")}]},
+@@ -127,7 +146,7 @@ index 96b35f6..3ccbcac 100755
+          "PostToolUse": [{"matcher": "Edit|Write|Read", "hooks": [{"type": "command", "command": guarded(
+              ".claude/hooks/edit-snapshot.py", f"{wrap} PostToolUse -- python3 {r}/.claude/hooks/edit-snapshot.py", True)}]}],
+          "PreToolUse": [{"matcher": "Grep|Bash", "hooks": [{"type": "command", "command": guarded(
+-@@ -91,7 +105,7 @@ def our_hooks(root: Path) -> dict:
++@@ -91,10 +110,15 @@ def our_hooks(root: Path) -> dict:
+                  True)}]}],
+          "Stop": [{"hooks": [{"type": "command", "command": guarded(
+              ".claude/hooks/turn-retro-gate.sh", f"bash {r}/.claude/hooks/turn-retro-gate.sh")}]},
+@@ -136,7 +155,15 @@ index 96b35f6..3ccbcac 100755
+      }
+  
+  
+-@@ -111,10 +125,11 @@ def merged(current: dict, root: Path, remove: bool) -> dict:
+++def hook_count(hooks: dict) -> int:
+++    """How many hooks an our_hooks() mapping registers: every command in every group of every event."""
+++    return sum(len(g["hooks"]) for groups in hooks.values() for g in groups)
+++
+++
++ def _without(entry: object, ours) -> object:
++     """The group without our hooks: None when it held only ours, the group itself when it held none, else a copy that
++     keeps the foreign hooks under the group's matcher."""
++@@ -111,10 +135,11 @@ def merged(current: dict, root: Path, remove: bool) -> dict:
+      marker = f"{shlex.quote(str(root))}/.claude/hooks/"  # as the commands spell it (VERIFY-COORD-0924 F-L1-1)
+      sync_marker = f"{shlex.quote(str(root))}/scripts/task_sync.py"
+      catalog_marker = f"{shlex.quote(str(root))}/scripts/stack.py catalog"
+@@ -149,13 +176,35 @@ index 96b35f6..3ccbcac 100755
+      out = dict(current)
+      hooks = dict(out.get("hooks") or {})
+      for event in sorted(set(hooks) | set(mine)):
++@@ -133,7 +158,8 @@ def merged(current: dict, root: Path, remove: bool) -> dict:
++ 
++ 
++ def main(argv: list[str]) -> int:
++-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+++    n = hook_count(our_hooks(ROOT))
+++    ap = argparse.ArgumentParser(description=f"{__doc__.splitlines()[0]} It registers {n} hooks.")
++     ap.add_argument("--target", type=Path, default=ROOT.parent / ".claude" / "settings.json")
++     mode = ap.add_mutually_exclusive_group()
++     mode.add_argument("--check", action="store_true")
++@@ -173,7 +199,7 @@ def main(argv: list[str]) -> int:
++     else:
++         os.chmod(tmp, 0o644)
++     os.replace(tmp, target)
++-    verb = "removed ours from" if args.remove else "installed 8 in"
+++    verb = "removed ours from" if args.remove else f"installed {n} in"
++     print(f"session hooks: {verb} {target} (live from the next tool call)")
++     return 0
++ 
+ diff --git a/tests/test_session_hooks.py b/tests/test_session_hooks.py
+-index c3383a3..cf3bf07 100644
++index c3383a3..5c8c044 100644
+ --- a/tests/test_session_hooks.py
+ +++ b/tests/test_session_hooks.py
+-@@ -3,7 +3,9 @@
++@@ -1,9 +1,11 @@
++ """scripts/hook_context.py and scripts/install_session_hooks.py (task #214, AF-AP-172).
++ 
+  hook_context turns a hook's plain stdout into additionalContext (the only PreToolUse/PostToolUse output the model reads,
+- measured live 2026-09-24); install_session_hooks registers the eight project hooks for a session rooted above the repo
++-measured live 2026-09-24); install_session_hooks registers the eight project hooks for a session rooted above the repo
+++measured live 2026-09-24); install_session_hooks registers 13 project hooks for a session rooted above the repo
+  (task_sync.py, LS-B7, on Stop and SessionStart with a 30-second timeout; its own behavior is tests/test_task_sync.py's;
+ -the stack catalog, LS-B9 round 4, on SessionStart for start, resume and compact; its text is tests/test_stack.py's).
+ +the stack catalog, LS-B9 round 4, on SessionStart for start, resume and compact; its text is tests/test_stack.py's;
+@@ -172,7 +221,20 @@ index c3383a3..cf3bf07 100644
+  STAMP = re.compile(r"\[S1 (s1-[0-9a-f]{8}) ([A-Za-z0-9_.-]+)\]")
+  REQUEST = ('Begin your next text with "S1-RATE {id} rel=R use=U" (+ a note <=120 chars: why, if a 0), one line per '
+             'unscored injection. rel 0 unrelated,1 same area not this step,2 relevant to this step,3 governs it; '
+-@@ -121,9 +124,9 @@ def test_fresh_install_registers_the_eight_hooks(tmp_path):
++@@ -114,16 +117,27 @@ def test_real_edit_snapshot_screen_reaches_the_model_form():
++ 
++ # ---- install_session_hooks.py ----
++ 
++-def test_fresh_install_registers_the_eight_hooks(tmp_path):
+++def test_fresh_install_registers_and_prints_13_hooks(tmp_path):
+++    """13 hooks since LS-B10, and the installer says so: its install line prints the count and --help states it, both
+++    counted from what it registers, never a literal, and the help names no other count (VERIFY-LS-B10 F10). Mutants:
+++    the old literal 8 in either line; a count of the events (5) in place of the hooks; a count written into the
+++    docstring's first line ("eight", or a 13 that the next hook would make stale)."""
++     target = tmp_path / ".claude" / "settings.json"
++     r = install(target)
++-    assert r.returncode == 0 and "installed 8" in r.stdout
+++    assert r.returncode == 0 and "installed 13 in" in r.stdout
+      hooks = json.loads(target.read_text())["hooks"]
+      assert sorted(hooks) == ["PostToolUse", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"]
+      cmds = {ev: [h["command"] for e in v for h in e["hooks"]] for ev, v in hooks.items()}
+@@ -181,11 +243,18 @@ index c3383a3..cf3bf07 100644
+ -    assert all(MARKER in c or SYNC in c or CATALOG in c for cs in cmds.values() for c in cs)
+ +    assert {ev: len(c) for ev, c in cmds.items()} == {"PostToolUse": 1, "PreToolUse": 2, "SessionStart": 4, "Stop": 3,
+ +                                                      "UserPromptSubmit": 3}
+++    assert f"installed {sum(map(len, cmds.values()))} in" in r.stdout     # the count printed is the count written
+++    h = install(tmp_path / "help.json", "--help")
+++    assert h.returncode == 0 and "It registers 13 hooks." in " ".join(h.stdout.split()), h.stdout
+++    assert not (tmp_path / "help.json").exists()
+++    said = re.findall(r"\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|"
+++                      r"fifteen)\b", " ".join(h.stdout.split()).lower())
+++    assert said == ["13"], said                    # no written count beside the counted one (F10: it said eight)
+ +    assert all(MARKER in c or SYNC in c or CATALOG in c or REQ in c for cs in cmds.values() for c in cs)
+      assert cmds["SessionStart"][1].endswith(f"python3 {SYNC} --hook session-start")       # LS-B7: after the others
+      assert CATALOG in cmds["SessionStart"][2]                                              # LS-B9 round 4: after it
+      assert cmds["Stop"][1].endswith(f"python3 {SYNC} --hook stop")
+-@@ -227,7 +230,7 @@ def _sh(cmd, stdin="{}", cwd="/", env=None):
++@@ -227,7 +241,7 @@ def _sh(cmd, stdin="{}", cwd="/", env=None):
+  
+  def test_every_installed_command_fails_open_when_the_repo_is_absent(tmp_path):
+      cmds = _all_commands(tmp_path / "no-such-repo")
+@@ -194,7 +263,7 @@ index c3383a3..cf3bf07 100644
+      for ev, cmd in cmds:
+          r = _sh(cmd)
+          assert (r.returncode, r.stdout) == (0, ""), (ev, r.returncode, r.stdout, r.stderr)
+-@@ -290,7 +293,7 @@ def test_a_repo_path_that_needs_quoting_stays_idempotent_and_removable(tmp_path)
++@@ -290,7 +304,7 @@ def test_a_repo_path_that_needs_quoting_stays_idempotent_and_removable(tmp_path)
+      foreign = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo other"}]}]}}
+      once = ish.merged(foreign, root, remove=False)
+      assert ish.merged(once, root, remove=False) == once
+@@ -203,7 +272,7 @@ index c3383a3..cf3bf07 100644
+      assert ish.merged(once, root, remove=True) == foreign
+  
+  
+-@@ -364,7 +367,8 @@ def test_the_task_sync_hooks_are_installed_with_a_30_second_timeout(tmp_path):
++@@ -364,7 +378,8 @@ def test_the_task_sync_hooks_are_installed_with_a_30_second_timeout(tmp_path):
+          assert h[0]["command"] == (f"[ -f {ROOT}/scripts/task_sync.py ] || exit 0; cd {ROOT} || exit 0; "
+                                     f"python3 {SYNC} --hook {arg}")
+      others = [h for v in hooks.values() for g in v for h in g["hooks"]
+@@ -213,7 +282,7 @@ index c3383a3..cf3bf07 100644
+      assert len(others) == 7 and all("timeout" not in h for h in others)
+  
+  
+-@@ -488,3 +492,175 @@ def test_an_older_catalog_spelling_is_replaced_on_install(tmp_path):
++@@ -488,3 +503,175 @@ def test_an_older_catalog_spelling_is_replaced_on_install(tmp_path):
+      cmds = [h["command"] for g in json.loads(target.read_text())["hooks"]["SessionStart"] for h in g["hooks"]]
+      assert sum("stack.py catalog" in c for c in cmds) == 1 and old["command"] not in cmds
+      assert install(target, "--check").returncode == 0
+diff --git a/tests/test_ls_req.py b/tests/test_ls_req.py
+index f53556f..7d273aa 100644
+--- a/tests/test_ls_req.py
++++ b/tests/test_ls_req.py
+@@ -233,6 +233,16 @@ def receipts(r, nonce):
+     return out
+ 
+ 
++def receipt_rows(w):
++    """The ledger's receipt rows (every row but a bind row)."""
++    return [x for x in w.ledger() if x["kind"] != "bind"]
++
++
++def binds(w):
++    """The ledger's bind rows: each ties the record of a last_assistant_message receipt to that receipt."""
++    return [x for x in w.ledger() if x["kind"] == "bind"]
++
++
+ def end_step(pidfile, wait_s=5.0):
+     """None when no step wrote its pid; False when the step is gone within wait_s; True when it outlived that (it is
+     then killed, so no test leaves a sleeper behind)."""
+@@ -1043,8 +1053,9 @@ def test_the_stop_hook_time_on_a_large_transcript_is_bounded(w):
+ def test_the_transcript_catch_up_wait_and_the_last_assistant_message_fallback(w):
+     """The harness writes the transcript asynchronously: when last_assistant_message holds a request the transcript
+     does not show, the hook waits (bounded) and then answers from that text, the row with no record uuid; when the
+-    record appears later, it is the same request, not a duplicate. Mutants: no fallback (a silent drop); the later
+-    record answered again as a duplicate."""
++    record appears later, it is the same request, not a duplicate: a bind row ties that record to the receipt
++    (VERIFY-LS-B10 F1; item 6's pairing). Mutants: no fallback (a silent drop); the later record answered again as a
++    duplicate."""
+     n = w.prompt()
+     last = "REQ %s r1 premise files=a.txt" % n
+     r = w.stop(lam=last, args=("--catchup", "0.3"))
+@@ -1052,7 +1063,335 @@ def test_the_transcript_catch_up_wait_and_the_last_assistant_message_fallback(w)
+     assert "the last_assistant_message fallback" in r.stderr.decode()
+     [row] = w.ledger()
+     assert (row["uuid"], row["source"]) == (None, "last_assistant_message")
+-    w.text(last)                                   # the record reaches the transcript after the Stop
++    record = w.text(last)                          # the record reaches the transcript after the Stop
++    w.summary(blocking=True)
++    r = w.stop(active=True)
++    assert (r.returncode, r.stderr) == (0, b"") and len(receipt_rows(w)) == 1 and len(w.runs()) == 1
++    [bind] = binds(w)
++    assert (bind["uuid"], bind["line"], bind["binds"], bind["status"]) == (record, 0, row["fb"], "bound")
++
++
++# ---------------------------------------------------------------- round 2: every line by occurrence (VERIFY-LS-B10 F1)
++
++DUP = "refused: duplicate id (r1 is taken for this nonce: every request line takes a new id)"
++
++
++def test_the_same_line_twice_through_the_fallback_gets_two_receipts_and_its_record_none(w):
++    """VERIFY-LS-B10 F1 (S1, S1b): the same request line twice in one last_assistant_message text is two requests,
++    answered `ran` and `refused: duplicate id` as on the transcript path; when their record arrives, each of its two
++    lines is bound to one receipt, so nothing is answered or run twice, and the next prompt reports nothing. Mutants: a
++    fallback line read as "same" as a row of the same text (the second line silent); no binding (the record's lines
++    answered again, exit 2); a fallback row absorbing more than one line (both record lines bound to the first)."""
++    n = w.prompt()
++    line = "REQ %s r1 premise files=a.txt" % n
++    lam = line + "\n" + line
++    r = w.stop(lam=lam, args=("--catchup", "0.3"))
++    got = receipts(r, n)
++    assert r.returncode == 2 and got["r1"][0].startswith("ran rc=0") and got["r1"][1:] == [DUP], got
++    rows = receipt_rows(w)
++    assert [(x["line"], x["uuid"], x["source"], x["status"]) for x in rows] == [
++        (0, None, "last_assistant_message", "ran"), (1, None, "last_assistant_message", "refused")]
++    assert len(w.runs()) == 1 and len({x["fb"] for x in rows}) == 2
++    record = w.text(lam)                           # the record arrives: two lines, each already answered
++    w.summary(blocking=True)
++    r = w.stop(active=True)
++    assert (r.returncode, r.stderr) == (0, b"") and len(receipt_rows(w)) == 2 and len(w.runs()) == 1
++    assert [(x["uuid"], x["line"], x["binds"]) for x in binds(w)] == [(record, 0, rows[0]["fb"]),
++                                                                       (record, 1, rows[1]["fb"])]
++    w.summary(blocking=False)
++    n2 = w.prompt()
++    assert w.context == M.NONCE_LINE.format(n=n2), w.context
++
++
++def test_an_identical_re_issue_after_a_fallback_round_is_refused_as_a_duplicate(w):
++    """VERIFY-LS-B10 F1 (S2): after a fallback round ran r1, a later message re-issues the identical r1 line. With both
++    records in the transcript, the first is bound to the fallback receipt and the re-issue gets `refused: duplicate
++    id` with exit 2, as on the transcript path. When the re-issue is in last_assistant_message only (the transcript lags
++    again) while the first record has arrived, that record is an earlier round's, so the transcript does not show the
++    re-issue: the fallback takes it and refuses it the same way, and its record, when it arrives, is bound to that
++    refusal. Mutants: a fallback row absorbing every matching line (the re-issue silent, exit 0); lam_missing counting
++    an earlier round's record (the lagging re-issue never collected, exit 0)."""
++    n = w.prompt()
++    line = "REQ %s r1 premise files=a.txt" % n
++    assert receipts(w.stop(lam=line, args=("--catchup", "0.3")), n)["r1"][0].startswith("ran rc=0")
++    first = w.text(line)                           # the fallback receipt's record
++    w.summary(blocking=True)
++    w.tool_use()
++    second = w.text(line)                          # the identical re-issue, in the transcript as well
++    r = w.stop(active=True, lam=line)
++    assert r.returncode == 2 and receipts(r, n)["r1"] == [DUP], r.stderr
++    assert len(w.runs()) == 1 and [(x["uuid"], x["line"]) for x in binds(w)] == [(first, 0)]
++    assert [(x["uuid"], x["status"]) for x in receipt_rows(w)] == [(None, "ran"), (second, "refused")]
++    lag = World(w.tmp / "lag")                     # the same, the re-issue lagging
++    m = lag.prompt()
++    line = "REQ %s r1 premise files=a.txt" % m
++    assert receipts(lag.stop(lam=line, args=("--catchup", "0.3")), m)["r1"][0].startswith("ran rc=0")
++    first = lag.text(line)                         # only the first record has arrived
++    lag.summary(blocking=True)
++    lag.tool_use()
++    r = lag.stop(active=True, lam=line, args=("--catchup", "0.3"))
++    assert r.returncode == 2 and receipts(r, m)["r1"] == [DUP], r.stderr
++    assert "the last_assistant_message fallback" in r.stderr.decode()
++    assert len(lag.runs()) == 1 and [(x["uuid"], x["line"]) for x in binds(lag)] == [(first, 0)]
++    refusal = receipt_rows(lag)[-1]
++    assert (refusal["uuid"], refusal["status"], refusal["source"]) == (None, "refused", "last_assistant_message")
++    late = lag.text(line)                          # the re-issue's record arrives: it is that refusal's
++    lag.summary(blocking=True)
++    r = lag.stop(active=True)
++    assert (r.returncode, r.stderr) == (0, b"") and len(receipt_rows(lag)) == 2
++    assert [(x["uuid"], x["binds"]) for x in binds(lag)] == [(first, receipt_rows(lag)[0]["fb"]),
++                                                             (late, refusal["fb"])]
++
++
++def test_a_fallback_line_repeating_an_answered_line_is_refused_as_a_duplicate(w):
++    """VERIFY-LS-B10 F1, the reverse order the verifier left static: r1 answered on the transcript path, then the final
++    message repeats the identical line while the transcript lags. The fallback line is another occurrence: `refused:
++    duplicate id` with exit 2; its record, when it arrives, is bound to that refusal (answered once). Mutant: a fallback
++    line read as "same" as a transcript row of the same text (the repeat silent, exit 0)."""
++    n = w.prompt()
++    line = "REQ %s r1 premise files=a.txt" % n
++    w.text(line)
++    assert receipts(w.stop(), n)["r1"][0].startswith("ran rc=0")
++    w.summary(blocking=True)
++    w.tool_use()
++    r = w.stop(active=True, lam=line, args=("--catchup", "0.3"))
++    assert r.returncode == 2 and receipts(r, n)["r1"] == [DUP] and len(w.runs()) == 1, r.stderr
++    refusal = receipt_rows(w)[-1]
++    assert (refusal["uuid"], refusal["source"]) == (None, "last_assistant_message")
++    record = w.text(line)
++    w.summary(blocking=True)
++    r = w.stop(active=True)
++    assert (r.returncode, r.stderr) == (0, b"") and len(receipt_rows(w)) == 2
++    assert [(x["uuid"], x["line"], x["binds"]) for x in binds(w)] == [(record, 0, refusal["fb"])]
++
++
++def test_two_identical_malformed_lines_through_the_fallback_get_a_receipt_each(w):
++    """VERIFY-LS-B10 F1: two identical malformed current-nonce lines in one last_assistant_message text are two lines,
++    so two `refused: malformed` receipts, and their record's two lines are bound to them, one each. Mutant: a malformed
++    fallback line read as "same" as a row of the same text (the second line silent)."""
++    n = w.prompt()
++    lam = "see %s here\nsee %s here" % (n, n)
++    r = w.stop(lam=lam, args=("--catchup", "0.3"))
++    want = "RES %s ? refused: malformed (the nonce outside a request line: write it only in request lines)" % n
++    assert r.returncode == 2 and res_lines(r) == [want, want], r.stderr
++    rows = receipt_rows(w)
++    assert [(x["kind"], x["line"], x["uuid"]) for x in rows] == [("malformed", 0, None), ("malformed", 1, None)]
++    record = w.text(lam)
+     w.summary(blocking=True)
+     r = w.stop(active=True)
+-    assert (r.returncode, r.stderr) == (0, b"") and len(w.ledger()) == 1 and len(w.runs()) == 1
++    assert (r.returncode, r.stderr) == (0, b"") and len(receipt_rows(w)) == 2
++    assert [(x["uuid"], x["line"], x["binds"]) for x in binds(w)] == [(record, 0, rows[0]["fb"]),
++                                                                       (record, 1, rows[1]["fb"])]
++
++
++def test_a_bind_holds_across_rounds_and_needs_the_fallback_rounds_offset(w):
++    """A fallback receipt absorbs ONE transcript line, for good: once its record is bound (a bind row in the ledger), an
++    identical line a round later is a new request, `refused: duplicate id`, though that round's window no longer holds
++    the bound record. And only a line at or after the offset the fallback round read up to (`after`) can be its
++    record: an unanswered identical line before it (the stored offset moved past it, as a state edit can) is a request
++    of its own, which the reconciler refuses as a duplicate, while the record is bound. Mutants: the bind rows not
++    written (the later line bound to the receipt again, exit 0); `after` not checked (the earlier line bound)."""
++    n = w.prompt()
++    line = "REQ %s r1 premise files=a.txt" % n
++    assert receipts(w.stop(lam=line, args=("--catchup", "0.3")), n)["r1"][0].startswith("ran rc=0")
++    record = w.text(line)                          # the record arrives, a new request beside it
++    w.summary(blocking=True)
++    w.tool_use()
++    w.text("REQ %s r2 premise files=b.txt" % n)
++    r = w.stop(active=True)
++    assert r.returncode == 2 and list(receipts(r, n)) == ["r2"] and [x["uuid"] for x in binds(w)] == [record]
++    w.summary(blocking=True)
++    w.tool_use()
++    w.text(line)                                   # the identical r1 line, a round later
++    r = w.stop(active=True)
++    assert r.returncode == 2 and receipts(r, n)["r1"] == [DUP] and len(w.runs()) == 2, r.stderr
++    early = World(w.tmp / "after")
++    m = early.prompt()
++    line = "REQ %s r1 premise files=a.txt" % m
++    early.text(line)                               # a line no Stop reads: the stored offset moves past it
++    st = early.st()
++    st["read"] = early.tx.stat().st_size
++    (early.state / "req" / "sessions" / "s1.json").write_text(json.dumps(st))
++    assert receipts(early.stop(lam=line, args=("--catchup", "0.3")), m)["r1"][0].startswith("ran rc=0")
++    record = early.text(line)                      # the fallback receipt's record
++    early.summary(blocking=False)
++    early.prompt()
++    assert "RES %s r1 refused: duplicate id (r1 is taken for nonce %s)" % (m, m) in early.context, early.context
++    assert [(x["uuid"], x["binds"]) for x in binds(early)] == [(record, receipt_rows(early)[0]["fb"])]
++
++
++def test_a_fallback_receipt_binds_only_a_line_of_its_own_transcript(w):
++    """A fallback row's `after` is an offset in the transcript its round read, so only a line of that transcript can be
++    its record: after the session's transcript changes (a resume that ran no SessionStart), an identical line in the new
++    file is a request of its own, `refused: duplicate id` with exit 2, and nothing is bound. Mutant: the transcript not
++    checked (the new file's line bound to the old receipt: no receipt, exit 0)."""
++    n = w.prompt()
++    line = "REQ %s r1 premise files=a.txt" % n
++    assert receipts(w.stop(lam=line, args=("--catchup", "0.3")), n)["r1"][0].startswith("ran rc=0")
++    w.tx = w.tmp / "transcript2.jsonl"
++    w.tool_use()
++    w.text(line)                                   # the new file: the identical line, past offset 0
++    r = w.stop(active=True)
++    assert r.returncode == 2 and receipts(r, n)["r1"] == [DUP] and len(w.runs()) == 1, r.stderr
++    assert binds(w) == [] and w.st()["transcript"] == str(w.tx)
++    assert receipt_rows(w)[0]["after"] == 0        # the old file was read to offset 0: `after` alone would bind it
++
++
++def test_a_lagging_re_issue_is_refused_when_a_re_read_window_holds_its_answered_line(w):
++    """When the Stop reads a window that holds a line an earlier round answered (here the transcript shrank, so the
++    Stop re-reads its tail) while the final message re-issues that line and the transcript lags, the answered record
++    does not show the re-issue: the fallback takes it, `refused: duplicate id` with exit 2. Mutant: lam_missing
++    counting a record an earlier round answered on the transcript path (the re-issue never collected, exit 0)."""
++    n = w.prompt()
++    line = "REQ %s r1 premise files=a.txt" % n
++    w.text(line)
++    assert receipts(w.stop(), n)["r1"][0].startswith("ran rc=0")
++    kept = w.tx.read_bytes()
++    w.tool_use()
++    w.text("More work.")
++    assert w.stop().returncode == 0                # the offset moves past the tool call and the text
++    w.tx.write_bytes(kept)                         # the file restored shorter: only the answered line's record
++    r = w.stop(active=True, lam=line, args=("--catchup", "0.3"))
++    assert r.returncode == 2 and receipts(r, n)["r1"] == [DUP] and len(w.runs()) == 1, r.stderr
++    assert "the last_assistant_message fallback" in r.stderr.decode()
++
++
++def test_a_record_without_a_uuid_is_known_by_its_offset_and_answered_once(w):
++    """Matching by occurrence needs an identity for every transcript line: a record with no uuid (never measured: every
++    record carries one) is known by its byte offset, so the Stop answers its line and the next prompt's reconciler,
++    which reads the turn again, reports nothing. Mutant: such a record left with no identity (the reconciler refuses
++    its line again as a duplicate)."""
++    n = w.prompt()
++    off = w.tx.stat().st_size
++    w.rec({"type": "assistant", "message": {"id": "m9", "role": "assistant", "content": [
++        {"type": "text", "text": "REQ %s r1 premise files=a.txt" % n}]}})
++    assert receipts(w.stop(), n)["r1"][0].startswith("ran rc=0")
++    assert w.ledger()[0]["uuid"] == "@%d" % off
++    w.summary(blocking=False)
++    n2 = w.prompt()
++    assert w.context == M.NONCE_LINE.format(n=n2), w.context
++
++
++# ---------------------------------------------------------------- round 2: above the cap (VERIFY-LS-B10 F4)
++
++def test_above_the_cap_the_refusals_wait_for_the_next_prompt_and_nothing_blocks(w):
++    """VERIFY-LS-B10 F4: above CLAUDE_CODE_STOP_HOOK_BLOCK_CAP the harness ends the turn and drops a blocking Stop's
++    feedback (PM P2), so there the hook writes nothing for it and blocks nothing: exit 0, the refusal's row delivered
++    `no`, its receipt kept undelivered, and the next prompt reports it. At the cap itself, as at cap-1, it refuses
++    with exit 2 and delivers. Mutants: exit 2 above the cap; the receipt dropped from the undelivered list; the row
++    delivered `feedback`; `>=` for `>` (the cap itself quiet)."""
++    env = dict(w.env, CLAUDE_CODE_STOP_HOOK_BLOCK_CAP="4")
++    n = w.prompt()
++    for _ in range(3):
++        w.summary(blocking=True)
++    w.text("REQ %s r1 premise files=a.txt" % n)
++    r = w.stop(active=True, env=env)               # blocking Stop 4 in a row: the cap itself
++    assert r.returncode == 2 and receipts(r, n)["r1"][0].startswith("refused: cap: nothing ran;"), r.stderr
++    assert "blocking Stop 4 in a row" in res_lines(r)[0] and w.st()["undelivered"] == []
++    assert w.ledger()[-1]["delivered"] == "feedback"
++    for i, stop in ((2, 5), (3, 6)):              # the harness recorded the last Stop as blocking: above the cap
++        w.summary(blocking=True)
++        w.text("REQ %s r%d premise files=a.txt" % (n, i))
++        r = w.stop(active=True, env=env)
++        assert (r.returncode, r.stdout, r.stderr) == (0, b"", b""), r.stderr
++        row = w.ledger()[-1]
++        assert (row["id"], row["status"], row["delivered"]) == ("r%d" % i, "refused", "no"), row
++        assert row["receipt"] == w.st()["undelivered"][-1] and "this was Stop %d in a row" % stop in row["receipt"]
++    assert w.runs() == [] and len(w.st()["undelivered"]) == 2
++    assert [x["outcome"] for x in w.hooklog() if x["event"] == "stop"] == ["cap", "over-cap", "over-cap"]
++    w.summary(blocking=False)
++    w.prompt()
++    late = [x for x in w.context.split("\n") if x.startswith("delivered late: RES %s " % n)]
++    assert [x.split(" ")[4] for x in late] == ["r2", "r3"], w.context
++    assert all("refused: cap: nothing ran; continue with tool calls" in x for x in late) and w.st()["undelivered"] == []
++
++
++# ---------------------------------------------------------------- round 2: the never-run sources and the window (F6)
++
++def test_v1_a_stop_whose_payload_carries_an_agent_id_runs_nothing_and_writes_nothing(w):
++    """VERIFY-LS-B10 F6, V1 (standing rule 14: the injection boundary): a Stop payload with an agent_id is a
++    subagent's, never the main thread's, so the pending current-nonce request does not run, nothing is written and the
++    state keeps its offset; the same Stop without it runs the request (the control: the request was live). Mutant: the
++    agent_id guard dropped (the subagent's Stop runs the main thread's request)."""
++    n = w.prompt()
++    w.text("REQ %s r1 premise files=a.txt" % n)
++    before = w.st()
++    r = w.stop(agent_id="agent-1")
++    assert (r.returncode, r.stdout, r.stderr) == (0, b"", b"")
++    assert w.runs() == [] and w.ledger() == [] and w.st() == before
++    assert receipts(w.stop(), n)["r1"][0].startswith("ran rc=0")
++
++
++def test_v2_a_sidechain_record_is_never_read(w):
++    """VERIFY-LS-B10 F6, V2 (the injection boundary): a request line in a sidechain record (a subagent's chain in the
++    same file) never runs and gets no receipt; the same line in the main chain runs (the control). Mutant: sidechain
++    records read."""
++    n = w.prompt()
++    w.rec({"type": "assistant", "uuid": "sc1", "isSidechain": True, "message": {
++        "id": "ms", "role": "assistant", "content": [{"type": "text", "text": "REQ %s r1 premise files=a.txt" % n}]}})
++    r = w.stop()
++    assert (r.returncode, r.stderr) == (0, b"") and w.runs() == [] and w.ledger() == []
++    w.text("REQ %s r1 premise files=a.txt" % n)
++    assert receipts(w.stop(), n)["r1"][0].startswith("ran rc=0")
++
++
++def test_v3_a_tool_use_input_is_never_read_as_text(w):
++    """VERIFY-LS-B10 F6, V3 (the injection boundary): a request line inside a tool call's input (a Bash command that
++    would print one) never runs and gets no receipt; the same line as text runs (the control). Mutant: a tool_use input
++    read as text."""
++    n = w.prompt()
++    w.rec({"type": "assistant", "uuid": "tu1", "message": {"id": "mt", "role": "assistant", "content": [
++        {"type": "tool_use", "id": "toolu_9", "name": "Bash",
++         "input": {"command": "REQ %s r1 premise files=a.txt" % n}}]}})
++    r = w.stop()
++    assert (r.returncode, r.stderr) == (0, b"") and w.runs() == [] and w.ledger() == []
++    w.text("REQ %s r1 premise files=a.txt" % n)
++    assert receipts(w.stop(), n)["r1"][0].startswith("ran rc=0")
++
++
++def test_v12_a_tool_result_is_never_read_as_text(w):
++    """VERIFY-LS-B10 F6, V12 (the injection boundary): a request line inside a tool result (a file the tool printed)
++    never runs and gets no receipt; the same line as text runs (the control). Mutant: a tool_result read as text."""
++    n = w.prompt()
++    w.rec({"type": "assistant", "uuid": "tu1", "message": {"id": "mt", "role": "assistant", "content": [
++        {"type": "tool_use", "id": "toolu_9", "name": "Bash", "input": {"command": "cat notes.txt"}}]}})
++    w.rec({"type": "user", "uuid": "tr1", "message": {"role": "user", "content": [
++        {"type": "tool_result", "tool_use_id": "toolu_9", "content": "REQ %s r1 premise files=a.txt" % n}]}})
++    r = w.stop()
++    assert (r.returncode, r.stderr) == (0, b"") and w.runs() == [] and w.ledger() == []
++    w.text("REQ %s r1 premise files=a.txt" % n)
++    assert receipts(w.stop(), n)["r1"][0].startswith("ran rc=0")
++
++
++def test_v5_a_stop_on_a_new_transcript_path_reads_that_files_tail(w):
++    """VERIFY-LS-B10 F6, V5: a Stop whose payload names a transcript the state did not follow (a resume that ran no
++    SessionStart) reads the new file's end, says so, answers its request, and the state follows the new file. The old
++    offset lies inside the new file's text here, so an offset carried over would start mid-file and miss the request.
++    Mutant: the Stop ignores a new transcript path."""
++    w.text("old chat " * 800)                      # the old file, read to its end at the prompt
++    n = w.prompt()
++    old_end = w.st()["read"]
++    w.tx = w.tmp / "transcript2.jsonl"
++    w.text("REQ %s r1 premise files=a.txt" % n)    # the new file: the request first, then more than the old offset
++    w.text("filler " * 1200)
++    assert old_end > 5000 and w.tx.stat().st_size > old_end
++    r = w.stop()
++    assert r.returncode == 2 and receipts(r, n)["r1"][0].startswith("ran rc=0"), r.stderr
++    assert ("(the transcript changed under this session's state: only its last %d bytes were read)" % (
++        M.DEFER_TAIL_BYTES)) in r.stderr.decode()
++    assert w.st()["transcript"] == str(w.tx)
++
++
++def test_v6_a_stop_after_the_transcript_shrank_reads_its_tail(w):
++    """VERIFY-LS-B10 F6, V6: a transcript that shrank below the stored offset (a restore) is read from its end, with
++    the same note, and its request answered; the stored offset past its end would read nothing. Mutant: the Stop
++    ignores a shrink."""
++    w.text("old chat " * 800)
++    n = w.prompt()
++    old_end = w.st()["read"]
++    w.tx.write_bytes(b"")                          # the file restored shorter than the stored offset
++    w.text("REQ %s r1 premise files=a.txt" % n)
++    assert w.tx.stat().st_size < old_end
++    r = w.stop()
++    assert r.returncode == 2 and receipts(r, n)["r1"][0].startswith("ran rc=0"), r.stderr
++    assert "(the transcript changed under this session's state: only its last" in r.stderr.decode()
