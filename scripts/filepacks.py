@@ -26,7 +26,10 @@ file's own entry, each keeping the code map's STALE mark), then the pack's lines
 all cut at a line boundary within PACK_BUDGET bytes. The code part is shown only when the code-map pack's blob is the
 file's blob at the build's commit (BLOBS.txt): the code map builds a pack from the working copy, so a pack of a file
 untracked since the build, or of bytes no commit holds, would put text no commit holds in front of the model (VERIFY-K2
-F1); such a touch gets the pack's lines only, and its record says `code_skip`.
+F1); such a touch gets the pack's lines only, and its record says `code_skip`. It is also left out when the graph its
+symbols came from had not indexed those bytes (`stale-graph`, VERIFY-K2 R2 B2). It names only the callers and tests in
+files TRACKED.txt lists, and those in the file itself only from a graph that indexed its bytes; a callers total that
+counted any other caller is left out (B1: GitNexus indexes untracked files too).
 
 A Bash call touches the files named as arguments of a reader command word (READERS) at a command position, as the
 System-1 hook's shell parser finds them: quoted text, heredoc bodies and comments are data; a nested shell's script
@@ -565,11 +568,43 @@ def _p2_lines(rel, packs):
     return out
 
 
+def _tracked_only(pack, rel, packs, graphs):
+    """The code pack as the model may see it, changed in place (VERIFY-K2 R2 B1: GitNexus indexes the working tree,
+    untracked files included). A caller or a test stays when TRACKED.txt lists its file, and one in `rel` itself only
+    when the graph that named it indexed the pack's bytes (a stale graph's names from this file can come from bytes no
+    commit holds). A symbol's callers total stands when every caller of the file stays that way (each caller file
+    tracked, GitNexus fresh); otherwise it is left out (None): the pack samples three callers, so a recount is not
+    exact."""
+    fresh = {g: (graphs.get(g) or {}).get("graph") == "fresh" for g in ("gitnexus", "code-review-graph")}
+
+    def listed(f):                                   # a whole line of TRACKED.txt: "a\nb" would match two
+        return isinstance(f, str) and "\n" not in f and "\0" not in f and packs.tracked(f)
+
+    def keep(x, graph):
+        f = x.get("file") if isinstance(x, dict) else None
+        return listed(f) and (f != rel or fresh[graph])
+
+    pack["tests"] = [x for x in pack.get("tests") or [] if keep(x, "code-review-graph")]
+    files = pack.get("caller_files")
+    all_kept = fresh["gitnexus"] and isinstance(files, list) and all(listed(f) for f in files)
+    for s in pack.get("symbols") or []:
+        c = (s.get("gitnexus") or {}).get("callers") if isinstance(s, dict) else None
+        if not isinstance(c, dict):
+            continue
+        sample = c.get("sample") or []
+        kept = [x for x in sample if keep(x, "gitnexus")]
+        if not all_kept or len(kept) < len(sample):
+            c["count"] = c["tests"] = None              # it counted a caller the model is not shown
+        c["sample"] = kept
+
+
 def _code_part(rel, ti, packs):
     """(status, text, symbol, stale, skip) of the code map's entry for this touch; status None when there is none, and
     skip "blob" when the code-map pack does not describe the file's blob at the build's commit (VERIFY-K2 F1: the code
-    map builds from the working copy, so its pack can hold text no commit holds). The pack is read once, here, and
-    handed to the reader, so the pack checked is the pack shown. An Edit placed in one symbol gives that symbol's entry
+    map builds from the working copy, so its pack can hold text no commit holds), "stale-graph" when the graph its
+    symbols came from had not indexed those bytes (VERIFY-K2 R2 B2: then the symbols can be another content's). The
+    pack is read once, here, cut to its tracked callers and tests (_tracked_only) and handed to the reader, so the pack
+    checked is the pack shown. An Edit placed in one symbol gives that symbol's entry
     (a module-level one `<module>`); an Edit that cannot be placed gives the file's entry. A Read with offset and limit
     gives the enclosing symbol's entry, or the symbols in range when no one symbol holds the range. PackError when the
     pack exists and cannot be used."""
@@ -600,6 +635,11 @@ def _code_part(rel, ti, packs):
         raise PackError("corrupt")
     if pack["blob"] != packs.blob(rel):
         return None, "", None, None, "blob"
+    graphs = pack.get("instruments") if isinstance(pack.get("instruments"), dict) else {}
+    src = pack.get("symbols_from")
+    if (src is not None or pack.get("symbols")) and (graphs.get(src) or {}).get("graph") != "fresh":
+        return None, "", None, None, "stale-graph"      # VERIFY-K2 R2 B2: symbols of bytes the blob may not hold
+    _tracked_only(pack, rel, packs, graphs)
 
     def use(r):
         if r["status"] in ("out-of-scope", "miss"):
@@ -628,8 +668,8 @@ def entry(rel, tool_input, budget=PACK_BUDGET, *, packs=None, p2=True):
     """What the hook injects for one touch of the tracked file `rel`: the code part (see _code_part), then the pack's
     lines (unless `p2` is false), cut at a line boundary within `budget` bytes. A stale code part is never shown without
     its STALE mark: when the mark does not fit, nothing is. Returns {text, symbol (an Edit's), code (the code part's
-    status or None), stale, skip (blob: the code part left out, F1), lines, cut, error (why nothing: link, unreadable,
-    corrupt or gone)}."""
+    status or None), stale, skip (why the code part was left out: blob, F1; stale-graph, B2), lines, cut, error (why
+    nothing: link, unreadable, corrupt or gone)}."""
     packs = packs or Packs()
     ti = tool_input if isinstance(tool_input, dict) else {}
     res = {"text": "", "symbol": None, "code": None, "stale": None, "skip": None, "lines": 0, "cut": 0, "error": None}

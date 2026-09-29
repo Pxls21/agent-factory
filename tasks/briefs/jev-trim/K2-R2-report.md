@@ -6,6 +6,9 @@ Written 09:3xZ, 2026-09-29. This is the original K2 builder, resumed. Contract: 
 
 **Verdict: all nine items are done and gated twice clean on the final bytes.**
 - **F1:** closed by the blob check. The post-commit patch alone also closes it; each guard is tested on its own.
+  > **Note (2026-09-29 18:5xZ, K2 round 3): falsified.** VERIFY-K2 round 2 found untracked text past the blob
+  > check: B1 (an untracked caller's name and path in a tracked file's code part) and B2 (a pack's symbols come
+  > from a graph that had indexed other bytes). The repair: `tasks/briefs/jev-trim/K2-R3-report.md`.
 - **F2, F3, F4/F5, F14, F12:** fixed. Each has checks, and each check has a mutant that it kills.
 - **Registration:** `tasks/briefs/jev-trim/K2-registration.patch` is proven in a clean worktree at the PIN: 137 passed.
 - **Deviations:** 5, listed under DISCREPANCIES (1 to 5).
@@ -307,6 +310,10 @@ The gate ran in a clean detached worktree at 39d9f82 with the four round-2 files
    - BLOBS.txt is held equal to git's own ls-tree output.
    - The real-refresh control shows the canary reaching the model when the check is removed, so the test is not vacuous.
    - Residual: the callers sample (NOT done 5).
+   > **Note (2026-09-29 18:5xZ, K2 round 3): falsified** by VERIFY-K2 round 2. B2: a match proves only that the
+   > pack's blob was committed; its symbols come from a graph's index, which can hold other bytes (graft stale). B1:
+   > the callers sample named above put an untracked file's name and path in front of the model. The repair:
+   > `tasks/briefs/jev-trim/K2-R3-report.md`.
 2. **The frame scan mis-pairs frames and scopes a cd wrongly, so a wrong file is injected.** Evidence against:
    - The verifier's 85-case strace oracle gives 0 wrong.
    - The checks cover the seven wrong shapes and the nested and remote forms.

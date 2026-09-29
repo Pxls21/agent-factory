@@ -278,8 +278,10 @@ The choice: the fill at which the quality lost to a fuller context (R-A, R-B) ex
 What exists (§0b's rule): System-1 L1 injects skill text on Edit, Write and Bash, once per context window, and resets at
 compaction; L3 and `wiki-context.py` inject per prompt; SessionStart (compact) injects the task view, the live-state
 block and the chat tail; `scripts/codemap.py` builds a pack per code file after each commit (L2a, task #284: symbols,
-callers and risk, tests, registry rows). Not built: L2b (show a code pack when the file is touched), packs for other
-files, packs per task.
+callers and risk, tests, registry rows). Built since (K2, task #353, `scripts/filepacks.py`; noted 2026-09-29
+18:5xZ): L2b (show a code pack when the file is touched) and packs for other files (P2), but NOT registered, so no
+session runs them: VERIFY-K2 round 2 returned NOT-READY (B1 to B3) and round 3 repairs them. Not built: packs per
+task (P3).
 
 - **P1, file packs on touch (L2b):** the first Read, Edit or Write of a file in a context window injects the relevant
   part of its pack (the symbol being edited; the file's header on a Read), within the System-1 budget, once per window.

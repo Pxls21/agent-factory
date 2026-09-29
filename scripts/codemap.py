@@ -835,9 +835,12 @@ def _risk_line(s, sec):
 
 def _callers_line(s):
     g = s.get("gitnexus")
-    if not g or g.get("risk") == "UNKNOWN" and not (g.get("callers") or {}).get("count"):
+    c = (g or {}).get("callers") or {}
+    if g and c.get("count") is None and isinstance(c.get("sample"), list):     # the file-pack reader's view (K2 R3)
+        return "callers in tracked files (the total is left out): %s" % (
+            " · ".join("%s %s" % (x["name"], _where(x)) for x in c["sample"]) or "none shown")
+    if not g or g.get("risk") == "UNKNOWN" and not c.get("count"):
         return None                                       # UNKNOWN with none found: the risk line says unresolved
-    c = g.get("callers") or {}
     if not c.get("count"):
         return "callers: no CALLS edge%s" % ("; the %s direct dependants above are imports or other relations" %
                                               g["direct"] if g.get("direct") else "")
