@@ -5,7 +5,9 @@
 # in a CLEAN detached worktree that holds only the changed files: a
 # live lane's untracked file under a vendored root would shift the manifest in the shared tree (AF-AP-188; done by hand twice
 # on 2026-09-24). It prints the paths to commit and commits nothing; commit them with SKIP_MANIFEST_CHECK=1.
-#   usage: scripts/skill_bake_finish.sh <skill> [<skill>...]      exit: 0 ready · 1 nothing changed · 64 usage/refused · 66 disk
+#   usage: scripts/skill_bake_finish.sh <skill> [<skill>...]
+#   exit: 0 ready · 1 nothing changed · 64 usage/refused · 65 a pattern reader is red (a line CTX1 moved from CLAUDE.md
+#   is gone, a System-1 entry over its budget, a SKILL.md frontmatter) · 66 disk
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 [ $# -ge 1 ] || { echo "usage: skill_bake_finish.sh <skill> [<skill>...]" >&2; exit 64; }
@@ -39,6 +41,25 @@ bash harness-ports/bin/sync-skills.sh --record >/dev/null
 mapfile -t changed < <(changed_now)
 [ "${#changed[@]}" -gt 0 ] || { echo "skill_bake_finish: nothing changed" >&2; exit 1; }
 only_named "${changed[@]}"
+# CTX1 (D-089): every line CLAUDE.md held at its PIN stays in CLAUDE.md or a skill it names, verbatim. That test finds the
+# skills by pattern, so a path-based gate never picks it up: a reworded moved line reached CI (run #1143, 2026-09-29).
+if ! lossless_out="$(python3 tests/test_claude_md_lossless.py 2>&1)"; then
+  printf '%s\n' "$lossless_out" | grep -E '^(lossless:|MISSING)' >&2 || printf '%s\n' "$lossless_out" | tail -5 >&2
+  echo "skill_bake_finish: a line CTX1 moved from CLAUDE.md is gone: keep it verbatim, or name it in DROPPED with the owner's ruling" >&2
+  exit 65
+fi
+# Two more readers find the skills by pattern: System-1 quotes whole entries under the hook's 2048-byte budget, so an
+# entry that grows past it never arrives (a sentence added to the pc-suite entry, the same hour as run #1143), and every
+# SKILL.md's frontmatter must parse. About two seconds together.
+bt="$(mktemp -d "${TMPDIR:-/tmp}/skillbake-bt.XXXXXX")"
+if ! readers_out="$(python3 -m pytest -q -rfE -p no:cacheprovider --basetemp="$bt/bt" tests/test_skill_frontmatter.py \
+    tests/test_system1_context.py::test_every_row_resolves_and_each_entry_fits_a_call_alone 2>&1)"; then
+  rm -rf "$bt"
+  printf '%s\n' "$readers_out" | grep -E '^(FAILED|ERROR|E   )' | head -20 >&2 || true
+  echo "skill_bake_finish: a skill reader is red (a System-1 entry over its budget, or a SKILL.md frontmatter): fix the skill" >&2
+  exit 65
+fi
+rm -rf "$bt"
 free_mb="$(df -Pm . | awk 'NR==2 {print $4}')"
 [ "${free_mb:-0}" -ge 1500 ] || { echo "skill_bake_finish: only ${free_mb:-?} MB free; a worktree needs about 1 GB" >&2; exit 66; }
 WT="$(mktemp -d "${TMPDIR:-/tmp}/skillbake.XXXXXX")"
