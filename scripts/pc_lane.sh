@@ -343,7 +343,9 @@ fi
 FWD=""
 # 2026-09-08: the capacity-retry knobs travel too — under route contention the PC default (3 retries, 60 s doubling)
 # gave up in ~7 min while the admitted sibling lanes were still refusing to yield a slot.
-for v in HERMES_MODEL HERMES_REASONING HERMES_PROFILE HERMES_TOOLSETS LANE_BRANCH LANE_CAPACITY_RETRIES LANE_CAPACITY_BACKOFF LANE_CAPACITY_MAX_WAIT; do
+# The LCM-X lane mode (task #365) travels the same way; unset, nothing is added and the launch line is unchanged.
+for v in HERMES_MODEL HERMES_REASONING HERMES_PROFILE HERMES_TOOLSETS LANE_BRANCH LANE_CAPACITY_RETRIES LANE_CAPACITY_BACKOFF LANE_CAPACITY_MAX_WAIT \
+    LANE_CONTEXT_ENGINE LCM_X_DIR LCM_X_DEPS_DIR LCM_X_TIKTOKEN_DIR; do
   [ -n "${!v:-}" ] && FWD="$FWD $v=$(printf %q "${!v}")"
 done
 if [ -n "$_launch_epoch" ]; then

@@ -400,6 +400,98 @@ starting a second one. Keyed on the STATE it intends to create, not on mutual ex
 | `HERMES_PROFILE` | per-lane `aflane…` clone | explicit logged profile override |
 | `LANE_BRANCH` | `claude/soundbox-kit-migration-iz1jwf` | branch to fetch |
 | `LANE_ID` | derived from the brief | lane directory name |
+| `LANE_CONTEXT_ENGINE` | unset | `lcm-x` = the LCM-X lane mode below; any other value fails (rc 64) |
+| `LCM_X_DIR` | `$HOME/lcm-x` | the pinned LCM-X clone (lcm-x mode only) |
+| `LCM_X_DEPS_DIR` | `$HOME/lcm-x-deps` | LCM-X's runtime import, `pip install --target` (lcm-x mode only) |
+| `LCM_X_TIKTOKEN_DIR` | `$HOME/lcm-x-tiktoken` | the pre-seeded tokenizer cache (lcm-x mode only) |
+| `LCM_X_PYTHON` | read from `HERMES_BIN`'s shebang | the lane's Python for `verify`'s import check; `scripts/pc_lane.sh` does not forward it |
+
+### LCM-X lane mode (task #365, H1; off by default)
+
+`LANE_CONTEXT_ENGINE=lcm-x` gives ONE lane's profile the LCM-X context engine (plugin `hermes-lcm-x`, engine
+`lcm-x`) at the commit pinned in `pc-lane.lock.yaml` (`lane_context_plugins.hermes-lcm-x`: 601a9cc, v0.24.3, MIT; the
+PC-lane tool pins live there, never in `upstream.lock.yaml`, owner ruling D-110).
+It is the H1 trial of D-108 item 7: one lane with LCM-X beside a control lane without it. Unset or empty, nothing
+changes: `lane-profile.sh` writes the bytes it wrote before this mode (`test_lane_profile.sh` pins them on its
+fixtures), and `pc-lane.sh` runs the same hermes command. `scripts/pc_lane.sh` forwards the mode and the three
+`LCM_X_*` paths to the PC runner as it forwards `HERMES_MODEL`. All line numbers below are at Hermes b3399c1 and
+LCM-X 601a9cc.
+
+**What `create` adds (lcm-x only).**
+- `<profile>/plugins/hermes-lcm-x`, a symlink to `LCM_X_DIR`. Hermes scans `<HERMES_HOME>/plugins/<dir>/plugin.yaml`
+  (`hermes_cli/plugins_discovery.py:102-131`, 151), and `hermes -p <profile>` makes the profile its HERMES_HOME
+  (`hermes_cli/profiles.py:1680-1704`).
+- In `config.yaml`: `plugins.enabled` gains `hermes-lcm-x` (other entries kept) and `context.engine` becomes `lcm-x`.
+  Hermes loads a user plugin only when `plugins.enabled` names it (`plugins_discovery.py:213`; `plugins.disabled`
+  wins, 192) and takes the engine from `context.engine` (`agent/agent_init.py:1746-1787`). A relaunch without the
+  mode re-derives the standard config, so the plugin is not loaded; the link and `lcm-x.env` stay, unread.
+- `<profile>/lcm-x.env`: five settings that `pc-lane.sh` gives the lane's hermes process as environment. They never
+  go into the profile's `.env` (a copy of the owner's secrets file), which Hermes loads with `override=True`
+  (`hermes_cli/env_loader.py:349-350`). The runner also drops every inherited `LCM_*` setting (not `LCM_X_*`, which
+  LCM-X never reads).
+
+| Setting | Value | Condition |
+|---|---|---|
+| `LCM_DISABLED_TOOLS` | the 12 tools below | cross-session tools off: removed from the schemas and refused on call (`engine.py:4283-4320`; `__init__.py:549-554`) |
+| `LCM_DATABASE_PATH` | `<profile>/lcm.db` | the store inside the profile (`engine.py:787-793`) |
+| `LCM_EMBEDDINGS_ENABLED` | `false` | embeddings off; the pin's default is off (`config.py:768`); this pins it (`config.py:89-99`, 496) |
+| `TIKTOKEN_CACHE_DIR` | `LCM_X_TIKTOKEN_DIR` | no download at start: tiktoken reads `<dir>/9b5ad71b2ce5302211f9c61530b329a4922fc6a4` (sha1 of the cl100k_base URL, `tiktoken/load.py:35-58`) and checks sha256 `223921b7…e865b2a7` (`tiktoken_ext/openai_public.py:75-79`); a file that fails the check is deleted and fetched again (`load.py:60-66`) |
+| `PYTHONPATH` | `LCM_X_DEPS_DIR`, then any inherited value | `tiktoken==0.14.0` from a `pip --target` directory, never the Hermes venv |
+
+**The tools off.** A tool is off when it can read another session's rows: `lcm_grep` (`session_scope: all`),
+`lcm_recall` ("across ALL conversations"), `lcm_load_session` (any `session_id`), `lcm_describe` (another session's
+DAG), `lcm_expand` (`store_id` "works across sessions"), `lcm_expand_query` (up to 20 `session_ids`) (`schemas.py`);
+`lcm_evidence_pack` and `lcm_compile_evidence`, which call `lcm_recall` directly, around the list (`tools.py:1021-1087`);
+`lcm_compute`, which grounds any `store_id` with no session check (`reasoning.py:792`); `lcm_query_state` (the
+profile-wide assertion store) and `lcm_retrieve` (reads `store_id` rows unscoped, `adaptive_retrieval.py:452`), both
+off by default anyway; `lcm_doctor` (counts over the whole database). On: `lcm_status` and `lcm_inspect` (the current
+session) and `lcm_recent` (the current conversation's sessions). The cost: with `lcm_grep`, `lcm_describe` and
+`lcm_expand` off the model cannot open its own summaries either, yet the note LCM-X adds at the first compaction still
+names those three tools (`engine.py:6679-6694`). LCM-X still compacts; the trial measures that.
+
+**Summaries go through OmniRoute.** LCM-X calls `call_llm(task="compression")` with no provider (`escalation.py:303-340`).
+With `auxiliary.compression` on `auto`, Hermes routes it to the main runtime: the lane's OmniRoute provider and model
+(`agent/auxiliary_client.py:4097-4168`, 4195-4220). On an auth, payment, exhausted-429, connection,
+model-incompatible or malformed-response error the ladder walks the task's `fallback_chain`, then `fallback_providers`
+and `fallback_model`, then the discovery chain (OpenRouter, Nous, a custom endpoint, the API-key providers) with any
+credential it finds (`auxiliary_client.py:6835-6908`, 3790-3822, 2882-2890). The lane profile removes
+`fallback_providers`; `verify` refuses `fallback_model` and any `auxiliary.compression` provider, `base_url`, `api_key`
+or `fallback_chain`, and names (never shows) the other credentials in `.env` and in the runner's environment. The live
+check is the coordinator's egress watch on the PC.
+
+**`verify` (lcm-x) checks, and names the failed item.** Before any clone or write, `create` and `verify` refuse a
+relative `LCM_X_*` path and a `:` in `LCM_X_DEPS_DIR`. (a) `plugins/` is a real directory and `plugins/hermes-lcm-x` a
+symlink whose target is exactly `LCM_X_DIR` (`create` repoints a link to another directory); `LCM_X_DIR`'s
+`plugin.yaml` names `hermes-lcm-x`; its HEAD is the lock's `revision` and it has no changes; no second LCM plugin sits
+in `plugins/`. (b) `plugins.enabled` lists the plugin, `plugins.disabled` does not, `context.engine` is `lcm-x`, and
+`compression.enabled` is not false. (c) `lcm-x.env` is a regular file holding exactly the five settings (the runner
+also refuses a file with a line unexpected or missing before hermes starts); the profile's `.env` sets no
+`LCM_*` or `TIKTOKEN_CACHE_DIR` (names only); the tokenizer file exists with the lock's digest; under the Python in
+`HERMES_BIN`'s shebang (refused when it runs with `-I` or `-E`) `tiktoken` imports from `LCM_X_DEPS_DIR` at the lock's
+version and loads `cl100k_base` with `requests` blocked, so a cache miss fails instead of downloading. (d) as above.
+The pins come from `pc-lane.lock.yaml` only; without the lock file or its entry `verify` refuses.
+
+**On the PC before the first lcm-x launch** (each step skips what is done; the pinned values are in the lock entry):
+
+```bash
+cd ~/agent-factory && git fetch --quiet origin claude/soundbox-kit-migration-iz1jwf && git merge --ff-only FETCH_HEAD   # the mode's commit
+[ -d ~/lcm-x/.git ] || git clone --quiet https://github.com/electricsheephq/lcm-x ~/lcm-x
+git -C ~/lcm-x -c advice.detachedHead=false checkout --quiet --detach 601a9ccb3d5fefbe242a453e57ed2c8196bf33c3
+printf 'tiktoken==0.14.0 --hash=sha256:f5e7665f6624e052e5e7f6a36919ab69279decdc976d7b16b4fa15e1897d0513\n' > /tmp/lcm-x-deps.req
+[ -f ~/lcm-x-deps/tiktoken-0.14.0.dist-info/METADATA ] || ~/venv-agent-factory/bin/python -m pip install --quiet \
+  --no-deps --no-compile --target ~/lcm-x-deps --only-binary=:all: --platform manylinux_2_28_x86_64 \
+  --python-version 3.11 --implementation cp --abi cp311 --require-hashes -r /tmp/lcm-x-deps.req
+mkdir -p ~/lcm-x-tiktoken; T=~/lcm-x-tiktoken/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
+[ -f "$T" ] || { curl -fsSL -o "$T.tmp" https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken && mv "$T.tmp" "$T"; }
+echo "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7  $T" | sha256sum -c -
+LANE_CONTEXT_ENGINE=lcm-x bash harness-ports/bin/lane-profile.sh create h1-preflight \
+  && bash harness-ports/bin/lane-profile.sh remove aflaneh1preflight   # create runs the full verify
+```
+
+**NOT done.** Nothing ran on the PC: no clone, no install, no launch, no load of LCM-X in Hermes. `verify` is static:
+it cannot see a load failure, after which Hermes falls back to its built-in compressor with only a warning
+(`hermes_cli/plugins_loader.py:283-289`, 321; `agent/agent_init.py:1789-1792`); the proof that LCM-X ran is rows for the lane's session in `<profile>/lcm.db`. Production
+use is a later decision with its own proof (standing rules 10 and 11; T1 report section 5 row 7).
 
 ### The local build-lane model on the PC — `qwen-builder` (2026-09-14)
 

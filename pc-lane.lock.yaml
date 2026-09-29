@@ -1,0 +1,35 @@
+# pc-lane.lock.yaml: the pins of tools that only the PC lanes run (owner ruling D-110, 2026-09-29). It is NOT the
+# production system's upstream lock: upstream.lock.yaml stays that (standing rule 13), and S0-06 and S0-12 attest it, so
+# a lane tool pin never goes there. Every entry here is pinned by an immutable commit or digest, as rule 13 asks. No
+# proof, no SBOM pin-diff (proofs/S0-12/check_pin_diff.py) and no vendored-manifest check reads this file.
+
+# A context-engine plugin for ONE PC lane profile (task #365, D-108 item 7; the H1 trial). NOT production: production is a
+# later decision with its own proof (standing rules 10 and 11). Read only in the opt-in lane mode
+# (LANE_CONTEXT_ENGINE=lcm-x): harness-ports/bin/lane-profile.sh verify takes the revision, the runtime import and the
+# tokenizer from this entry, never from a second copy (docs/HARNESS-PORTS.md §7). Used from a clone at this revision,
+# linked into the lane profile, never vendored into this repository.
+lane_context_plugins:
+  hermes-lcm-x:
+    source: https://github.com/electricsheephq/lcm-x
+    revision: "601a9ccb3d5fefbe242a453e57ed2c8196bf33c3"
+    version: 0.24.3
+    license: MIT
+    committed: "2026-09-28T11:20:45+09:00 (02:20:45Z): Merge pull request #577 from electricsheephq/docs/release-status-v0.24.3"
+    names: "plugin hermes-lcm-x, context engine lcm-x (plugin_identity.py:24-25; plugin.yaml:1-2)"
+    role: "the H1 trial on one PC lane profile, beside a control lane; not production"
+    hermes_pins_tested_upstream: "none of ours: its CI builds against a stub ContextEngine ABC (.github/workflows/ci.yml, 'Stub hermes-agent ABC'); its nightly hosts are NousResearch/hermes-agent f97608f (0.21.5), electricsheephq/evaOS-hermes-desktop-app-adapter 2d10969 (0.21.2) and NousResearch/hermes-agent 6f7a799 (bench/instruments/reliability/hosts.ci.json); our lane runtime b3399c1 (0.21.1) and proof runtime 527da60 (0.21.0) are not among them (T1 report section 5 row 2)"
+    runtime_imports:  # pip install --target LCM_X_DEPS_DIR, never into the Hermes venv; on the lane's PYTHONPATH only
+      - name: tiktoken
+        version: 0.14.0
+        wheel: tiktoken-0.14.0-cp311-cp311-manylinux_2_28_x86_64.whl
+        wheel_digest: "sha256:f5e7665f6624e052e5e7f6a36919ab69279decdc976d7b16b4fa15e1897d0513"
+        sdist_digest: "sha256:231dec90efcdccf1b565a1416107736f1e09b1a08fe736ef9d6363e626d03874"
+        published: "2026-08-17T19:48:44Z on PyPI, not yanked"
+        why: "tokens.py:39-42 imports it lazily, in a daemon thread, for every session's first token count; without it LCM-X counts by a character estimate (tokens.py:92-111)"
+    absent_by_design: "regex (message_patterns.py:16-19 and ingest_protection.py:434-440 fall back; tiktoken's _special_token_regex falls back to re, core.py:431-438), requests (tiktoken/load.py:15 imports it only on a tokenizer cache miss), numpy and fastembed (vector_store.py:198, trajectory_store.py:2174 and 2217, embedding_provider.py:1519: embeddings only, off); yaml is in the Hermes venv (6.0.3) and guarded (config.py:8-11)"
+    tokenizer:
+      url: https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken
+      cache_file: 9b5ad71b2ce5302211f9c61530b329a4922fc6a4
+      digest: "sha256:223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7"
+      from: "tiktoken 0.14.0 tiktoken_ext/openai_public.py:75-79 (the URL and expected_hash); the cache file is sha1(url) under TIKTOKEN_CACHE_DIR (tiktoken/load.py:35-58); an altered file is deleted and fetched again (load.py:60-66)"
+    adopted: "2026-09-29 (owner, D-108 item 7: LCM-X for Hermes, H1)"

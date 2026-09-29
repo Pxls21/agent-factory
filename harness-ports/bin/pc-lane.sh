@@ -24,6 +24,8 @@
 #                  the one 262k slot. Cloud routes stay one env away (agentfactory-build / -verify).
 #   HERMES_REASONING  Hermes effort      default: by ROLE (medium for build, xhigh for verify, high otherwise);
 #                  on a local route ultra/max/high are CLAMPED to xhigh (the Qwen3.8 template's ceiling)
+#   LANE_CONTEXT_ENGINE  default: unset (Hermes's built-in compressor). lcm-x: the LCM-X lane mode (task #365);
+#                  lane-profile.sh also reads LCM_X_DIR, LCM_X_DEPS_DIR, LCM_X_TIKTOKEN_DIR (docs/HARNESS-PORTS.md §7)
 #   LANE_BRANCH    branch to fetch       default: claude/soundbox-kit-migration-iz1jwf
 #   LANE_ID        override the lane id  default: derived from the brief
 #   PC_LANE_FAKE_HARNESS
@@ -445,6 +447,11 @@ else
   # lane id as OmniRoute's request correlation header. An explicit HERMES_PROFILE is the
   # operator escape hatch and is logged instead of cloned.
   LANE_PROFILE_HELPER="$AF_REPO/harness-ports/bin/lane-profile.sh"
+  case "${LANE_CONTEXT_ENGINE:-}" in
+    '') ;;
+    lcm-x) [ -z "${HERMES_PROFILE:-}" ] || die "LANE_CONTEXT_ENGINE=lcm-x needs the per-lane profile; unset HERMES_PROFILE";;
+    *) die "unknown LANE_CONTEXT_ENGINE (lcm-x, or unset)";;
+  esac
   if [ -n "${HERMES_PROFILE:-}" ]; then
     LANE_PROFILE="$HERMES_PROFILE"
     echo "pc-lane: profile override $LANE_PROFILE" >&2
@@ -455,9 +462,30 @@ else
   fi
   printf '%s\n' "$LANE_PROFILE" > "$LANE_DIR/profile.txt" || die "cannot record lane profile"
   export HERMES_PROFILE="$LANE_PROFILE"
+  # LCM-X lane mode (task #365): the lane's hermes gets the settings in the profile's lcm-x.env, which lane-profile.sh
+  # wrote and verified above, and no inherited LCM-X setting (LCM_*; our LCM_X_* paths are not read by the plugin).
+  # PYTHONPATH puts LCM_X_DEPS_DIR first and keeps an inherited value after it. Off, LCM_ENV is empty and the command
+  # below is the one this runner ran before the mode existed.
+  LCM_ENV=()
+  if [ "${LANE_CONTEXT_ENGINE:-}" = lcm-x ]; then
+    lcm_file="${HERMES_PROFILES_DIR:-$HOME/.hermes/profiles}/$LANE_PROFILE/lcm-x.env"; lcm_n=0
+    LCM_ENV=(env)
+    while IFS= read -r v; do
+      case "$v" in LCM_X_*) ;; LCM_*) LCM_ENV+=(-u "$v");; esac
+    done < <(compgen -e)
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        PYTHONPATH=*) LCM_ENV+=("$line${PYTHONPATH:+:$PYTHONPATH}");;
+        LCM_DISABLED_TOOLS=*|LCM_DATABASE_PATH=*|LCM_EMBEDDINGS_ENABLED=*|TIKTOKEN_CACHE_DIR=*) LCM_ENV+=("$line");;
+        *) die "lcm-x.env has an unexpected line: ${line%%=*}";;
+      esac
+      lcm_n=$((lcm_n + 1))
+    done < "$lcm_file" || die "cannot read $lcm_file"
+    [ "$lcm_n" -eq 5 ] || die "lcm-x.env holds $lcm_n settings, not 5"
+  fi
 
   TERMINAL_CWD="$TREE" \
-  "$HERMES_BIN" -p "$LANE_PROFILE" --in "$TREE" --no-restore-cwd -z "$(cat "$PROMPT_RUN")" \
+  "${LCM_ENV[@]}" "$HERMES_BIN" -p "$LANE_PROFILE" --in "$TREE" --no-restore-cwd -z "$(cat "$PROMPT_RUN")" \
       -m "$RUN_MODEL" \
       --reasoning "$RUN_EFFORT" \
       --accept-hooks \

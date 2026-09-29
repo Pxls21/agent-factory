@@ -16,6 +16,7 @@ set -uo pipefail
 # Hermetic: clear env vars that a parent lane or caller might export, so the
 # suite's own values are never shadowed by the caller's environment.
 unset LANE_ID LANE_REPORT_DRAFT TERMINAL_CWD HERMES_MODEL HERMES_REASONING HERMES_PROFILE HERMES_PROFILES_DIR HERMES_SOURCE_PROFILE 2>/dev/null || true
+unset LANE_CONTEXT_ENGINE LCM_X_DIR LCM_X_DEPS_DIR LCM_X_TIKTOKEN_DIR 2>/dev/null || true
 
 # Self-test mode: the hermetic-cleanup test below spawns THIS SCRIPT from a
 # poisoned parent.  If the unset above worked, LANE_ID is gone; if the unset
@@ -54,10 +55,22 @@ mkdir -p "$REPO/scripts"; echo "LINT-AT-PIN" > "$REPO/scripts/report_lint.py"   
 echo hello > "$REPO/file.txt"
 # A labelled fake lane-profile helper for this plumbing suite. Its own config/env
 # transformation contract is exercised by test_lane_profile.sh; here we isolate argv/profile wiring.
+# In the LCM-X mode (task #365) it records what it was handed and writes the profile's lcm-x.env as the real one does.
 cat > "$REPO/harness-ports/bin/lane-profile.sh" <<'EOF'
 #!/usr/bin/env bash
+name="aflane$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]' | cut -c1-40)"
+[ -z "${FAKE_PROFILE_ENV_LOG:-}" ] \
+  || printf '%s LANE_CONTEXT_ENGINE=%s LCM_X_DIR=%s\n' "${1:-}" "${LANE_CONTEXT_ENGINE-<unset>}" "${LCM_X_DIR-<unset>}" >> "$FAKE_PROFILE_ENV_LOG"
 case "${1:-}" in
-  create) printf 'aflane%s\n' "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]' | cut -c1-40)";;
+  create)
+    if [ "${LANE_CONTEXT_ENGINE:-}" = lcm-x ]; then
+      mkdir -p "$HERMES_PROFILES_DIR/$name"
+      printf 'LCM_DISABLED_TOOLS=lcm_recall\nLCM_DATABASE_PATH=%s/lcm.db\nLCM_EMBEDDINGS_ENABLED=false\nTIKTOKEN_CACHE_DIR=/pc/tok\nPYTHONPATH=/pc/deps\n' \
+        "$HERMES_PROFILES_DIR/$name" > "$HERMES_PROFILES_DIR/$name/lcm-x.env"
+      [ -z "${FAKE_LCM_EXTRA:-}" ] || printf '%s\n' "$FAKE_LCM_EXTRA" >> "$HERMES_PROFILES_DIR/$name/lcm-x.env"
+      [ -z "${FAKE_LCM_DROP:-}" ] || sed -i "/^$FAKE_LCM_DROP=/d" "$HERMES_PROFILES_DIR/$name/lcm-x.env"
+    fi
+    printf '%s\n' "$name";;
   verify) exit 0;;
   *) exit 64;;
 esac
@@ -529,6 +542,7 @@ cat > "$FAKE_HERMES" <<'EOF'
 #!/usr/bin/env bash
 # TEST DOUBLE. Captures Hermes argv so route/effort selection can be asserted.
 printf '%s\n' "$@" > "${HERMES_ARGS_FILE:?}"
+[ -z "${HERMES_ENV_FILE:-}" ] || env | LC_ALL=C sort > "$HERMES_ENV_FILE"
 usage_file=""
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --usage-file ] && [ "$#" -ge 2 ]; then usage_file="$2"; shift 2; else shift; fi
@@ -679,6 +693,54 @@ awk 'prev=="-p" && $0=="operatorprofile" {f=1} {prev=$0} END {exit f?0:1}' "$HER
   && grep -Fq 'pc-lane: profile override operatorprofile' "$TMP/profile-override.err"
 check "an explicit HERMES_PROFILE bypasses cloning, is logged, recorded, and passed to Hermes" $? \
   "stderr=$(tr '\n' ';' < "$TMP/profile-override.err") profile=$(cat "$REPO/.lanes/profile-override/profile.txt" 2>/dev/null)"
+
+# --- LANE_CONTEXT_ENGINE (task #365): the mode and its paths reach the profile helper; in lcm-x mode the hermes process
+# gets exactly lcm-x.env's settings (PYTHONPATH first, the inherited value after it) and no inherited LCM_* setting;
+# off, the environment passes through as it did before the mode existed.
+LCM_PROFILES="$TMP/lcm-profiles"; mkdir -p "$LCM_PROFILES"
+export HERMES_ARGS_FILE="$TMP/hermes-args-lcmx" HERMES_ENV_FILE="$TMP/hermes-env-lcmx"
+LANE_ID="lcmx-on" HERMES_BIN="$FAKE_HERMES" HERMES_PROFILES_DIR="$LCM_PROFILES" LANE_CONTEXT_ENGINE=lcm-x LCM_X_DIR=/pc/lcm-x \
+  LCM_SUMMARY_MODEL=poison/elsewhere PYTHONPATH=/inherited/path FAKE_PROFILE_ENV_LOG="$TMP/profile-env-lcmx" \
+  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/lcmx-on.err"; LCMX_RC=$?
+[ "$LCMX_RC" -eq 0 ] && grep -Fxq 'LCM_DISABLED_TOOLS=lcm_recall' "$HERMES_ENV_FILE" \
+  && grep -Fxq "LCM_DATABASE_PATH=$LCM_PROFILES/aflanelcmxon/lcm.db" "$HERMES_ENV_FILE" \
+  && grep -Fxq 'LCM_EMBEDDINGS_ENABLED=false' "$HERMES_ENV_FILE" && grep -Fxq 'TIKTOKEN_CACHE_DIR=/pc/tok' "$HERMES_ENV_FILE" \
+  && grep -Fxq 'PYTHONPATH=/pc/deps:/inherited/path' "$HERMES_ENV_FILE" && ! grep -q '^LCM_SUMMARY_MODEL=' "$HERMES_ENV_FILE" \
+  && grep -Fxq 'LCM_X_DIR=/pc/lcm-x' "$HERMES_ENV_FILE" && grep -Fxq 'LANE_CONTEXT_ENGINE=lcm-x' "$HERMES_ENV_FILE" \
+  && grep -Fxq 'create LANE_CONTEXT_ENGINE=lcm-x LCM_X_DIR=/pc/lcm-x' "$TMP/profile-env-lcmx" \
+  && grep -Fxq 'verify LANE_CONTEXT_ENGINE=lcm-x LCM_X_DIR=/pc/lcm-x' "$TMP/profile-env-lcmx" \
+  && awk 'prev=="-p" && $0=="aflanelcmxon" {f=1} {prev=$0} END {exit f?0:1}' "$HERMES_ARGS_FILE"
+check "lcm-x: the helper gets the mode and LCM_X_DIR; hermes gets lcm-x.env's settings and no inherited LCM_* setting" $? \
+  "rc=$LCMX_RC env=$(grep -E '^(LCM_|TIKTOKEN|PYTHONPATH|LANE_CONTEXT)' "$HERMES_ENV_FILE" 2>/dev/null | tr '\n' ' ') helper=$(tr '\n' ';' < "$TMP/profile-env-lcmx" 2>/dev/null)"
+
+export HERMES_ARGS_FILE="$TMP/hermes-args-lcmoff" HERMES_ENV_FILE="$TMP/hermes-env-lcmoff"
+LANE_ID="lcmx-off" HERMES_BIN="$FAKE_HERMES" HERMES_PROFILES_DIR="$LCM_PROFILES" LCM_X_DIR=/pc/lcm-x \
+  LCM_SUMMARY_MODEL=poison/elsewhere PYTHONPATH=/inherited/path FAKE_PROFILE_ENV_LOG="$TMP/profile-env-lcmoff" \
+  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/lcmx-off.err"; LCMOFF_RC=$?
+[ "$LCMOFF_RC" -eq 0 ] && ! grep -Eq '^(LCM_DISABLED_TOOLS|LCM_DATABASE_PATH|LCM_EMBEDDINGS_ENABLED|TIKTOKEN_CACHE_DIR)=' "$HERMES_ENV_FILE" \
+  && grep -Fxq 'LCM_SUMMARY_MODEL=poison/elsewhere' "$HERMES_ENV_FILE" && grep -Fxq 'PYTHONPATH=/inherited/path' "$HERMES_ENV_FILE" \
+  && [ ! -e "$LCM_PROFILES/aflanelcmxoff/lcm-x.env" ] \
+  && grep -Fxq 'create LANE_CONTEXT_ENGINE=<unset> LCM_X_DIR=/pc/lcm-x' "$TMP/profile-env-lcmoff"
+check "off: the hermes environment passes through as before the mode (no setting added, nothing stripped)" $? \
+  "rc=$LCMOFF_RC env=$(grep -E '^(LCM_|TIKTOKEN|PYTHONPATH|LANE_CONTEXT)' "$HERMES_ENV_FILE" 2>/dev/null | tr '\n' ' ')"
+
+export HERMES_ARGS_FILE="$TMP/hermes-args-lcmbad"; rm -f "$HERMES_ARGS_FILE"
+LANE_ID="lcmx-bad" HERMES_BIN="$FAKE_HERMES" LANE_CONTEXT_ENGINE=lcm \
+  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/lcmx-bad.err"; LCMBAD_RC=$?
+LANE_ID="lcmx-override" HERMES_BIN="$FAKE_HERMES" LANE_CONTEXT_ENGINE=lcm-x HERMES_PROFILE=operatorprofile \
+  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/lcmx-override.err"; LCMOVR_RC=$?
+LANE_ID="lcmx-extra" HERMES_BIN="$FAKE_HERMES" HERMES_PROFILES_DIR="$LCM_PROFILES" LANE_CONTEXT_ENGINE=lcm-x FAKE_LCM_EXTRA='PYTHONHOME=/x' \
+  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/lcmx-extra.err"; LCMEXTRA_RC=$?
+LANE_ID="lcmx-short" HERMES_BIN="$FAKE_HERMES" HERMES_PROFILES_DIR="$LCM_PROFILES" LANE_CONTEXT_ENGINE=lcm-x FAKE_LCM_DROP=LCM_DISABLED_TOOLS \
+  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/lcmx-short.err"; LCMSHORT_RC=$?
+[ "$LCMBAD_RC" -eq 64 ] && grep -Fxq 'pc-lane: unknown LANE_CONTEXT_ENGINE (lcm-x, or unset)' "$TMP/lcmx-bad.err" \
+  && [ "$LCMOVR_RC" -eq 64 ] && grep -Fxq 'pc-lane: LANE_CONTEXT_ENGINE=lcm-x needs the per-lane profile; unset HERMES_PROFILE' "$TMP/lcmx-override.err" \
+  && [ "$LCMEXTRA_RC" -eq 64 ] && grep -Fxq 'pc-lane: lcm-x.env has an unexpected line: PYTHONHOME' "$TMP/lcmx-extra.err" \
+  && [ "$LCMSHORT_RC" -eq 64 ] && grep -Fxq 'pc-lane: lcm-x.env holds 4 settings, not 5' "$TMP/lcmx-short.err" \
+  && [ ! -e "$HERMES_ARGS_FILE" ]
+check "an unknown engine, lcm-x with a HERMES_PROFILE override, or an lcm-x.env line unexpected or missing stops the lane (rc 64) before hermes runs" $? \
+  "rc=$LCMBAD_RC/$LCMOVR_RC/$LCMEXTRA_RC/$LCMSHORT_RC stderr=$(cat "$TMP/lcmx-bad.err" "$TMP/lcmx-override.err" "$TMP/lcmx-extra.err" "$TMP/lcmx-short.err" 2>/dev/null | grep 'pc-lane:' | tr '\n' ';')"
+unset HERMES_ENV_FILE
 
 # --- MUTATION-KILLING: parent-environment poison for LANE_ID -----------------
 # pc-lane.sh adopts inherited LANE_ID by design (the sandbox launcher sets it).
