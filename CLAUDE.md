@@ -80,6 +80,11 @@ hermes <role>`); while the owner's cloud subscription is out (D-061, D-062), PC 
 long-context local lane at a time, and overflow goes to two or three sandbox Opus 5.5 agents until it is back.
 Load `pc-bridge-lanes` before dispatching, re-attaching or harvesting a PC lane, or sizing lanes per route.
 
+**Local means the raw Qwen id (owner D-114, 2026-09-29: "it should be only using the local model"):** a PC lane runs
+on `HERMES_MODEL=qwen-local/qwen3.8-27b-local`, never on `agentfactory-build-local` or `agentfactory-verify-local`,
+which are HYBRID (D-039: Qwen first, then a cloud chain, silently; SCRUB2-R1 round 5 ran 127 of its 177 turns on
+codex, AF-AP-111). A route claim is the dispatcher's `lane provider mix` line, never a combo name.
+
 **STAGE ROUTING (owner ruling 2026-07-28, inherited; BUILD lane re-ruled by the owner
 2026-09-03): plan/orchestrate = Fable (the main loop) · every EXPLORE lane = Opus 5.5 (owner 2026-09-24, D-065; was Opus 5) · every VERIFY lane = **the
 local Qwen3.8-27B on the PC too since 2026-09-14 (owner: "it does both the build and verify lane and goes back and
@@ -357,6 +362,16 @@ command.
 key=value ...` (the registry is `scripts/stacks.toml`; `explain <label> ...` prints the plan and runs nothing); the
 SessionStart hook that `scripts/install_session_hooks.py` installs prints the catalog with each stack's notes, and a
 content stack's run takes a rating with `--rate <run id>=<rel>/<use>`.
+
+**Stack labels, the box's words (owner D-113, D-114):** `find` (graft ask, the owner's rulings, the chat search, the
+AF-AP registry) · `ctx` (graft skeletons and ask, GitNexus impact, code-review-graph, ripwire, the AP screen) ·
+`impact` (GitNexus impact, code-review-graph callers and tests, ripwire edit-check) · `review` (sentrux, ripwire's
+test gate, the pyflakes delta, the AP screen) · `gate` (every test that names a path, plus ripwire's linked tests) ·
+`echo` (a pattern across the code roots, the incident log, the AP screen) · `premise` (tracked, sha256, lines, last
+commit) · `harvest` (a finished lane's models, refusals, hand-back, report) · `ci` (the stage0-ci verdict). Task #385
+adds five, each listed here when built: codebase-memory, GitNexus detect-changes, `why.sh`, `jev_locate`, `jev_echo`
+(plain order; no stack calls a model, KC-J1). Load `box-and-labels` before writing a box or choosing a label, and
+`label-authoring` before adding one; the box is built (LS-B11) and not on until its hooks are registered.
 
 **Pipeline order is load-bearing: interview → SEED → task-breakdown → build.** To-dos come FROM
 the seed.

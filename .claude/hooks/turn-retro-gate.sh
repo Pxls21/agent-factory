@@ -70,5 +70,6 @@ TURN-END RETRO (once per landed batch; answer by doing, or state "retro: nothing
 3. Nuance worth keeping that ISN'T a bug: does any skill (build-loop / orchestration / deep-work / session-continuity / vendor-first / code-intel-trio) deserve the lesson baked in NOW, same increment?
 4. Next-time-easier: is there a script/hook/doc that would have made this turn's task trivial? If cheap, build it; if not, register it as a task.
 5. Luck lens (skill \`luck\`, workflow only): did this batch make the SETUP more solvent/circulating/integrated (lessons baked where the next task finds them, telemetry feeding back, parts newly connected) — or did something land as a one-off that will pool and decay?
+6. Box and labels (skills \`box-and-labels\`, \`label-authoring\`; D-114): which labels served this turn, and how did their runs rate? Did a sequence run by hand more than twice, or a new tool arrive, that should become a label? Does a label's output need a fix? Make it now if cheap; if not, register it as a task.
 EOF
 exit 2

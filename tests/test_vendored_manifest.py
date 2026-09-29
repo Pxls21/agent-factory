@@ -382,11 +382,13 @@ def test_real_claude_split_counts_and_class_file(tmp_path: Path) -> None:
     # 13 -> 16 on 2026-09-25 (CTX1, D-089): the three skills CLAUDE.md's text moved into (env-tool-quirks,
     # ouroboros-stdio, pc-bridge-lanes) are first-party (no kit counterpart, no declared set).
     # 16 -> 18 on 2026-09-25 (S1-L1, D-090): hooks/system1-context.py and hooks/system1-situations.json are first-party (no kit counterpart).
-    assert manifest_row(manifest, ".claude/ (first-party)").split(" | ")[6:8] == ["18", "0"]
+    # 18 -> 20 on 2026-09-29 (D-114): skills/box-and-labels/SKILL.md and skills/label-authoring/SKILL.md are first-party
+    # (no kit counterpart, no declared set).
+    assert manifest_row(manifest, ".claude/ (first-party)").split(" | ")[6:8] == ["20", "0"]
     assert [path for path, klass in classes.items() if klass == "kit-adapted"] == ADAPTED_PATHS
     assert sum(klass == "kit-verbatim" for klass in classes.values()) == 2955
     assert sum(klass == "kit-adapted" for klass in classes.values()) == 17
-    assert sum(klass == "first-party" for klass in classes.values()) == 18
+    assert sum(klass == "first-party" for klass in classes.values()) == 20
 
 
 # K1-h: the 12-file remainder of `.claude/ (first-party)` at the PIN. The three
@@ -405,8 +407,10 @@ K1H_FIRST_PARTY_REMAINDER = [
     "skills/PROVENANCE-AEGIS.md",
     "skills/PROVENANCE-PRISM.md",
     "skills/PROVENANCE-TYPESAFE.md",
+    "skills/box-and-labels/SKILL.md",
     "skills/codebase-memory/SKILL.md",
     "skills/env-tool-quirks/SKILL.md",
+    "skills/label-authoring/SKILL.md",
     "skills/ouroboros-stdio/SKILL.md",
     "skills/pc-bridge-lanes/SKILL.md",
     "skills/session-start-hook/SKILL.md",
@@ -416,7 +420,8 @@ K1H_FIRST_PARTY_REMAINDER = [
 # The three PROVENANCE-*.md files are the only first-party files OUTSIDE a
 # declared set prefix and outside the copy rule; everything else under the
 # set prefixes is a set member, everything byte-identical to a kit root is a
-# copy, and the 18 above are the remainder (12 at K1-h, plus JT3's hook, plus CTX1's three skills, plus S1-L1's two hook files).
+# copy, and the 20 above are the remainder (12 at K1-h, plus JT3's hook, plus CTX1's three skills, plus S1-L1's two hook files,
+# plus D-114's two skills).
 K1H_SET_REMAINDER_PATHS = {
     "skills/PROVENANCE-AEGIS.md",
     "skills/PROVENANCE-PRISM.md",
@@ -445,7 +450,8 @@ def k1h_class_counts(classes: dict[str, str]) -> dict[str, int]:
 
 
 def test_k1h_claude_classification_and_remainder(tmp_path: Path) -> None:
-    """The K1-h class table: 16 first-party (the named remainder; 12 at K1-h, JT3's hook, CTX1's 3 skills), 61 set
+    """The K1-h class table: 20 first-party (the named remainder; 12 at K1-h, JT3's hook, CTX1's 3 skills, S1-L1's 2 hook
+    files, D-114's 2 skills), 61 set
     members (47 aegis + 12 prism + 2 typesafe), 56 copies (20 + 19 + 13 + 4),
     and kit-verbatim 2955 / kit-adapted 17 (D-054, D-065, AF-AP-182). The 129-pin test
     above carries the manifest row; this test carries the per-class split."""
@@ -455,7 +461,7 @@ def test_k1h_claude_classification_and_remainder(tmp_path: Path) -> None:
     classes = class_rows(root / module.CLASSES_PATH)
     counts = k1h_class_counts(classes)
 
-    assert counts.get("first-party", 0) == 18
+    assert counts.get("first-party", 0) == 20
     assert counts.get("vendored:aegis", 0) == 47
     assert counts.get("vendored:prism", 0) == 12
     assert counts.get("vendored:typesafe", 0) == 2
@@ -568,7 +574,8 @@ def test_k1h_honey_copy_byte_change_falls_back_to_first_party(tmp_path: Path) ->
     assert classes["agents/hive-builder.md"] == "first-party"
     counts = k1h_class_counts(classes)
     assert counts.get("copy:sandbox-kit/honey-for-devs/", 0) == 18
-    assert counts.get("first-party", 0) == 19   # the 18-file remainder (CTX1's skills and S1-L1's two hook files since 2026-09-25) plus the changed copy
+    assert counts.get("first-party", 0) == 21   # the 20-file remainder (CTX1's skills and S1-L1's two hook files since 2026-09-25,
+    # D-114's two skills since 2026-09-29) plus the changed copy
 
 
 def test_k1h_ambiguous_copy_blob_is_refused_by_name(tmp_path: Path) -> None:

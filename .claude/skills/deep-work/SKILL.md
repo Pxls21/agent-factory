@@ -323,6 +323,10 @@ answer by DOING, or by an explicit "retro: nothing to bake"; never by dismissing
   diagnostic to the workflow change itself — does it circulate (lessons/telemetry flow back to
   where the next task reads them) and integrate (connect siloed parts), or pool as a one-off?
   Meta-workflow only — never in verdicts or delegate briefs.
+- **Box and labels (owner D-114, 2026-09-29: "reference the box and labels in retro so it improves over
+  time"):** the hook's item 6 asks which labels served the stretch and how their runs rated, which hand-run
+  sequence or new tool should become a label (skill `label-authoring`), and which label's output needs a fix.
+  The ratings (`python3 scripts/stack.py rate`) are the record of which labels earn their place.
 - **Bake answers into the protocol IN THE SAME INCREMENT** — general rules into the matching
   skill/CLAUDE.md section; project-specific operational facts in the matching runbook/handoff. A
   lesson recorded only in a handoff WILL be re-learned the expensive way (the mutation-restore

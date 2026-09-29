@@ -473,6 +473,7 @@ skills/bitsandbytes/references/quantization-formats.md	kit-verbatim
 skills/blip-2/SKILL.md	kit-verbatim
 skills/blip-2/references/advanced-usage.md	kit-verbatim
 skills/blip-2/references/troubleshooting.md	kit-verbatim
+skills/box-and-labels/SKILL.md	first-party
 skills/brainstorming-research-ideas/SKILL.md	kit-verbatim
 skills/brand/SKILL.md	kit-verbatim
 skills/brand/references/approval-checklist.md	kit-verbatim
@@ -1401,6 +1402,7 @@ skills/labarchive-integration/references/integrations.md	kit-verbatim
 skills/labarchive-integration/scripts/entry_operations.py	kit-verbatim
 skills/labarchive-integration/scripts/notebook_operations.py	kit-verbatim
 skills/labarchive-integration/scripts/setup_config.py	kit-verbatim
+skills/label-authoring/SKILL.md	first-party
 skills/lambda-labs/SKILL.md	kit-verbatim
 skills/lambda-labs/references/advanced-usage.md	kit-verbatim
 skills/lambda-labs/references/troubleshooting.md	kit-verbatim
