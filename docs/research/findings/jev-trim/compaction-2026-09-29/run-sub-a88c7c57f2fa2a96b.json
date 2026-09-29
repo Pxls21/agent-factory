@@ -1,0 +1,1679 @@
+{
+ "cost_model": {
+  "assumptions": [
+   "A model, not a measurement: the session's work (its per-request growth) is taken as the same at every X.",
+   "Included: the segments that do not end in a compaction under CLASS_SPLIT (the early 200k-window segments are left out); their growth steps are replayed in file order as one stream.",
+   "The step across an observed compaction is taken as 0 (the real step is the compaction's drop).",
+   "After a modeled compaction the fill returns to K, the mean first context of the included segments that open at a boundary, whatever X is.",
+   "A compaction is counted when the fill would pass X; the request after it sends K, all of it written to the cache (the system prompt's cached prefix is not credited).",
+   "Every other request reads the previous request's fill from the cache and writes what it adds (a negative step writes nothing); cache reads are priced at READ_RATIO, writes at WRITE_RATIO, of the base input price.",
+   "The summarizer's own call (it reads the whole context once per compaction) is reported as its own column, not added to the reads.",
+   "The loss per compaction is the run's mean per-boundary value (1M_window class) measured at about 785k, the same at every X; `rest` keeps the observed segment length."
+  ],
+  "excluded_segments": [],
+  "included_segments": 4,
+  "kept_start_from_segments": 3,
+  "kept_start_mean": 88534.7,
+  "loss_means_per_boundary": {
+   "100": {
+    "control": {
+     "boundaries": 1,
+     "missed": 0.0,
+     "missed_paths": 0.0,
+     "refetch_calls": 50.0,
+     "refetch_requests": 46.0,
+     "refetch_tokens": 61103.6
+    },
+    "excess": {
+     "missed": 207.33333333333334,
+     "missed_paths": 39.333333333333336,
+     "refetch_calls": -0.3333333333333357,
+     "refetch_requests": -1.0,
+     "refetch_tokens": 746.933333333327
+    },
+    "real": {
+     "boundaries": 3,
+     "missed": 207.33333333333334,
+     "missed_paths": 39.333333333333336,
+     "refetch_calls": 49.666666666666664,
+     "refetch_requests": 45.0,
+     "refetch_tokens": 61850.533333333326
+    }
+   },
+   "20": {
+    "control": {
+     "boundaries": 1,
+     "missed": 0.0,
+     "missed_paths": 0.0,
+     "refetch_calls": 12.0,
+     "refetch_requests": 12.0,
+     "refetch_tokens": 7986.1
+    },
+    "excess": {
+     "missed": 36.333333333333336,
+     "missed_paths": 14.0,
+     "refetch_calls": -4.333333333333333,
+     "refetch_requests": -4.333333333333333,
+     "refetch_tokens": 2666.2333333333336
+    },
+    "real": {
+     "boundaries": 3,
+     "missed": 36.333333333333336,
+     "missed_paths": 14.0,
+     "refetch_calls": 7.666666666666667,
+     "refetch_requests": 7.666666666666667,
+     "refetch_tokens": 10652.333333333334
+    }
+   },
+   "rest": {
+    "control": {
+     "boundaries": 1,
+     "missed": 0.0,
+     "missed_paths": 0.0,
+     "refetch_calls": 59.0,
+     "refetch_requests": 55.0,
+     "refetch_tokens": 71895.5
+    },
+    "excess": {
+     "missed": 431.6666666666667,
+     "missed_paths": 68.0,
+     "refetch_calls": 38.33333333333333,
+     "refetch_requests": 36.33333333333333,
+     "refetch_tokens": 46378.566666666666
+    },
+    "real": {
+     "boundaries": 3,
+     "missed": 431.6666666666667,
+     "missed_paths": 68.0,
+     "refetch_calls": 97.33333333333333,
+     "refetch_requests": 91.33333333333333,
+     "refetch_tokens": 118274.06666666667
+    }
+   }
+  },
+  "model": "MODEL, not a measurement",
+  "negative_steps": 0,
+  "observed_compactions_in_included": 3,
+  "read_ratio": 0.05,
+  "rows": [
+   {
+    "X": 300000,
+    "cache_read_tokens": 138988677.0,
+    "cache_read_units": 6949433.9,
+    "cache_write_tokens": 3541971.0,
+    "cache_write_units": 7083942.0,
+    "compactions": 11,
+    "context_tokens": 142530648.0,
+    "loss": {
+     "100": {
+      "excess": {
+       "missed": 2280.7,
+       "missed_paths": 432.7,
+       "refetch_calls": -3.7,
+       "refetch_requests": -11.0,
+       "refetch_tokens": 8216.3
+      },
+      "raw": {
+       "missed": 2280.7,
+       "missed_paths": 432.7,
+       "refetch_calls": 546.3,
+       "refetch_requests": 495.0,
+       "refetch_tokens": 680355.9
+      }
+     },
+     "20": {
+      "excess": {
+       "missed": 399.7,
+       "missed_paths": 154.0,
+       "refetch_calls": -47.7,
+       "refetch_requests": -47.7,
+       "refetch_tokens": 29328.6
+      },
+      "raw": {
+       "missed": 399.7,
+       "missed_paths": 154.0,
+       "refetch_calls": 84.3,
+       "refetch_requests": 84.3,
+       "refetch_tokens": 117175.7
+      }
+     },
+     "rest": {
+      "excess": {
+       "missed": 4748.3,
+       "missed_paths": 748.0,
+       "refetch_calls": 421.7,
+       "refetch_requests": 399.7,
+       "refetch_tokens": 510164.2
+      },
+      "raw": {
+       "missed": 4748.3,
+       "missed_paths": 748.0,
+       "refetch_calls": 1070.7,
+       "refetch_requests": 1004.7,
+       "refetch_tokens": 1301014.7
+      }
+     }
+    },
+    "mean_fill": 197137.8,
+    "requests": 723,
+    "summarizer_read_tokens": 3247353.3
+   },
+   {
+    "X": 400000,
+    "cache_read_tokens": 168781451.0,
+    "cache_read_units": 8439072.6,
+    "cache_write_tokens": 3363254.0,
+    "cache_write_units": 6726508.0,
+    "compactions": 8,
+    "context_tokens": 172144705.0,
+    "loss": {
+     "100": {
+      "excess": {
+       "missed": 1658.7,
+       "missed_paths": 314.7,
+       "refetch_calls": -2.7,
+       "refetch_requests": -8.0,
+       "refetch_tokens": 5975.5
+      },
+      "raw": {
+       "missed": 1658.7,
+       "missed_paths": 314.7,
+       "refetch_calls": 397.3,
+       "refetch_requests": 360.0,
+       "refetch_tokens": 494804.3
+      }
+     },
+     "20": {
+      "excess": {
+       "missed": 290.7,
+       "missed_paths": 112.0,
+       "refetch_calls": -34.7,
+       "refetch_requests": -34.7,
+       "refetch_tokens": 21329.9
+      },
+      "raw": {
+       "missed": 290.7,
+       "missed_paths": 112.0,
+       "refetch_calls": 61.3,
+       "refetch_requests": 61.3,
+       "refetch_tokens": 85218.7
+      }
+     },
+     "rest": {
+      "excess": {
+       "missed": 3453.3,
+       "missed_paths": 544.0,
+       "refetch_calls": 306.7,
+       "refetch_requests": 290.7,
+       "refetch_tokens": 371028.5
+      },
+      "raw": {
+       "missed": 3453.3,
+       "missed_paths": 544.0,
+       "refetch_calls": 778.7,
+       "refetch_requests": 730.7,
+       "refetch_tokens": 946192.5
+      }
+     }
+    },
+    "mean_fill": 238097.8,
+    "requests": 723,
+    "summarizer_read_tokens": 3166924.3
+   },
+   {
+    "X": 500000,
+    "cache_read_tokens": 199026581.3,
+    "cache_read_units": 9951329.1,
+    "cache_write_tokens": 3220525.7,
+    "cache_write_units": 6441051.4,
+    "compactions": 6,
+    "context_tokens": 202247107.0,
+    "loss": {
+     "100": {
+      "excess": {
+       "missed": 1244.0,
+       "missed_paths": 236.0,
+       "refetch_calls": -2.0,
+       "refetch_requests": -6.0,
+       "refetch_tokens": 4481.6
+      },
+      "raw": {
+       "missed": 1244.0,
+       "missed_paths": 236.0,
+       "refetch_calls": 298.0,
+       "refetch_requests": 270.0,
+       "refetch_tokens": 371103.2
+      }
+     },
+     "20": {
+      "excess": {
+       "missed": 218.0,
+       "missed_paths": 84.0,
+       "refetch_calls": -26.0,
+       "refetch_requests": -26.0,
+       "refetch_tokens": 15997.4
+      },
+      "raw": {
+       "missed": 218.0,
+       "missed_paths": 84.0,
+       "refetch_calls": 46.0,
+       "refetch_requests": 46.0,
+       "refetch_tokens": 63914.0
+      }
+     },
+     "rest": {
+      "excess": {
+       "missed": 2590.0,
+       "missed_paths": 408.0,
+       "refetch_calls": 230.0,
+       "refetch_requests": 218.0,
+       "refetch_tokens": 278271.4
+      },
+      "raw": {
+       "missed": 2590.0,
+       "missed_paths": 408.0,
+       "refetch_calls": 584.0,
+       "refetch_requests": 548.0,
+       "refetch_tokens": 709644.4
+      }
+     }
+    },
+    "mean_fill": 279733.2,
+    "requests": 723,
+    "summarizer_read_tokens": 2979617.0
+   },
+   {
+    "X": 600000,
+    "cache_read_tokens": 252509918.0,
+    "cache_read_units": 12625495.9,
+    "cache_write_tokens": 3077736.0,
+    "cache_write_units": 6155472.0,
+    "compactions": 5,
+    "context_tokens": 255587654.0,
+    "loss": {
+     "100": {
+      "excess": {
+       "missed": 1036.7,
+       "missed_paths": 196.7,
+       "refetch_calls": -1.7,
+       "refetch_requests": -5.0,
+       "refetch_tokens": 3734.7
+      },
+      "raw": {
+       "missed": 1036.7,
+       "missed_paths": 196.7,
+       "refetch_calls": 248.3,
+       "refetch_requests": 225.0,
+       "refetch_tokens": 309252.7
+      }
+     },
+     "20": {
+      "excess": {
+       "missed": 181.7,
+       "missed_paths": 70.0,
+       "refetch_calls": -21.7,
+       "refetch_requests": -21.7,
+       "refetch_tokens": 13331.2
+      },
+      "raw": {
+       "missed": 181.7,
+       "missed_paths": 70.0,
+       "refetch_calls": 38.3,
+       "refetch_requests": 38.3,
+       "refetch_tokens": 53261.7
+      }
+     },
+     "rest": {
+      "excess": {
+       "missed": 2158.3,
+       "missed_paths": 340.0,
+       "refetch_calls": 191.7,
+       "refetch_requests": 181.7,
+       "refetch_tokens": 231892.8
+      },
+      "raw": {
+       "missed": 2158.3,
+       "missed_paths": 340.0,
+       "refetch_calls": 486.7,
+       "refetch_requests": 456.7,
+       "refetch_tokens": 591370.3
+      }
+     }
+    },
+    "mean_fill": 353509.9,
+    "requests": 723,
+    "summarizer_read_tokens": 2949158.3
+   },
+   {
+    "X": 700000,
+    "cache_read_tokens": 262990324.7,
+    "cache_read_units": 13149516.2,
+    "cache_write_tokens": 3036004.3,
+    "cache_write_units": 6072008.6,
+    "compactions": 4,
+    "context_tokens": 266026329.0,
+    "loss": {
+     "100": {
+      "excess": {
+       "missed": 829.3,
+       "missed_paths": 157.3,
+       "refetch_calls": -1.3,
+       "refetch_requests": -4.0,
+       "refetch_tokens": 2987.7
+      },
+      "raw": {
+       "missed": 829.3,
+       "missed_paths": 157.3,
+       "refetch_calls": 198.7,
+       "refetch_requests": 180.0,
+       "refetch_tokens": 247402.1
+      }
+     },
+     "20": {
+      "excess": {
+       "missed": 145.3,
+       "missed_paths": 56.0,
+       "refetch_calls": -17.3,
+       "refetch_requests": -17.3,
+       "refetch_tokens": 10664.9
+      },
+      "raw": {
+       "missed": 145.3,
+       "missed_paths": 56.0,
+       "refetch_calls": 30.7,
+       "refetch_requests": 30.7,
+       "refetch_tokens": 42609.3
+      }
+     },
+     "rest": {
+      "excess": {
+       "missed": 1726.7,
+       "missed_paths": 272.0,
+       "refetch_calls": 153.3,
+       "refetch_requests": 145.3,
+       "refetch_tokens": 185514.3
+      },
+      "raw": {
+       "missed": 1726.7,
+       "missed_paths": 272.0,
+       "refetch_calls": 389.3,
+       "refetch_requests": 365.3,
+       "refetch_tokens": 473096.3
+      }
+     }
+    },
+    "mean_fill": 367947.9,
+    "requests": 723,
+    "summarizer_read_tokens": 2795095.7
+   },
+   {
+    "X": 785000,
+    "cache_read_tokens": 305174853.3,
+    "cache_read_units": 15258742.7,
+    "cache_write_tokens": 2973093.7,
+    "cache_write_units": 5946187.4,
+    "compactions": 3,
+    "context_tokens": 308147947.0,
+    "loss": {
+     "100": {
+      "excess": {
+       "missed": 622.0,
+       "missed_paths": 118.0,
+       "refetch_calls": -1.0,
+       "refetch_requests": -3.0,
+       "refetch_tokens": 2240.8
+      },
+      "raw": {
+       "missed": 622.0,
+       "missed_paths": 118.0,
+       "refetch_calls": 149.0,
+       "refetch_requests": 135.0,
+       "refetch_tokens": 185551.6
+      }
+     },
+     "20": {
+      "excess": {
+       "missed": 109.0,
+       "missed_paths": 42.0,
+       "refetch_calls": -13.0,
+       "refetch_requests": -13.0,
+       "refetch_tokens": 7998.7
+      },
+      "raw": {
+       "missed": 109.0,
+       "missed_paths": 42.0,
+       "refetch_calls": 23.0,
+       "refetch_requests": 23.0,
+       "refetch_tokens": 31957.0
+      }
+     },
+     "rest": {
+      "excess": {
+       "missed": 1295.0,
+       "missed_paths": 204.0,
+       "refetch_calls": 115.0,
+       "refetch_requests": 109.0,
+       "refetch_tokens": 139135.7
+      },
+      "raw": {
+       "missed": 1295.0,
+       "missed_paths": 204.0,
+       "refetch_calls": 292.0,
+       "refetch_requests": 274.0,
+       "refetch_tokens": 354822.2
+      }
+     }
+    },
+    "mean_fill": 426207.4,
+    "requests": 723,
+    "summarizer_read_tokens": 2348846.0
+   }
+  ],
+  "steps": 722,
+  "write_ratio": 2.0
+ },
+ "label": "sub-a88c7c57f2fa2a96b",
+ "params": {
+  "class_split": 400000,
+  "cost_points": [
+   300000,
+   400000,
+   500000,
+   600000,
+   700000,
+   785000
+  ],
+  "fill_bin": 100000,
+  "gates": [
+   {
+    "gate": "future_stamp",
+    "marker": "COMMIT BLOCKED by the future-stamp gate",
+    "rule": "line"
+   },
+   {
+    "gate": "lint_delta",
+    "marker": "COMMIT BLOCKED by lint_delta",
+    "rule": "line"
+   },
+   {
+    "gate": "mutant_anchor",
+    "marker": "COMMIT BLOCKED by mutant_anchor_precommit",
+    "rule": "line"
+   },
+   {
+    "gate": "mirror",
+    "marker": "COMMIT BLOCKED by the MIRROR gate",
+    "rule": "line"
+   },
+   {
+    "gate": "never_a_gate",
+    "marker": "COMMIT BLOCKED by the never-a-gate screen",
+    "rule": "line"
+   },
+   {
+    "gate": "push_in_flight",
+    "marker": "COMMIT BLOCKED: a push is in flight",
+    "rule": "line"
+   },
+   {
+    "gate": "commit_blocked_other",
+    "marker": "COMMIT BLOCKED",
+    "rule": "line"
+   },
+   {
+    "gate": "push_blocked",
+    "marker": "PUSH BLOCKED",
+    "rule": "line"
+   },
+   {
+    "gate": "stale_ids",
+    "marker": "REFUSED by stale_ids",
+    "rule": "line"
+   },
+   {
+    "gate": "ci_gate",
+    "marker": "REFUSED by ci-gate",
+    "rule": "line"
+   },
+   {
+    "gate": "search_intercept",
+    "marker": "SEARCH INTERCEPT (search-intercept.py)",
+    "rule": "error"
+   },
+   {
+    "gate": "quirk_guard",
+    "marker": "QUIRK GUARD (search-intercept.py",
+    "rule": "error"
+   }
+  ],
+  "pseudo_gap": 100,
+  "search_markers": {
+   "search_ledger": [
+    [
+     "BUILD-TASKLIST.md"
+    ]
+   ],
+   "search_live_state": [
+    [
+     "live-state.md"
+    ]
+   ],
+   "search_transcript": [
+    [
+     ".claude/projects/"
+    ],
+    [
+     "/tasks/",
+     ".output"
+    ],
+    [
+     "chat_tail.py"
+    ],
+    [
+     "session_export.py"
+    ],
+    [
+     "transcript_export.py"
+    ],
+    [
+     "hiccup_scan.py"
+    ],
+    [
+     "replay_transcript_edits.py"
+    ]
+   ]
+  },
+  "shapes": [
+   "read_known_path",
+   "rerun_command",
+   "identical_other_call",
+   "search_transcript",
+   "search_ledger",
+   "search_live_state"
+  ],
+  "stub_tokens": 40,
+  "user_cpt": 2.9,
+  "windows": [
+   "20",
+   "100",
+   "rest"
+  ]
+ },
+ "pin": 14223996,
+ "quality": {
+  "bins": {
+   "0k-100k": {
+    "bash": 16,
+    "calls": 18,
+    "calls_without_a_result": 0,
+    "edits": 0,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 85032.2,
+    "reads": 2,
+    "refusals_by_gate": {},
+    "requests": 17,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "100k-200k": {
+    "bash": 105,
+    "calls": 117,
+    "calls_without_a_result": 0,
+    "edits": 0,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 153314.4,
+    "reads": 10,
+    "refusals_by_gate": {},
+    "requests": 113,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "200k-300k": {
+    "bash": 98,
+    "calls": 127,
+    "calls_without_a_result": 0,
+    "edits": 23,
+    "errors": 4,
+    "errors_by_tool": {
+     "Bash": 3,
+     "Edit": 1
+    },
+    "failed_edits": 1,
+    "mean_fill": 250220.1,
+    "reads": 3,
+    "refusals_by_gate": {},
+    "requests": 116,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "300k-400k": {
+    "bash": 93,
+    "calls": 113,
+    "calls_without_a_result": 0,
+    "edits": 6,
+    "errors": 1,
+    "errors_by_tool": {
+     "Grep": 1
+    },
+    "failed_edits": 0,
+    "mean_fill": 347955.7,
+    "reads": 12,
+    "refusals_by_gate": {
+     "search_intercept": 1
+    },
+    "requests": 109,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "400k-500k": {
+    "bash": 83,
+    "calls": 110,
+    "calls_without_a_result": 0,
+    "edits": 24,
+    "errors": 2,
+    "errors_by_tool": {
+     "Bash": 2
+    },
+    "failed_edits": 0,
+    "mean_fill": 456648.8,
+    "reads": 3,
+    "refusals_by_gate": {},
+    "requests": 99,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "500k-600k": {
+    "bash": 85,
+    "calls": 99,
+    "calls_without_a_result": 0,
+    "edits": 11,
+    "errors": 1,
+    "errors_by_tool": {
+     "Write": 1
+    },
+    "failed_edits": 1,
+    "mean_fill": 551958.4,
+    "reads": 2,
+    "refusals_by_gate": {},
+    "requests": 97,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "600k-700k": {
+    "bash": 74,
+    "calls": 82,
+    "calls_without_a_result": 0,
+    "edits": 6,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 649202.4,
+    "reads": 1,
+    "refusals_by_gate": {},
+    "requests": 82,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "700k-800k": {
+    "bash": 85,
+    "calls": 90,
+    "calls_without_a_result": 0,
+    "edits": 4,
+    "errors": 2,
+    "errors_by_tool": {
+     "Bash": 2
+    },
+    "failed_edits": 0,
+    "mean_fill": 738690.2,
+    "reads": 1,
+    "refusals_by_gate": {},
+    "requests": 90,
+    "rereads": 0,
+    "reruns": 0
+   }
+  },
+  "by_model": {
+   "claude-opus-5-5 0k-100k": {
+    "bash": 16,
+    "calls": 18,
+    "calls_without_a_result": 0,
+    "edits": 0,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 85032.2,
+    "reads": 2,
+    "refusals_by_gate": {},
+    "requests": 17,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "claude-opus-5-5 100k-200k": {
+    "bash": 105,
+    "calls": 117,
+    "calls_without_a_result": 0,
+    "edits": 0,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 153314.4,
+    "reads": 10,
+    "refusals_by_gate": {},
+    "requests": 113,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "claude-opus-5-5 200k-300k": {
+    "bash": 98,
+    "calls": 127,
+    "calls_without_a_result": 0,
+    "edits": 23,
+    "errors": 4,
+    "errors_by_tool": {
+     "Bash": 3,
+     "Edit": 1
+    },
+    "failed_edits": 1,
+    "mean_fill": 250220.1,
+    "reads": 3,
+    "refusals_by_gate": {},
+    "requests": 116,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "claude-opus-5-5 300k-400k": {
+    "bash": 93,
+    "calls": 113,
+    "calls_without_a_result": 0,
+    "edits": 6,
+    "errors": 1,
+    "errors_by_tool": {
+     "Grep": 1
+    },
+    "failed_edits": 0,
+    "mean_fill": 347955.7,
+    "reads": 12,
+    "refusals_by_gate": {
+     "search_intercept": 1
+    },
+    "requests": 109,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "claude-opus-5-5 400k-500k": {
+    "bash": 83,
+    "calls": 110,
+    "calls_without_a_result": 0,
+    "edits": 24,
+    "errors": 2,
+    "errors_by_tool": {
+     "Bash": 2
+    },
+    "failed_edits": 0,
+    "mean_fill": 456648.8,
+    "reads": 3,
+    "refusals_by_gate": {},
+    "requests": 99,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "claude-opus-5-5 500k-600k": {
+    "bash": 85,
+    "calls": 99,
+    "calls_without_a_result": 0,
+    "edits": 11,
+    "errors": 1,
+    "errors_by_tool": {
+     "Write": 1
+    },
+    "failed_edits": 1,
+    "mean_fill": 551958.4,
+    "reads": 2,
+    "refusals_by_gate": {},
+    "requests": 97,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "claude-opus-5-5 600k-700k": {
+    "bash": 74,
+    "calls": 82,
+    "calls_without_a_result": 0,
+    "edits": 6,
+    "errors": 0,
+    "errors_by_tool": {},
+    "failed_edits": 0,
+    "mean_fill": 649202.4,
+    "reads": 1,
+    "refusals_by_gate": {},
+    "requests": 82,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "claude-opus-5-5 700k-800k": {
+    "bash": 85,
+    "calls": 90,
+    "calls_without_a_result": 0,
+    "edits": 4,
+    "errors": 2,
+    "errors_by_tool": {
+     "Bash": 2
+    },
+    "failed_edits": 0,
+    "mean_fill": 738690.2,
+    "reads": 1,
+    "refusals_by_gate": {},
+    "requests": 90,
+    "rereads": 0,
+    "reruns": 0
+   }
+  },
+  "calls": 756,
+  "calls_without_a_request": 0,
+  "requests": 723,
+  "segments_with_requests": 4,
+  "stats": {},
+  "thirds": {
+   "first": {
+    "bash": 213,
+    "calls": 260,
+    "calls_without_a_result": 0,
+    "edits": 21,
+    "errors": 4,
+    "errors_by_tool": {
+     "Bash": 2,
+     "Edit": 1,
+     "Grep": 1
+    },
+    "failed_edits": 1,
+    "mean_fill": 208581.7,
+    "reads": 20,
+    "refusals_by_gate": {
+     "search_intercept": 1
+    },
+    "requests": 243,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "last": {
+    "bash": 222,
+    "calls": 238,
+    "calls_without_a_result": 0,
+    "edits": 9,
+    "errors": 4,
+    "errors_by_tool": {
+     "Bash": 3,
+     "Write": 1
+    },
+    "failed_edits": 1,
+    "mean_fill": 634900.9,
+    "reads": 5,
+    "refusals_by_gate": {},
+    "requests": 240,
+    "rereads": 0,
+    "reruns": 0
+   },
+   "middle": {
+    "bash": 204,
+    "calls": 258,
+    "calls_without_a_result": 0,
+    "edits": 44,
+    "errors": 2,
+    "errors_by_tool": {
+     "Bash": 2
+    },
+    "failed_edits": 0,
+    "mean_fill": 421358.7,
+    "reads": 9,
+    "refusals_by_gate": {},
+    "requests": 240,
+    "rereads": 0,
+    "reruns": 0
+   }
+  }
+ },
+ "rc": {
+  "boundaries": [
+   {
+    "boundary": 1,
+    "class": "1M_window",
+    "day": "2026-09-26",
+    "kept": {
+     "distinct_tokens": 3407,
+     "files_reinjected": 5,
+     "first_context": 106725,
+     "items": 16,
+     "post_tokens": 33843,
+     "tokens_by_kind": {
+      "hook_context": 1060.3,
+      "other_attachment": 51609.7,
+      "other_user_text": 9329.7
+     },
+     "tokens_modeled": 61999.7
+    },
+    "offset": 3650706,
+    "post_requests": 175,
+    "pre": {
+     "commands": 115,
+     "distinct_tokens": 8040,
+     "files_edited": 11,
+     "files_read": 9,
+     "last_context": 776512,
+     "requests": 151,
+     "segment": 0,
+     "tokens_by_kind": {
+      "assistant_text": 3814.5,
+      "hook_context": 17417.6,
+      "other_attachment": 77141.7,
+      "other_user_text": 32842.4,
+      "thinking": 274635.0,
+      "tool_input": 94302.5,
+      "tool_result": 163427.6,
+      "typed_user_text": 512.4
+     },
+     "tokens_modeled": 664093.7
+    },
+    "windows": {
+     "100": {
+      "missed": 224,
+      "missed_paths": 35,
+      "missed_paths_edited_before": 3,
+      "missed_paths_neither": 31,
+      "missed_paths_read_before": 1,
+      "read_known_path_reinjected": 1,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 1,
+        "requests": 1,
+        "tokens": 4671.9
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 37,
+        "requests": 37,
+        "tokens": 58842.1
+       }
+      },
+      "refetch_total": {
+       "calls": 38,
+       "requests": 38,
+       "tokens": 63514.1
+      },
+      "requests": 100,
+      "reused": 611,
+      "used": 1022
+     },
+     "20": {
+      "missed": 39,
+      "missed_paths": 15,
+      "missed_paths_edited_before": 0,
+      "missed_paths_neither": 14,
+      "missed_paths_read_before": 1,
+      "read_known_path_reinjected": 0,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 7,
+        "requests": 7,
+        "tokens": 11815.5
+       }
+      },
+      "refetch_total": {
+       "calls": 7,
+       "requests": 7,
+       "tokens": 11815.5
+      },
+      "requests": 20,
+      "reused": 118,
+      "used": 183
+     },
+     "rest": {
+      "missed": 345,
+      "missed_paths": 56,
+      "missed_paths_edited_before": 3,
+      "missed_paths_neither": 52,
+      "missed_paths_read_before": 1,
+      "read_known_path_reinjected": 1,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 1,
+        "requests": 1,
+        "tokens": 4671.9
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 79,
+        "requests": 79,
+        "tokens": 112880.8
+       }
+      },
+      "refetch_total": {
+       "calls": 80,
+       "requests": 80,
+       "tokens": 117552.8
+      },
+      "requests": 175,
+      "reused": 822,
+      "used": 1465
+     }
+    }
+   },
+   {
+    "boundary": 2,
+    "class": "1M_window",
+    "day": "2026-09-28",
+    "kept": {
+     "distinct_tokens": 2366,
+     "files_reinjected": 5,
+     "first_context": 78052,
+     "items": 18,
+     "post_tokens": 15578,
+     "tokens_by_kind": {
+      "hook_context": 1060.3,
+      "other_attachment": 27254.8,
+      "other_user_text": 8924.8
+     },
+     "tokens_modeled": 37240.0
+    },
+    "offset": 7471214,
+    "post_requests": 243,
+    "pre": {
+     "commands": 155,
+     "distinct_tokens": 6847,
+     "files_edited": 3,
+     "files_read": 4,
+     "last_context": 780538,
+     "requests": 175,
+     "segment": 1,
+     "tokens_by_kind": {
+      "assistant_text": 178.9,
+      "hook_context": 4643.4,
+      "other_attachment": 102712.4,
+      "other_user_text": 9434.5,
+      "thinking": 70060.0,
+      "tool_input": 88432.7,
+      "tool_result": 154329.3,
+      "typed_user_text": 760.3
+     },
+     "tokens_modeled": 430551.7
+    },
+    "windows": {
+     "100": {
+      "missed": 165,
+      "missed_paths": 42,
+      "missed_paths_edited_before": 0,
+      "missed_paths_neither": 42,
+      "missed_paths_read_before": 0,
+      "read_known_path_reinjected": 1,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 1,
+        "requests": 1,
+        "tokens": 4831.6
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 45,
+        "requests": 42,
+        "tokens": 32045.0
+       }
+      },
+      "refetch_total": {
+       "calls": 46,
+       "requests": 43,
+       "tokens": 36876.6
+      },
+      "requests": 100,
+      "reused": 317,
+      "used": 568
+     },
+     "20": {
+      "missed": 27,
+      "missed_paths": 9,
+      "missed_paths_edited_before": 0,
+      "missed_paths_neither": 9,
+      "missed_paths_read_before": 0,
+      "read_known_path_reinjected": 0,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 10,
+        "requests": 10,
+        "tokens": 7996.4
+       }
+      },
+      "refetch_total": {
+       "calls": 10,
+       "requests": 10,
+       "tokens": 7996.4
+      },
+      "requests": 20,
+      "reused": 77,
+      "used": 121
+     },
+     "rest": {
+      "missed": 508,
+      "missed_paths": 80,
+      "missed_paths_edited_before": 0,
+      "missed_paths_neither": 80,
+      "missed_paths_read_before": 0,
+      "read_known_path_reinjected": 6,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 6,
+        "requests": 6,
+        "tokens": 21085.3
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 111,
+        "requests": 104,
+        "tokens": 97480.1
+       }
+      },
+      "refetch_total": {
+       "calls": 117,
+       "requests": 110,
+       "tokens": 118565.4
+      },
+      "requests": 243,
+      "reused": 900,
+      "used": 1828
+     }
+    }
+   },
+   {
+    "boundary": 3,
+    "class": "1M_window",
+    "day": "2026-09-28",
+    "kept": {
+     "distinct_tokens": 2322,
+     "files_reinjected": 5,
+     "first_context": 80827,
+     "items": 17,
+     "post_tokens": 16784,
+     "tokens_by_kind": {
+      "hook_context": 1060.3,
+      "other_attachment": 28495.2,
+      "other_user_text": 8942.1
+     },
+     "tokens_modeled": 38497.6
+    },
+    "offset": 11366098,
+    "post_requests": 154,
+    "pre": {
+     "commands": 224,
+     "distinct_tokens": 6019,
+     "files_edited": 3,
+     "files_read": 4,
+     "last_context": 776650,
+     "requests": 243,
+     "segment": 2,
+     "tokens_by_kind": {
+      "assistant_text": 22722.4,
+      "hook_context": 16371.0,
+      "other_attachment": 63241.4,
+      "other_user_text": 9029.7,
+      "thinking": 10960.0,
+      "tool_input": 77613.6,
+      "tool_result": 174381.0,
+      "typed_user_text": 594.5
+     },
+     "tokens_modeled": 374913.6
+    },
+    "windows": {
+     "100": {
+      "missed": 233,
+      "missed_paths": 41,
+      "missed_paths_edited_before": 1,
+      "missed_paths_neither": 40,
+      "missed_paths_read_before": 0,
+      "read_known_path_reinjected": 0,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 65,
+        "requests": 54,
+        "tokens": 85160.9
+       }
+      },
+      "refetch_total": {
+       "calls": 65,
+       "requests": 54,
+       "tokens": 85160.9
+      },
+      "requests": 100,
+      "reused": 469,
+      "used": 790
+     },
+     "20": {
+      "missed": 43,
+      "missed_paths": 18,
+      "missed_paths_edited_before": 1,
+      "missed_paths_neither": 17,
+      "missed_paths_read_before": 0,
+      "read_known_path_reinjected": 0,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 6,
+        "requests": 6,
+        "tokens": 12145.1
+       }
+      },
+      "refetch_total": {
+       "calls": 6,
+       "requests": 6,
+       "tokens": 12145.1
+      },
+      "requests": 20,
+      "reused": 106,
+      "used": 147
+     },
+     "rest": {
+      "missed": 442,
+      "missed_paths": 68,
+      "missed_paths_edited_before": 2,
+      "missed_paths_neither": 66,
+      "missed_paths_read_before": 0,
+      "read_known_path_reinjected": 0,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 95,
+        "requests": 84,
+        "tokens": 118704.0
+       }
+      },
+      "refetch_total": {
+       "calls": 95,
+       "requests": 84,
+       "tokens": 118704.0
+      },
+      "requests": 154,
+      "reused": 759,
+      "used": 1474
+     }
+    }
+   }
+  ],
+  "control": [
+   {
+    "class": "1M_window",
+    "offset": 9258743,
+    "position": 121,
+    "requests": 243,
+    "segment": 2,
+    "windows": {
+     "100": {
+      "missed": 0,
+      "missed_paths": 0,
+      "missed_paths_edited_before": 0,
+      "missed_paths_neither": 0,
+      "missed_paths_read_before": 0,
+      "read_known_path_reinjected": 0,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 4,
+        "requests": 4,
+        "tokens": 11278.4
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 46,
+        "requests": 42,
+        "tokens": 49825.2
+       }
+      },
+      "refetch_total": {
+       "calls": 50,
+       "requests": 46,
+       "tokens": 61103.6
+      },
+      "requests": 100,
+      "reused": 800,
+      "used": 1458
+     },
+     "20": {
+      "missed": 0,
+      "missed_paths": 0,
+      "missed_paths_edited_before": 0,
+      "missed_paths_neither": 0,
+      "missed_paths_read_before": 0,
+      "read_known_path_reinjected": 0,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 12,
+        "requests": 12,
+        "tokens": 7986.1
+       }
+      },
+      "refetch_total": {
+       "calls": 12,
+       "requests": 12,
+       "tokens": 7986.1
+      },
+      "requests": 20,
+      "reused": 168,
+      "used": 256
+     },
+     "rest": {
+      "missed": 0,
+      "missed_paths": 0,
+      "missed_paths_edited_before": 0,
+      "missed_paths_neither": 0,
+      "missed_paths_read_before": 0,
+      "read_known_path_reinjected": 0,
+      "refetch": {
+       "identical_other_call": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "read_known_path": {
+        "calls": 5,
+        "requests": 5,
+        "tokens": 16253.8
+       },
+       "rerun_command": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_ledger": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_live_state": {
+        "calls": 0,
+        "requests": 0,
+        "tokens": 0.0
+       },
+       "search_transcript": {
+        "calls": 54,
+        "requests": 50,
+        "tokens": 55641.8
+       }
+      },
+      "refetch_total": {
+       "calls": 59,
+       "requests": 55,
+       "tokens": 71895.5
+      },
+      "requests": 122,
+      "reused": 825,
+      "used": 1587
+     }
+    }
+   }
+  ],
+  "skipped": []
+ },
+ "schema": 1,
+ "sidechain": true,
+ "timeline": {
+  "boundaries_on_the_thread": 3,
+  "requests": 723,
+  "requests_by_model": {
+   "claude-opus-5-5": 723
+  },
+  "segments_with_requests": 4,
+  "stats": {
+   "items_after_their_segments_last_request": 13,
+   "items_in_segments_without_a_request": 0,
+   "requests": 723,
+   "segments": 4,
+   "thinking_blocks": 682,
+   "thinking_blocks_stored_empty": 597,
+   "thinking_sized_exact": 215,
+   "thinking_sized_model": 384,
+   "visible_output_sized_exact": 260,
+   "visible_output_sized_model": 463
+  }
+ },
+ "transcript": "agent-a88c7c57f2fa2a96b.jsonl"
+}

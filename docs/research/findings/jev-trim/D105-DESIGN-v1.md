@@ -337,3 +337,32 @@ Source: `tasks/briefs/jev-trim/K0-COMPACTION-POINT-report.md` (evidence only; th
   start is about 130k, so a point near Anthropic's 200k would leave about 70k of working room and compact every few turns.
   K1 measures what each of our compactions loses and models the count at 300k to 785k; the point comes from K1's table,
   then the live test (R-D).
+
+### 10.6 K1: what our own compactions cost (2026-09-29)
+
+Source: `tasks/briefs/jev-trim/K1-COMPACTION-LOSS-report.md` and the outputs under
+`docs/research/findings/jev-trim/compaction-2026-09-29/` (measurements; the reading at the end is the main loop's;
+VERIFY-K1 attacks them).
+
+- **Scope.** This session's 139 compactions (121 on the 1M window, 18 early ones on a 200k window) and 21 in 16
+  subagent transcripts.
+- **The loss per compaction, main (1M class).** A compaction removes about 658k modeled tokens and keeps about 58k (the
+  summary and the start injections). The next 20 requests used 86 distinctive removed tokens that the kept start lacked
+  (301 over 100 requests, 411 over the rest of the segment). But the session re-fetched little beyond its normal rate:
+  26.4 re-fetch calls per 100 requests in the first 20 requests against 23.9 at control points, and none above the
+  control after that (21.9 against 25.6 over 100). The kind shifts: more Reads of known files and ledger reads, fewer
+  identical re-runs.
+- **Subagents lose more:** 34.8, 30.4 and 27.4 re-fetch calls per 100 requests against 22.1, 14.9 and 14.9 (7 control
+  points only), mostly transcript searches and Reads of known files.
+- **Quality by fill, main.** Tool errors 1.45% to 2.11% of calls per 100k from 100k to 800k, with no rise. Inside a
+  segment, errors fall from the first third to the last (1.89% to 1.58%), while re-runs of an unchanged command rise
+  (0.23% to 1.39% of Bash calls; waiting loops are among them).
+- **The cost model (a model).** At 785k it reproduces the observed count (119 against 121). At 500k: 206 compactions,
+  mean fill 306k, 6.19 billion cache-read tokens against 9.24 billion. At 400k: 278, 256k, 5.17 billion. At 300k: 427,
+  205k, 4.10 billion. The modeled missed tokens grow with the count (48,940 at 785k, 84,720 at 500k, 175,610 at 300k).
+- **The main loop's reading.** The published curves (§10.5) say the work gets worse as the fill passes about 256k; our
+  mechanics show no decline, and a compaction costs this session little re-fetching, because the ledger, the live-state
+  block and the start hook restore its state. So moving the point down from 785k is cheap, and 500k cuts the cache reads
+  by a third. The first live arm (R-D) is the owner's 500k: `autoCompactWindow` 500000 (never "500k", §10.5), with the
+  real point read from the next boundary's preTokens (the 80% override may bring it near 400k). The subagents' larger
+  loss is an item for §10.3: their start holds no ledger or live-state block, so task packs (P3) matter most there.
