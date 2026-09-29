@@ -661,3 +661,362 @@ my scratch runs created (`/tmp/ripwire-0/1c`); `66` (the main tree's) and the 17
 No `/tmp/stack-*` dir remains, and no probe process is alive (`pgrep -f '[v]lsb9r3'` rc 1). The setsid child from
 R3-F2's probe was killed by pid during the probe. Disk: 12,025 MB free. In the main tree the only change is this report;
 the seven lane files keep the premise hashes and status (re-checked at the end).
+
+> Coordinator note (2026-09-29 04:5xZ): round 4's report of record, extracted by `scripts/stack.py harvest` (run s-20260929T045541Z-1a8a7e). ROUTING: the coordinator's resume went to the TRIM-AUDIT evidence-gatherer (task #346, "Audit context-trimmer seams"), not to the LS-B9 verifier of rounds 1 to 3 ("Verify LS-B9 stack runner"): the compaction summary had carried the wrong agent id (AF-AP-241). The lane saw the mismatch, rebuilt the context from the committed reports and briefs, and ran a new mutation driver with its control first, so this round is still an independent review by a lane that is not the builder. Served model: claude-opus-5-5 on all 809 assistant records across its two tasks, 0 refusal stops, 4 tool-error clusters. `report_lint`: 4 refs, 3 MISS and 1 UNCHECKABLE, each a right line cited with paraphrased tokens (`scripts/stale_ids.py:23` is `HEX`, `:4-5` its docstring, `proofs/S0-11/check_eval_hardening.py:79-82` sets `DROP_UID`). Local ids: none cited. The coordinator's disposition: MERGE-READY-WITH-FOLLOWUPS accepted; LS-B9 closes; the follow-ups go to issue #80.
+
+## Round 4
+
+Written 2026-09-29 from 2026-09-29T04:52:44Z (`date -u`).
+
+**TL;DR:** I found no CORE-BLOCKING finding, so I recommend MERGE-READY-WITH-FOLLOWUPS.
+- The catalog hook works. It fired live at two lane compactions after the install. In this lane the delivered text equals the pin's `stack.py catalog` output byte for byte.
+- R3-F1, R3-F3, R3-F4 (X1, X2, X3, X6) and R3-F5 hold on the new bytes.
+- One follow-up contradicts the brief's own words. The hook is silent in three cases: `stack.py` missing, the repo missing, and a hang cut at the harness's 30 s timeout. The brief says "never silent", but two tests in the suite require the first two to be silent.
+
+### 0. Routing and method
+
+**Routing.** This message reached the TRIM-AUDIT lane (task #346), not the round-3 verifier.
+- I have no round-3 scratch, driver or survivor list of my own.
+- I rebuilt the context from committed files:
+  - `tasks/briefs/labeling/VERIFY-LS-B9-report.md` (rounds 1-3);
+  - `tasks/briefs/labeling/LS-B9-R4-brief.md`;
+  - `tasks/briefs/labeling/LS-B9-R4-report.md`.
+- For issue #80 I used the coordinator's scratch copy, `scratchpad/issue-lsb9.md` (23:00Z). I did not read the live GitHub issue.
+- I reused no round-3 driver. The mutation driver below is new, and its control ran first.
+
+**Venue.**
+- Two detached worktrees at 3cd69de, made with `git -c core.hooksPath=/dev/null worktree add -q --detach`. Both were clean (porcelain 0 lines) and both were removed at the end:
+  - `.../scratchpad/vlsb9r4/wt` for the rigs and gates;
+  - `.../scratchpad/vlsb9r4/mw` for the mutants.
+- The box has 4 CPUs. The load average was 0.07 to 1.44 during my runs; I measured no other contention.
+- `python3` is 3.11.15 at `/usr/local/bin/python3`. `/bin/sh` is dash.
+- I cite the Claude Code hooks reference (`hooks.md`), fetched 2026-09-29 (246,601 bytes). Claude Code here is 2.1.283, as measured in the same container earlier this session.
+- Commits are cited by origin id; all five are ancestors of origin: 3cd69de, 7f2d9ef, 0749fe5, 56c4ccc, 6bb590b.
+
+### 1. Item 1: the premise holds (no CONTRACT-INVALID)
+
+At 0749fe5 and at 56c4ccc (3cd69de's parent), the six lane files hash to the brief's premise values:
+- `a3a24981247588c7`
+- `e44d0f5d94d57a41`
+- `382646e573354170`
+- `96c44e0a388ca856`
+- `b78e189d0ac5b7db`
+- `dddd30002144af50`
+
+At 3cd69de each was last changed on 2026-09-29 at 03:55Z. The hashes match the builder's report:
+
+| file | sha256[:16] | lines |
+|---|---|---:|
+| scripts/stack.py | c69a819138d21471 | 1434 |
+| scripts/stacks.toml | 6393305a0bf1a585 | 529 |
+| scripts/handback_extract.py | 6607d18007d36121 | 240 |
+| tests/test_stack.py | 3036e5784df20d2f | 2374 |
+| scripts/install_session_hooks.py | 0cc115498df91147 | 182 |
+| tests/test_session_hooks.py | e7c008cc44919c31 | 490 |
+
+### 2. Item 7: the SessionStart catalog hook (priority)
+
+**Rig.**
+- I copied the pin's `stack.py`, `stacks.toml` and `install_session_hooks.py` under a scratch parent whose path holds spaces (`par dir/re po`).
+- I ran the installer with an explicit `--target` inside scratch. It never touched the live file.
+- I took the catalog command from that settings file. I ran it with `/bin/sh -c` (dash) and `/bin/bash -c`, with a SessionStart payload (`"source":"compact"`) on stdin and cwd set to the scratch parent.
+- Each case gave the same result under both shells. Only the shell's own error prefix differed.
+- The installed command is `[ -f <r>/scripts/stack.py ] || exit 0; cd <r> || exit 0; python3 <r>/scripts/stack.py catalog || echo "stacks: no catalog (scripts/stack.py catalog exited $?)"`, with `"timeout": 30` and matcher `startup|resume|compact` (`install_session_hooks.py:59-72`).
+
+| case | rc | stdout | stderr |
+|---|---|---|---|
+| baseline | 0 | 2,681 chars, 19 lines: heading, `list`, the ratings line; 0.095 s | empty |
+| `stack.py` absent | 0 | **empty** | empty |
+| repo dir absent / repo path is a file | 0 | **empty** | empty |
+| `stacks.toml` absent / dangling symlink | 0 | 1 line: `stacks: no catalog (registry <path>: No such file or directory)` | empty |
+| malformed TOML (`[stacks`) | 0 | 1 line: `...: Expected ']' at the end of a table declaration (at line 2, column 8))` | empty |
+| `version = 2` | 0 | `stacks: no catalog (registry: version: must be 1 (found 2))` | empty |
+| `stacks.toml` is a directory | 0 | 1 line: `...: Is a directory)` | empty |
+| invalid UTF-8 in `stacks.toml` | 0 | `stacks: no catalog (UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 2266: invalid start byte)` | empty |
+| `stacks.toml` mode 000 (DAC capabilities dropped with `setpriv --bounding-set=-dac_override,-dac_read_search`) | 0 | 1 line: `...: Permission denied)` | empty |
+| `stack.py` mode 000 (same capability drop) | 0 | `stacks: no catalog (scripts/stack.py catalog exited 2)` | `python3: can't open file ...: [Errno 13] Permission denied` |
+| SyntaxError appended to `stack.py` | 0 | `... exited 1)` | the SyntaxError |
+| import of a missing module | 0 | `... exited 1)` | ModuleNotFoundError traceback |
+| `python3` not on PATH | 0 | `... exited 127)` | `/bin/sh: 1: python3: not found` |
+| `PYTHONIOENCODING=ascii` | 0 | `... exited 1)` | UnicodeEncodeError on U+2014 at `stack.py:1388` (`main`'s write) |
+| `LC_ALL=C` | 0 | same 2,681 chars as baseline | empty |
+| **a FIFO in place of `stacks.toml`** | killed by my 31.0 s limit | **empty** | empty |
+| 60 extra stacks, 280-char notes | 0 | 3,714 chars; `… 58 of 69 stacks not shown (...)` | empty |
+| one extra stack with a 5,000-char summary | 0 | 2,783 chars; `… 1 of 10 stacks not shown` | empty |
+| 200 extra rated stacks | 0 | 3,999 chars, 3 lines; the ratings line cut with `…` | empty |
+| ESC, CR, BEL and U+202E in a stack summary | 0 | 2,718 chars; raw `\r`, `\x07`, `\x1b` and U+202E in the text | empty |
+| an unknown top-level TOML key holding ESC | 0 | 1 line with a raw `\x1b` | empty |
+| registry path of 352 chars (deep directory, file absent) | 0 | 1 line of 322 chars; the reason is cut at 300 inside the path, and `No such file or directory` is lost | empty |
+
+**Timing.** The real catalog command at the pin, 30 runs through dash, took min 0.086 s, median 0.096 s, max 0.145 s. Load was 0.07 on 4 CPUs.
+
+**The hooks doc on these paths (`hooks.md`).**
+- "Exit code 0": for SessionStart, plain stdout becomes context. "Stderr from a hook that exits 0 goes to the debug log only, never the transcript, and Claude never sees it."
+- "Timeouts": a command hook that reaches its `timeout` is canceled, "discarding the hook's output".
+- "SessionStart": at startup and resume, "Claude's first response still waits for the hooks to finish".
+- Plain stdout over 10,000 characters is replaced by a file path and a 2,000-character preview.
+- "Matcher patterns": a value of only letters, digits, `_`, `-`, spaces, `,` and `|` is an exact-string list. The SessionStart sources are `startup`, `resume`, `clear`, `compact` and `fork`, and `fork` has been its own source since v2.1.214.
+
+**Live evidence.** The coordinator saw one firing at about 03:37Z. I confirmed two more myself from transcript metadata.
+- This lane compacted at 04:09:23.471Z. Record 1166 of `agent-a038a373e43037a56.jsonl` is an attachment of type `hook_success`, hookName `SessionStart:compact`.
+- Lane af25a8ffadcb62c75 compacted at 04:29:47.237Z (record 2149).
+- In this lane the delivered text equals the pin's `python3 scripts/stack.py catalog` output byte for byte: 2,681 chars, 19 lines, sha256 prefix `1b65972f23b9`.
+- Lane ac753871198ee8cfd compacted at 2026-09-28T21:36Z, before the install (the live file's mtime is 03:15:19Z), and got no catalog.
+- In both post-install compactions the catalog record lands 67 to 136 ms after the plugin's `session-start` record. The repo's `session-start.sh` record lands about 36 s later.
+
+**Live settings.** I read them only: `json.load`, printing the `hooks` key only.
+- `/home/user/.claude/settings.json` has sha256 prefix `ab456303e3b74530`, the builder's D1 value, and it was the same at the end of my run.
+- It holds 10 hooks, each equal to the pin installer's `our_hooks(/home/user/agent-factory)`.
+- `merged(live) == live` is True, so an install would print "unchanged".
+
+**Installer, on a scratch target.**
+- A fresh install prints `installed 8`. A second run prints `unchanged`, and the bytes are equal. `--check` returns 0 with `present`.
+- I added a foreign hook to the catalog group, plus a foreign `permissions` key and a Notification hook:
+  - install keeps all three, and the foreign group stays first under its matcher;
+  - `--remove` leaves exactly those three;
+  - `--check` then returns 1.
+- A file holding only an older catalog spelling:
+  - `--remove` prints `unchanged` and the older command stays;
+  - install over it leaves one catalog hook and removes the older one.
+- A hand-edited matcher (`startup|resume|compact|clear`) makes `--check` return 1, and install restores `startup|resume|compact`.
+- A JSON list or broken JSON is REFUSED with rc 1, and the file is left as it was.
+- LS-B7's hooks: all 9 of the 0749fe5 installer's hooks come out byte-identical from the pin installer. The catalog group is added third in SessionStart.
+
+**The repo's own `.claude/settings.json`** (last changed in 6bb590b, 2026-09-28 19:37Z) registers no catalog. This matches the builder's NOT done 2 (task #358).
+
+### 3. Item 6b: local commit ids
+
+**Rig.** A scratch repo with a bare origin: c1 and c2 pushed, c3 and c4 local. Scratch-repo ids are not quoted here.
+- **Listed:**
+  - a 7-char local id;
+  - a full 40-char local id;
+  - a local id before `.`, inside `_…_` and `-…-`, and inside a `.../commit/<id>` URL;
+  - two ids on one line (both listed);
+  - an id in a file with invalid UTF-8 (read with replacement).
+- **Not listed:**
+  - an origin id (the control);
+  - an uppercase id;
+  - a 6-char prefix;
+  - a letter-adjacent id or a digit-adjacent id.
+
+  This is `stale_ids.HEX`'s rule (`scripts/stale_ids.py:23`, last changed 2026-09-24), the same rule the push gate uses. A path given twice is read once. With hits the exit code is 1.
+- **Failure paths.** Each exits 2 with `local ids: not checked — ...`:
+  - detached HEAD: `HEAD is detached: there is no origin/<branch>..HEAD`;
+  - a branch never pushed, or no `origin` remote: `git log --format=%H%x00%s origin/<b>..HEAD -- failed: fatal: bad revision ...`;
+  - a missing file among the inputs: `[Errno 2] ...`. The readable file is then not checked either.
+- **The reason text is wrong in three rc-2 cases.** Run from `/` (outside any repo), with `GIT_DIR=/nonexistent`, or with git off PATH, the step prints `HEAD is detached: ...`. `handback_extract.py:158-161` maps every `symbolic-ref` failure to that one reason.
+- **AF-AP-175, tested.** I monkeypatched `git_out` to act between the `symbolic-ref` read (`:159`) and the `git log origin/<b>..HEAD` read (`:162-163`).
+  - A commit landing in between is handled right: the new commit is in the range, and a citation of it is listed.
+  - A branch switch in between (`git checkout other` in the tree) gives a wrong result. The step listed a commit that exists on `origin/other` as local, and missed the truly local c3. The no-race control listed c3.
+  - The window is two subprocess calls long. It needs a branch switch in the tree during a harvest.
+- **Advice text versus the push rule.** `handback_extract.py:178-179` says `push_clean.sh rewrites them` for every local commit. `scripts/stale_ids.py:4-5` says push_clean rewrites "every commit of the unpushed range that carries a model-identifier trailer, and so every commit after it". A local commit before the first trailer commit keeps its id, and the step still lists it. UNSURE: I did not run push_clean.
+- **With `report=`**, the step reads the hand-back and the chained file (`[[stacks.harvest.steps]] id = "local_ids"`). It does not read the `report=` file.
+
+### 4. Item 2: the report window after a resume
+
+Method: I ran the pin's extractor and 0749fe5's extractor on the same synthetic transcripts.
+
+| shape | 0749fe5 | pin |
+|---|---|---|
+| the verifier's exact shape (no tool-result record): R1 report, call 1, 4,000-char epilogue, a text user record (resume), short text, 160-char call 2 | epilogue saved | **none** |
+| same, round 2 writes its own 3,000-char text (control) | round 2 | round 2 |
+| builder's shape with the call's tool result and the coordinator resume (`isMeta`, `origin.kind=coordinator`) | epilogue | none |
+| compaction summary, then the epilogue, then the coordinator resume | epilogue | none |
+| list-form text user record as the resume | epilogue | none |
+| an empty-string user record, then the epilogue, then the coordinator resume | epilogue | none |
+| **a `[handback-send-enforce]` message, then the epilogue, then the coordinator resume** | epilogue | **epilogue** |
+| **a `SubagentStop hook feedback` user text, then the epilogue, then the coordinator resume** | epilogue | **epilogue** |
+| **the committed F-11 control input** (`tests/test_stack.py:1437` at 0749fe5): R1 report, call 1, a 2,800-char R2 text, call 2, no user record | R2 text saved | **none** |
+| call 1 fails (`is_error`), a 3,000-char retry text, call 2, no user record | retry text | **none** |
+| one call, a long text before it | that text | that text |
+
+**Real transcripts.** 23 of the 333 subagent transcripts in this session hold 2 or more hand-back calls, which gives 38 gaps between calls.
+- The first window-opener after a call was a coordinator message 32 times and a `[handback-send-enforce]` message 6 times.
+- All six enforce messages follow a failed call. The tool result reads `Only the auto-mode classifier can allow SubagentHandback: the session is not in auto mode`.
+- In the enforce gaps, the lane's long text lies before the enforce message, so it is excluded. No gap has a long text between an enforce opener and the next call.
+- This lane's own shape is covered. Call 1 is at record 1039, a 2,625-char epilogue at record 1042, and the coordinator's resume at record 1043, so the window opens at 1043.
+
+**Code.** `opens_round` (`handback_extract.py:69-79`) accepts any user record that carries text and is neither a tool result nor a compaction summary. It does not check `origin.kind`. A failed call (tool result `is_error`) still counts as a hand-back and closes the round (`:118-125`). That rule is older than round 4.
+
+### 5. Item 3 (R3-F1), a real run
+
+In the pin worktree I ran `stack.py gate paths=<178 real paths, 9,735 chars> graph=no --log-dir <scratch>` in plan mode.
+- Exit 0. The print was 9,009 bytes.
+- Line 3 is the counts line: `sources · run list 22 of union 22: pytest 20 · python3 0 · bash 2 · not run 0`. `params:` is line 4, and line 5 is `… the print is cut at 9,000 characters (the headers alone are over the cap)`.
+- No step section (`## ...`) was printed. This is F-13's class, the builder's NOT done 6.
+- The amended gate note no longer says "past about 180 paths read `sources.out`". The per-file list is still out of the print at this width.
+
+### 6. Item 5 (R3-F5)
+
+- I used an ad-hoc registry and a scratch git tree with two headline steps.
+- A 602-char first line holding 600 ESC characters became a 506-char header line: `h1 · ` + 500 escaped characters + `…`. So the escape happens before the cut, and the line stays bounded.
+- NUL became `\x00`. A raw 0x9b byte arrived as U+FFFD, because output is decoded with `errors="replace"` (`stack.py:941`).
+- U+202E, U+200F and U+2066 reached the header raw. They are outside `CONTROL_RE` (`stack.py:98`: C0, DEL, C1, U+2028 and U+2029), which is the brief's list.
+
+### 7. Item 6: the catalog notes
+
+- There are eight notes, each under its own stack:
+  - harvest 2, gate 3, ctx 1, review 2;
+  - five of issue #80's seven are verbatim;
+  - two are amended (gate's second, harvest's first), as the builder's D3 says, compared with `issue-lsb9.md`;
+  - the eighth note (`report=`) is the brief's text.
+- Validation, through `stack.py list`:
+
+  | note | result |
+  |---|---|
+  | exactly 300 characters | accepted |
+  | 301 characters | rc 3 |
+  | an integer element | rc 3 |
+  | an empty list | accepted |
+  | U+202E or U+200B inside | accepted, printed raw |
+
+- A stack `summary` refuses only `\n` (`stack.py:356-359`), so C0/C1 and bidi characters reach the catalog raw (see the item-7 table).
+
+### 8. Item 4 and the mutation run (own driver, control first)
+
+**Driver.**
+- Each mutant is an exact-once string replacement in the mutation worktree. The original bytes are written back and re-hashed after every mutant.
+- The driver counts KILLED only when pytest reports failed tests and no errors.
+- The first control run hit AF-AP-223's class: its basetemp parent did not exist, and all 9 selected tests errored at setup. The driver stopped instead of counting kills. After I created the parent, the control was green.
+- Sanity checks: an equivalent mutant (a comment change) SURVIVED, and a killable mutant (the heading text) was KILLED.
+
+| mutant | site | verdict | killing test |
+|---|---|---|---|
+| X1: stray kill sends SIGTERM | stack.py:909 | KILLED | test_a_stray_that_ignores_sigterm_is_killed_all_the_same (`assert [pid] == []`) |
+| X2: no cut at HEADLINE_MAX | stack.py:1354 | KILLED | test_a_headline_longer_than_headline_max_is_cut_with_an_ellipsis |
+| X3: run-all.sh not routed to bash | gate_union.py:87 | KILLED | test_a_gate_on_a_path_only_run_all_names_runs_run_all_with_bash |
+| X6: `shells` without `needs` | stacks.toml, gate `shells` step | KILLED | test_a_refused_run_runs_no_shell_test |
+| H1: a compaction summary opens the round | handback_extract.py:72-73 | KILLED | test_handback_extract_never_takes_the_previous_rounds_epilogue |
+| H2: a tool result opens the round | :79 | KILLED | same |
+| H3: round 3's rule (the call never closes the round) | :125 | KILLED | same |
+| H4: no `last_long` reset at a call | :124 | KILLED | the same test and the F-11 test |
+| F5a: C1 dropped from CONTROL_RE | stack.py:98 | KILLED | test_a_headlines_control_characters_are_escaped_in_the_header |
+| F5b: U+2028 dropped | stack.py:98 | KILLED | same |
+| **M12: cut before escape** | stack.py:1353-1354 | **SURVIVED** the 3-file set (296 passed) | — |
+| N-a: no control check on notes | stack.py:364-365 | KILLED | bad-registry [note-cr] |
+| N-b: no length check on notes | stack.py:364 | KILLED | bad-registry [note-301] |
+| M1: the loop's `<` becomes `<=` | stack.py:1204 | SURVIVED `-k catalog` | — |
+| M1b: the return's `<` becomes `<=` | stack.py:1209 | **SURVIVED** the 3-file set | — |
+| M1c: both become `<=` (a 4,000-char catalog passes) | :1204 and :1209 | **SURVIVED** `-k catalog` | — |
+| M2: no whitespace normalization of the reason | stack.py:1211 | KILLED | test_catalog_turns_an_unexpected_error_into_one_line |
+| **M3: no 300-char cut of the reason** | stack.py:1212 | **SURVIVED** the 3-file set | — |
+| M16: no `shown == 0` stop (the loop hangs) | stack.py:1204 | KILLED by the test's 60 s subprocess timeout | test_catalog_cuts_even_its_ratings_line... |
+| M17: `except Refusal` only | stack.py:1210 | KILLED | test_catalog_turns_an_unexpected_error_into_one_line |
+| M18: the ratings line names every stack | catalog's `rate` | KILLED | two catalog tests |
+| L-a: `rev-parse --abbrev-ref HEAD` | handback_extract.py:159 | KILLED | test_local_ids_says_why_when_it_cannot_check |
+| L-b: no dedupe | :166 | KILLED | test_local_ids_lists_a_cited_local_commit_with_its_line |
+| L-c: exit 0 on hits | :183 | KILLED | two local-ids tests |
+| L-d: OSError escapes | :171 | KILLED | test_local_ids_says_why... |
+| **L-e: no 200-char line cut** | :181-182 | **SURVIVED** the 3-file set | — |
+| L-f: `local_ids` required | stacks.toml | KILLED | test_harvest_lists_the_local_ids_its_handback_cites |
+| I-a: matcher `startup\|resume` | install_session_hooks.py:69 | KILLED | test_the_catalog_hook_is_installed_once_on_start_resume_and_compact |
+| I-b: no timeout | :72 | KILLED | same |
+| I-c: no `\|\| echo` fallback | :71 | KILLED | the same test and test_the_catalog_hook_fails_loud_in_one_line_and_exits_0 |
+| I-d: no catalog marker in the merge rule | :117 | KILLED | test_an_older_catalog_spelling_is_replaced_on_install |
+| I-e: catalog before task_sync | :77 | KILLED | test_the_catalog_hook_is_installed_once... |
+
+- Totals: 32 real mutants, 26 killed and 6 survived (M1, M1b, M1c, M3, M12, L-e).
+- Each "3-file set" confirmation ran `tests/test_stack.py tests/test_session_hooks.py tests/test_task_sync.py` in full (`296 passed` for each of M12, M1b, M3 and L-e; the control also gave 296 passed). M1 and M1c ran against `-k catalog` only.
+- I did not re-run the builder's 29 mutants or earlier rounds' mutation sets. Only X1, X2, X3 and X6 are re-applied here.
+
+### 9. Item 8: gates (each pasted from `scripts/test_summary.sh`; `--basetemp` passed as an argument under my scratchpad; set ids from `scripts/pc_suite.sh set-id --`)
+
+- **Gate A:** `3 files set=cebb397be3f6`
+  - run 1 (04:02:49Z): `pytest-summary: 296 passed in 67.35s (0:01:07)`
+  - run 2 (04:35:00Z): `pytest-summary: 296 passed in 62.71s (0:01:02)`
+- **Gate C:** `2 files set=a9d6e3f9b705`
+  - `pytest-summary: 190 passed in 62.17s (0:01:02)`
+  - `pytest-summary: 190 passed in 63.03s (0:01:03)`
+- **Gate B:** `5 files set=2804489b9d6b`, three runs:
+  - 04:38:18Z: `pytest-summary: 2 failed, 480 passed in 146.20s (0:02:26)`
+  - `pytest-summary: 2 failed, 480 passed in 145.42s (0:02:25)`
+  - `pytest-summary: 2 failed, 480 passed in 146.16s (0:02:26)`
+
+**Gate B's two failures** are in `tests/test_s0_11_eval_hardening.py`, which is not an LS-B9 file (last changed 2026-09-04):
+- `test_positive_conformance`: `checker failed: rubric-isolation-failure: observation-failed`;
+- `test_wrapped_child_has_fresh_cwd_and_refuses_listener`: `assert None is not None`.
+
+The cause is measured:
+- `proofs/S0-11/check_eval_hardening.py:79-82, :98-107` drops root to uid 65534 with `setpriv` before it launches the probe.
+- Run as uid 65534, `os.stat` of my worktree's `proofs/S0-11` fails with "Permission denied", because the scratchpad parent `/tmp/claude-0` is mode 0700 root. The same stat of the main tree's path succeeds.
+- So the failures come from where my worktree lives. The coordinator's gate B read 482 passed. I did NOT run these two tests at a traversable path: a worktree outside the scratchpad would break the scratch rule.
+
+**Other gates:**
+- `harness-ports/tests/test_context_mirrors.sh` in the pin worktree: `11 passed, 0 failed`. The CLAUDE.md pointer is a paragraph inside an existing section.
+- `harness-ports/tests/run-all.sh`: NOT run.
+
+### 10. Regression check against earlier rounds
+
+- Every earlier-round test in the three-file set passes (gate A).
+- LS-B7's hooks are byte-identical.
+- One earlier pin is narrowed. The F-11 test's control input was changed in round 4: RESULT and RESUME records were inserted (`test_handback_extract_takes_the_report_only_from_the_last_round`). Fed the original input from 0749fe5, the pin now reports none, where 0749fe5 saved round 2's text (§4 table). The builder's D2 gives the reason: real transcripts always hold a tool result, then an opener.
+- R3-F2 (a setsid child escapes) is still open, as the builder's NOT done 7 says.
+
+### 11. Finding inventory (all observations, no severity filter)
+
+| # | class | finding | evidence |
+|---|---|---|---|
+| R3-F1 | CLOSED | counts line survives a 9,735-char `paths` | §5 real run |
+| R3-F3 | CLOSED | the previous round's epilogue is no longer taken on the verifier's shape; the control holds | §4 |
+| R3-F4 | CLOSED | X1, X2, X3, X6 each killed by a new test | §8 |
+| R3-F5 | CLOSED within the brief's classes | C0, DEL, C1, U+2028 and U+2029 escaped; escape before cut | §6 |
+| R4-F1 | FOLLOW-UP | the catalog hook exits 0 with **no output** when `stack.py` is missing or the repo is missing (dash and bash). This contradicts item 7's "if the catalog cannot be built it prints ONE line naming why (fail loud, never silent)". The suite pins the silence: `tests/test_session_hooks.py` `test_every_installed_command_fails_open_when_the_repo_is_absent` (:228) and `test_a_missing_hook_script_fails_open` (:246; `_fake_repo` writes no `scripts/stack.py`) assert `(0, "")` for the catalog command. The builder's docstring (`install_session_hooks.py:19-21`) limits "cannot be built" to what happens after the guard. | §2 table |
+| R4-F2 | FOLLOW-UP | nothing inside the catalog bounds its time. With a FIFO in place of `stacks.toml` there was no byte by 31.0 s; the harness cancels at 30 s and discards output ("Timeouts"), so the hook is silent, and per the doc the first response waits up to 30 s at startup or resume. The trigger is contrived; the real catalog's median is 0.096 s | §2 |
+| R4-F3 | INFO | a failure outside `catalog()`'s `try` (stack.py unreadable, a SyntaxError, an import error, python3 missing, ascii stdout) gives ONE line naming only the exit code (2, 1, 1, 127, 1). The reason goes to stderr, which on exit 0 reaches only the debug log | §2 table and doc |
+| R4-F4 | INFO | the failure reason is cut at 300 chars. With a 352-char registry path the cut falls inside the path and the strerror is lost. No test covers the cut (M3 survives). The live path is 44 chars | §2, §8 |
+| R4-F5 | INFO | a summary (or a choice) carrying ESC, CR, BEL or U+202E prints raw in `list` and the catalog; an unknown TOML key's ESC prints raw in the failure line. Notes refuse C0/C1 but accept bidi and zero-width characters | §2, §7 |
+| R4-F6 | INFO | the matcher is an exact list: `clear` and `fork` get no catalog (by design: "never on clear" in the test docstring). A subagent's start and a subagent resumed by message fire no SessionStart, so a lane sees the catalog only after its own compaction | §2 live |
+| R4-F7 | INFO | "under 4,000" is not pinned at the boundary: M1c (both comparisons `<=`) survives the catalog tests | §8 |
+| R4-F8 | INFO | `--remove` removes only exact current commands, so an older catalog spelling survives it; install replaces older spellings through the marker. As documented (`install_session_hooks.py:32-34`). A hand edit to the matcher is reverted by the next install | §2 installer |
+| R4-F9 | INFO | `installed 8` counts scripts (8), not hooks (10) (`install_session_hooks.py:176`; the old version printed 7 for 9 hooks) | §2 |
+| R4-F10 | INFO (known, NOT done 2) | the repo's `.claude/settings.json` registers no catalog | §2 |
+| R4-F11 | INFO/LOW | AF-AP-175 in `--local-ids`: a branch switch between the two HEAD reads lists a commit that is on origin and misses a truly local one. A commit landing between them is handled right | §3 |
+| R4-F12 | INFO | `not checked — HEAD is detached` is printed for every `symbolic-ref` failure: outside a repo, a bad `GIT_DIR`, git off PATH. The exit code 2 is right | §3 |
+| R4-F13 | INFO | one missing input file makes the whole `--local-ids` check exit 2, so the readable file goes unchecked | §3 |
+| R4-F14 | INFO (UNSURE) | the advice line says push_clean rewrites every local commit; stale_ids.py's docstring says only from the first trailer commit on | §3 |
+| R4-F15 | INFO | the 200-char line cut in `--local-ids` has no test (L-e survives); `report=` files are not scanned | §3, §8 |
+| R4-F16 | INFO | `opens_round` accepts any text-carrying user record. A synthetic shape with an enforce or hook-feedback message before the epilogue still takes the epilogue (0 of 38 real gaps). The harvest note says "no earlier round's text is this round's report" | §4 |
+| R4-F17 | INFO/LOW | two calls with no text user record between them (the committed F-11 control input, or a retry after a failed call) now give no `report.md`; the hand-back message is still extracted. Round 4 changed that test's input | §4, §10 |
+| R4-F18 | INFO | a failed hand-back call (`is_error`) counts as the hand-back and closes the round. This behavior predates round 4 | §4 |
+| R4-F19 | INFO | at 9,735 chars of `paths`, no step section prints (F-13), and the amended gate note dropped "read `sources.out`" | §5 |
+| R4-F20 | INFO | a headline passes U+202E, U+200F and U+2066 raw; escape-before-cut is untested (M12 survives) | §6, §8 |
+| R4-F21 | INFO (venue) | gate B gave 2 failed and 480 passed three times in my worktree, from S0-11's uid-65534 probe and my 0700 scratch parent; these are not LS-B9 files | §9 |
+
+### 12. Blocking predicate (D-034)
+
+A finding is CORE-BLOCKING only when it shows that a headline capability is fake. Each round-4 headline was checked against my own evidence:
+- **The catalog prints at session start:** real. It fired live on compaction twice after the install, and in this lane the text is byte-equal to the pin's output. A baseline run under dash and bash gives 2,681 chars with exit 0.
+- **R3-F3 fixed:** real, on the verifier's exact shape; the control holds; 38 real gaps show no bad case.
+- **R3-F1 fixed:** real, in a real 9,735-char run.
+- **R3-F4:** all four survivors are killed.
+- **R3-F5:** the brief's classes are escaped.
+- **6b:** a planted local id is listed, and every failure path I built gives exit 2 with a reason.
+
+R4-F1 and R4-F2 contradict the words of item 7 on edge paths: a missing file or repo, and a hang. The main path works. Two tests pin the silence, so it follows the fail-open design. **CORE-BLOCKING: none.**
+
+### 13. Gate recommendation
+
+**MERGE-READY-WITH-FOLLOWUPS.** The follow-ups:
+- R4-F1 and R4-F2: decide whether "never silent" covers a missing `stack.py` or repo and a hang. If it does, the two fail-open tests must change with the code.
+- The five test gaps: M1c, M3, M12, L-e, and the AF-AP-175 branch-switch race.
+- The INFO rows as the owner sees fit.
+
+This recommendation rests on my own reproductions. The only claim I did not reproduce is the coordinator's 03:37Z observation, and I observed two other firings myself.
+
+### 14. NOT run here, and cleanup
+
+**NOT run here:**
+- The two S0-11 tests at a traversable path.
+- The live GitHub issue #80.
+- push_clean's real rewrite set.
+- A real `/clear` or `fork` session: the matcher behavior comes from the doc only.
+- The builder's 29 mutants and earlier rounds' mutation sets.
+- `run-all.sh`.
+
+**Cleanup (04:51:55Z to 04:52:01Z).**
+- Both worktrees were removed with `git worktree remove --force`. `git worktree list` shows no `vlsb9r4` entry, and `worktree prune --dry-run` prints nothing.
+- `.../scratchpad/vlsb9r4/` was removed.
+- No `/tmp/stack-*` dir exists, and `pgrep -af '[v]lsb9r4'` finds nothing.
+- The main tree's six lane files show a clean `git status`. The live settings still hash to `ab456303e3b74530`.
+- Three ripwire cache dirs appeared during my gate and mutation windows: `/tmp/ripwire-0/ce` (04:03:36), `4d` (04:32:13) and `68` (04:34:00). Their content names `/home/user/agent-factory`, not my scratch path. I could not attribute them, so I left them in place. `/tmp` has 10,584 MB free.
+- I wrote nothing to the tree.
