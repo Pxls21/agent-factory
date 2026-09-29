@@ -1055,7 +1055,7 @@ def _parse_manifest_body(body: bytes, leg: str) -> dict:
                 raise Failure(f"{leg}: duplicate manifest header '## {tree_name}'")
             current_tree = tree_name
             tree_order.append(tree_name)
-            digests[tree_name] = ""
+            digests[tree_name] = []            # its lines, joined once below (task #344: `+=` was quadratic)
             line_counts[tree_name] = 0
         elif current_tree is not None:
             # A13: validate line format
@@ -1063,7 +1063,7 @@ def _parse_manifest_body(body: bytes, leg: str) -> dict:
                 raise Failure(f"{leg}: manifest body has blank line in section {current_tree}")
             if not _MANIFEST_LINE_RE.match(line):
                 raise Failure(f"{leg}: manifest body line does not match format in section {current_tree}")
-            digests[current_tree] += line + "\n"
+            digests[current_tree].append(line)
             line_counts[current_tree] += 1
         else:
             raise Failure(f"{leg}: manifest body has content before first header")
@@ -1075,7 +1075,7 @@ def _parse_manifest_body(body: bytes, leg: str) -> dict:
     for tree in MANIFEST_TREES:
         if line_counts.get(tree, 0) != PINNED_BASELINE_FILE_COUNTS.get(tree, 0):
             raise Failure(f"{leg}: manifest {tree} file count {line_counts.get(tree, 0)} != pinned {PINNED_BASELINE_FILE_COUNTS.get(tree, 0)}")
-    return {tree: _sha256_bytes(content.encode("utf-8")) for tree, content in digests.items()}
+    return {tree: _sha256_bytes("".join(f"{line}\n" for line in lines).encode("utf-8")) for tree, lines in digests.items()}
 
 
 def _parse_summary(summary_path, leg, name):

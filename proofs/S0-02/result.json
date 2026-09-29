@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-02",
   "classification": "execution_proof",
-  "recorded_at": "2026-09-26T10:26:35.032239Z",
+  "recorded_at": "2026-09-29T01:32:40.895540Z",
   "env_fingerprint": "pc-bridge:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-02/check_buzz_authz.py",
         "proofs/S0-02/evidence"
       ],
-      "started_at": "2026-09-26T10:26:31.845797Z",
-      "finished_at": "2026-09-26T10:26:32.952579Z",
+      "started_at": "2026-09-29T01:32:36.744950Z",
+      "finished_at": "2026-09-29T01:32:38.229691Z",
       "exit_code": 0,
       "stdout_sha256": "74efad21affc2ea55f28aa0155f3e1bfacd88cb529a4009d562f81881a0b9e6d",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -26,8 +26,8 @@
         "proofs/S0-02/fixtures/evidence-blanket",
         "proofs/S0-02/fixtures/evidence-blanket/legs"
       ],
-      "started_at": "2026-09-26T10:26:32.952823Z",
-      "finished_at": "2026-09-26T10:26:33.991553Z",
+      "started_at": "2026-09-29T01:32:38.230014Z",
+      "finished_at": "2026-09-29T01:32:39.510916Z",
       "exit_code": 1,
       "stdout_sha256": "dcaa26adbd63c42896151780dee89461acd414053c207ffc0192f7ee78ff4536",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -42,8 +42,8 @@
         "neg-unauthorized",
         "proofs/S0-02/evidence"
       ],
-      "started_at": "2026-09-26T10:26:33.991774Z",
-      "finished_at": "2026-09-26T10:26:34.220871Z",
+      "started_at": "2026-09-29T01:32:39.511168Z",
+      "finished_at": "2026-09-29T01:32:39.834285Z",
       "exit_code": 1,
       "stdout_sha256": "9d07400031246f2b9d60e3a3023d74c1dcee412d9db48bde54f2fae61030c386",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -58,8 +58,8 @@
         "neg-bad-signature",
         "proofs/S0-02/evidence"
       ],
-      "started_at": "2026-09-26T10:26:34.221050Z",
-      "finished_at": "2026-09-26T10:26:34.449148Z",
+      "started_at": "2026-09-29T01:32:39.834526Z",
+      "finished_at": "2026-09-29T01:32:40.140539Z",
       "exit_code": 1,
       "stdout_sha256": "c2c06ddb1cb0e9c89637819a0aea37910b9d671acb70437163417c9b75b22afc",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -74,8 +74,8 @@
         "neg-replayed",
         "proofs/S0-02/evidence"
       ],
-      "started_at": "2026-09-26T10:26:34.449329Z",
-      "finished_at": "2026-09-26T10:26:34.799411Z",
+      "started_at": "2026-09-29T01:32:40.140792Z",
+      "finished_at": "2026-09-29T01:32:40.591807Z",
       "exit_code": 1,
       "stdout_sha256": "9da2a694eb3567b001651ad22cca73991d00bc76e792db2a4a1899bd86958dbd",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -90,8 +90,8 @@
         "neg-stale",
         "proofs/S0-02/evidence"
       ],
-      "started_at": "2026-09-26T10:26:34.799588Z",
-      "finished_at": "2026-09-26T10:26:35.025298Z",
+      "started_at": "2026-09-29T01:32:40.592029Z",
+      "finished_at": "2026-09-29T01:32:40.894774Z",
       "exit_code": 1,
       "stdout_sha256": "cddea953c8da3b167ceddeba557fe4e6104afad3aa8323c5403e76c838d1f5e9",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -312,12 +312,12 @@
     "proofs/S0-02/tools/build_fixtures.py": "20cdb2e180f12fd3c30ad83c94024bb595b74e4f50f7f70c98ce7fbb76c67082",
     "proofs/S0-02/tools/pc/deliver_event.py": "ceb5a1784efaca4856fbe0b8b8dade292ba7c2d400a1d8d552fcdc972af84f16",
     "proofs/S0-02/tools/pc/run_s0_02_legs.sh": "061b31c30ddf42b96414ebd04464ac9cc6a0351e3cdd02d8886460dd2f6175cf",
-    "proofs/S0-01/check_acp_conformance.py": "868b8705699b5e78b1468252ecbdec93736d2a7e2f4819424311c31c243db46a",
+    "proofs/S0-01/check_acp_conformance.py": "41014abdff4601cf03cf5a2d876245f138ccc3140d841df7d4da7cf4426b2c39",
     "proofs/S0-01/check_initialize.py": "304d44d6f8dcdbad6c41931ffbb8f6d45e3c2cf3456dd6285848581a39872c28",
     "proofs/S0-01/fixtures/identities.json": "64ae2c583486dabfb42c30f1bc96abe06dfc2c7389d3501dfff696fcc002c7d7",
     "proofs/S0-01/negative_contract.py": "b397f6b71b674000c8bc521cfe5e0a30c0f1e517de841639f98aed987cbdcf9f",
     "proofs/S0-01/pins.py": "1a2f9a38ddba14e3ea75c06e77e43083a059e8dc5caf5499c7e54e9013921981",
     "proofs/S0-01/tools/nostr_verify.py": "53005edc0f230329d38eaee5e01ed4056f7415c1cef08878b914115edded3375"
   },
-  "digest": "e043e2c98008daa5c7964f96635462f850760ff6bea2bac568c0314f0df90f67"
+  "digest": "19f57bbf4aedff9a3f2db492acdf72f188355f2de4bc8ec83f9aebf0ca4f6f52"
 }

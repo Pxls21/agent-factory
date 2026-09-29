@@ -96,8 +96,22 @@ EVIDENCE_ROOT=${1:?usage: run_s0_05_units.sh <evidence-root> [unit...]}; shift |
 # (a root that does not exist yet is read through its nearest existing ancestor). Not `git rev-parse`:
 # run as root on a clone another user owns, git refuses with `detected dubious ownership` (exit 128),
 # and a check that reads that failure as "not a work tree" fails open in exactly the sudo case.
-EVIDENCE_REAL=$(readlink -m -- "$EVIDENCE_ROOT") && [ -n "$EVIDENCE_REAL" ] \
+# I59-F (VERIFY-I59-BCE B-1): a root that holds a newline, as given or as resolved, is refused too (exit 73).
+# Command substitution drops trailing newlines, so the walk below read a clone named `nlrepo<newline>` as
+# `nlrepo` and never looked at its `.git`. The resolved path is read with a sentinel (`printf x`), so a newline
+# at its end survives to be refused, and `$(dirname …)` below never meets one.
+case $EVIDENCE_ROOT in *$'\n'*)
+  echo "run_s0_05_units: evidence root refused: $(printf '%q' "$EVIDENCE_ROOT") holds a newline" \
+       "(AF-AP-169: the work-tree check cannot read such a path exactly)" >&2; exit 73;;
+esac
+_real=$(readlink -m -- "$EVIDENCE_ROOT" && printf x) && [[ $_real == *$'\nx' ]] && EVIDENCE_REAL=${_real%$'\nx'} \
+  && [ -n "$EVIDENCE_REAL" ] \
   || { echo "run_s0_05_units: evidence root refused: cannot resolve '$EVIDENCE_ROOT'" >&2; exit 73; }
+case $EVIDENCE_REAL in *$'\n'*)
+  echo "run_s0_05_units: evidence root refused: $(printf '%q' "$EVIDENCE_ROOT") resolves to" \
+       "$(printf '%q' "$EVIDENCE_REAL"), which holds a newline (AF-AP-169: the work-tree check cannot read such" \
+       "a path exactly)" >&2; exit 73;;
+esac
 _dir=$EVIDENCE_REAL
 while :; do
   if [ -e "$_dir/.git" ] || [ -L "$_dir/.git" ]; then
@@ -115,8 +129,15 @@ done
 # run with no SUDO_UID, or a non-root run) HANDBACK stays empty and nothing here changes the run.
 HANDBACK=""
 if [ "$EUID" -eq 0 ] && [ -n "${SUDO_UID:-}" ]; then
-  if ! [[ "$SUDO_UID:${SUDO_GID:-}" =~ ^(0|[1-9][0-9]{0,9}):(0|[1-9][0-9]{0,9})$ ]]; then
+  # Every class is an explicit list, never a range a locale may widen (netns_lib.sh rule X1; I59-F round 4, F-13).
+  if ! [[ "$SUDO_UID:${SUDO_GID:-}" =~ ^(0|[123456789][0123456789]{0,9}):(0|[123456789][0123456789]{0,9})$ ]]; then
     echo "run_s0_05_units: SUDO_UID and SUDO_GID must be decimal ids, got '$SUDO_UID:${SUDO_GID:-}'" >&2; exit 64
+  fi
+  # I59-F (VERIFY-I59-BCE B-4): each at most 4294967294. uid_t and gid_t are 32 bits, (uid_t)-1 = 4294967295
+  # means "no change" to chown, and a larger id reached libc cut to 32 bits (4294967296 became root). The
+  # pattern above allows ten digits at most, so this comparison stays inside bash's 64-bit arithmetic.
+  if [ "$SUDO_UID" -gt 4294967294 ] || [ "$SUDO_GID" -gt 4294967294 ]; then
+    echo "run_s0_05_units: SUDO_UID and SUDO_GID must be at most 4294967294, got '$SUDO_UID:$SUDO_GID'" >&2; exit 64
   fi
   if [ -e "$EVIDENCE_REAL" ] || [ -L "$EVIDENCE_REAL" ]; then
     echo "run_s0_05_units: evidence root refused: $EVIDENCE_REAL exists; under sudo it must be a new path" \
@@ -141,6 +162,25 @@ RELAY_PROBE_PATH=/health
 UNIT_USER=${S0_05_UNIT_USER:-}
 PAIR_IDENTITY=${S0_05_PAIR_IDENTITY:-}
 PIN_OVERRIDE=${S0_05_PIN_OVERRIDE:-}
+# I59-F round 2 (A-4): a pair identity path that holds a newline, as given or as resolved, is refused (exit 73)
+# before anything is written, as the evidence root is (B-1). `_pair_identity`'s `$(readlink -m …)` dropped a trailing
+# newline: a regular identity file named `.secrets<newline>`, beside S0-01's `.secrets` and not under it, was refused
+# as `S0-01 path <base>/.secrets`, a path it does not have. The resolved path is read with a sentinel, so its
+# trailing newline survives to be refused; a path readlink cannot resolve is left to `_pair_identity`, as before.
+if [ -n "$PAIR_IDENTITY" ]; then
+  case $PAIR_IDENTITY in *$'\n'*)
+    echo "run_s0_05_units: S0_05_PAIR_IDENTITY refused: $(printf '%q' "$PAIR_IDENTITY") holds a newline (the" \
+         "identity checks cannot read such a path exactly)" >&2; exit 73;;
+  esac
+  if _id_real=$(readlink -m -- "$PAIR_IDENTITY" && printf x) && [[ $_id_real == *$'\nx' ]]; then
+    _id_real=${_id_real%$'\nx'}
+    case $_id_real in *$'\n'*)
+      echo "run_s0_05_units: S0_05_PAIR_IDENTITY refused: $(printf '%q' "$PAIR_IDENTITY") resolves to" \
+           "$(printf '%q' "$_id_real"), which holds a newline (the identity checks cannot read such a path exactly)" >&2
+      exit 73;;
+    esac
+  fi
+fi
 if [ -n "${ALLOWED_HERMES:-}${ALLOWED_BUZZACP:-}${S0_01_TOOLS:-}" ]; then
   echo "run_s0_05_units: ALLOWED_HERMES, ALLOWED_BUZZACP and S0_01_TOOLS are retired (A8: allow" \
        "entries are formed from the namespace's host address and a port; A1: no S0-01 tool); ignored" >&2
@@ -215,9 +255,31 @@ if [ -n "${PIN[OVERRIDE]}" ]; then
 fi
 
 # --- A4: the unit user, resolved ONCE ----------------------------------------------------------
+# I59-F round 2 (A-1): an explicit S0_05_UNIT_USER is <uid>:<gid> in canonical decimal (no sign, no leading zero, no
+# empty part), each id from 1 to 4294967294, or the run stops here with exit 64: before anything is written and
+# before any unit launches. setpriv cut --reuid=4294967296 to 0, and the stand-in ran as root until A7 refused the
+# leg after the launch; it takes 4294967295 as "no change", which leaves root in place; 0 is root, and a gid of 0 is
+# the root group (VERIFY-E3 F11). The pattern bounds the digits, so the comparisons stay inside bash's arithmetic.
+# A user resolved from the pinned agent's owner keeps A4's rule below for uid 0 (`not-run|unit would run as root`);
+# its gid 0 is refused after the resolution (I59-F round 3). Round 4 (VERIFY-I59-F F-13, F-14): every class is an
+# explicit list, never a range a locale may widen (netns_lib.sh rule X1), and a refusal quotes the value with
+# printf %q, so a newline cannot split its line.
+if [ -n "$UNIT_USER" ] && { ! [[ "$UNIT_USER" =~ ^([123456789][0123456789]{0,9}):([123456789][0123456789]{0,9})$ ]] \
+    || [ "${BASH_REMATCH[1]}" -gt 4294967294 ] || [ "${BASH_REMATCH[2]}" -gt 4294967294 ]; }; then
+  echo "run_s0_05_units: S0_05_UNIT_USER must be <uid>:<gid>, got $(printf '%q' "$UNIT_USER") (each id a decimal from 1 to" \
+       "4294967294, no sign and no leading zero: 0 is root, and setpriv takes 4294967295 as no change and cuts a" \
+       "larger id to 32 bits)" >&2; exit 64
+fi
 [ -n "$UNIT_USER" ] || UNIT_USER=$(stat -Lc '%u:%g' -- "${PIN[PINNED_AGENT_REALPATH]}" 2>/dev/null)
-if [ -n "$UNIT_USER" ] && ! [[ "$UNIT_USER" =~ ^(0|[1-9][0-9]{0,9}):(0|[1-9][0-9]{0,9})$ ]]; then
-  echo "run_s0_05_units: S0_05_UNIT_USER must be <uid>:<gid>, got '$UNIT_USER'" >&2; exit 64
+if [ -n "$UNIT_USER" ] && ! [[ "$UNIT_USER" =~ ^(0|[123456789][0123456789]{0,9}):(0|[123456789][0123456789]{0,9})$ ]]; then
+  echo "run_s0_05_units: S0_05_UNIT_USER must be <uid>:<gid>, got $(printf '%q' "$UNIT_USER")" >&2; exit 64
+fi
+# I59-F round 3 (D-R2-3, VERIFY-E3 F11): a user resolved from the pinned agent's owner with a gid of 0 (the root
+# group) is refused as an explicit one is: exit 64, before anything is written and before any unit launches. An
+# explicit gid 0 was refused above, so only a resolved one reaches this branch; the pattern above bounds the digits.
+if [ -n "$UNIT_USER" ] && [ "${UNIT_USER##*:}" -eq 0 ]; then
+  echo "run_s0_05_units: the unit user resolved from the pinned agent's owner, $(printf '%q' "$UNIT_USER"), has gid 0 (the root" \
+       "group): set S0_05_UNIT_USER to <uid>:<gid>, each id from 1 to 4294967294" >&2; exit 64
 fi
 UNIT_UID=${UNIT_USER%%:*}; UNIT_GID=${UNIT_USER##*:}
 
@@ -245,7 +307,8 @@ UNITS=("$@")
 _pin_ok() { [ -f "$1" ] && [ "$(readlink -f -- "$1")" = "$1" ] && [ "$(sha256sum -- "$1" | cut -d' ' -f1)" = "$2" ]; }
 
 # A6: the pair's identity file, checked in this order and read without printing. Sets PAIR_KEY, or
-# ID_REFUSED to the refusal detail. S0-01's .secrets is refused by PATH, before the file is opened.
+# ID_REFUSED to the refusal detail. S0-01's .secrets is refused by PATH, before the file is opened. No newline
+# reaches the path here: the top refuses one (I59-F round 2, A-4), so `$(readlink -m …)` below loses nothing.
 _pair_identity() {
   local file=$PAIR_IDENTITY real mode line
   PAIR_KEY=""; ID_REFUSED=""
@@ -425,11 +488,13 @@ PY
 }
 
 # A7: which process runs in the namespace, read from /proc at canary time and written to
-# <unit>/unit-identity.json. Prints "ok" or every mismatch against the pins ("; "-joined).
+# <unit>/unit-identity.json. Prints "ok" or every mismatch against the pins ("; "-joined). Its Uid and Gid
+# lines are both recorded and compared as numbers (the Gid line since I59-F round 3, VERIFY-E3 F11). Its Groups
+# line is recorded and a 0 in it refused (I59-F round 4, VERIFY-I59-F F-7; the launch sets an empty list).
 _unit_identity() {  # <pid> <unit> <kind agent|binary> <exe pin> <entrypoint pin> <sha256 pin>
-  python3 -B - "$1" "$ns" "$2" "$3" "$4" "$5" "$6" "$UNIT_UID" "$EVIDENCE_ROOT/$2/unit-identity.json" <<'PY'
+  python3 -B - "$1" "$ns" "$2" "$3" "$4" "$5" "$6" "$UNIT_UID" "$UNIT_GID" "$EVIDENCE_ROOT/$2/unit-identity.json" <<'PY'
 import hashlib, json, os, subprocess, sys
-pid, ns, unit, kind, want_exe, want_entry, want_sha, want_uid, out = sys.argv[1:10]
+pid, ns, unit, kind, want_exe, want_entry, want_sha, want_uid, want_gid, out = sys.argv[1:11]
 def sha256(path):
     digest = hashlib.sha256()
     with open(path, "rb") as fh:
@@ -441,7 +506,10 @@ try:
     with open(f"/proc/{pid}/cmdline", "rb") as fh:
         argv = [a.decode(errors="surrogateescape") for a in fh.read().split(b"\0")[:-1]]
     with open(f"/proc/{pid}/status") as fh:
-        uid = [int(v) for v in next(l for l in fh if l.startswith("Uid:")).split()[1:5]]
+        status = fh.read().splitlines()
+    uid = [int(v) for v in next(l for l in status if l.startswith("Uid:")).split()[1:5]]
+    gid = [int(v) for v in next(l for l in status if l.startswith("Gid:")).split()[1:5]]
+    groups = [int(v) for v in next(l for l in status if l.startswith("Groups:")).split()[1:]]
     entry = os.path.realpath(argv[1]) if kind == "agent" and len(argv) > 1 else exe
     entry_sha = sha256(entry if kind == "agent" else f"/proc/{pid}/exe")
     in_ns = pid in subprocess.run(["ip", "netns", "pids", ns], capture_output=True, text=True).stdout.split()
@@ -449,13 +517,16 @@ except (OSError, StopIteration, ValueError, IndexError) as exc:
     sys.exit(print(f"no unit process {pid}: {exc.__class__.__name__}") or 1)
 with open(out, "w") as fh:
     json.dump({"unit": unit, "pid": int(pid), "exe_realpath": exe, "entrypoint_realpath": entry,
-               "entrypoint_sha256": entry_sha, "uid": uid, "argv": argv}, fh, indent=2, sort_keys=True)
+               "entrypoint_sha256": entry_sha, "uid": uid, "gid": gid, "groups": groups, "argv": argv}, fh,
+              indent=2, sort_keys=True)
     fh.write("\n")
 problems = [f"pid {pid} not in {ns}"] if not in_ns else []
 problems += [f"exe {exe} is not {want_exe}"] if exe != want_exe else []
 problems += [f"entrypoint {entry} is not {want_entry}"] if entry != want_entry else []
 problems += [f"entrypoint sha256 {entry_sha} is not the pin"] if entry_sha != want_sha else []
-problems += ["uid 0"] if 0 in uid else ([f"uid {uid[0]} is not {want_uid}"] if str(uid[0]) != want_uid else [])
+problems += ["uid 0"] if 0 in uid else ([f"uid {uid[0]} is not {want_uid}"] if uid[0] != int(want_uid) else [])
+problems += ["gid 0"] if 0 in gid else ([f"gid {gid[0]} is not {want_gid}"] if gid[0] != int(want_gid) else [])
+problems += ["supplementary group 0"] if 0 in groups else []
 print("; ".join(problems) or "ok")
 sys.exit(1 if problems else 0)
 PY
@@ -514,64 +585,173 @@ declare -A RESULT
 NS_LIVE=""; LOG_PIDS=""; FIFO_DIRS=""
 # AF-AP-169 (I59-B): the handback, run under sudo only (HANDBACK, above) as `cleanup`'s last step, when
 # no unit, canary or log reader is left to write. The root (this run made it) and every entry under it go
-# to SUDO_UID:SUDO_GID, so the invoking user can delete the evidence without sudo. It changes nothing
-# outside the root. It never follows a symbolic link: each entry is opened O_PATH|O_NOFOLLOW relative to
+# to SUDO_UID:SUDO_GID, so the invoking user can delete the evidence without sudo. It changes only what it finds
+# under the root; the limit of that under a live mover is in the next paragraph. It never follows a symbolic
+# link: each entry is opened O_PATH|O_NOFOLLOW relative to
 # its directory's descriptor and its owner is changed on that descriptor (fchownat, AT_EMPTY_PATH), so a
-# link's own owner changes, never its target's, and no path is looked up twice. It leaves as it is, and
-# names on stderr, a non-directory with more than one link (another path may name it: the unit user can
-# hard-link a file it may write into its scratch tree, A2) and an entry on another filesystem (a mount
-# point is not descended). A parent that `mkdir -p` made ABOVE the root is outside it and keeps its
-# owner. A SIGKILL runs no trap, so no handback.
+# link's own owner changes, never its target's, and no entry's name is looked up twice. It leaves as it is,
+# and names on stderr, a non-directory with more than one link (another path may name it: the unit user can
+# hard-link a file it may write into its scratch tree, A2), an entry on another filesystem (its st_dev), and
+# a mount point of the root's own filesystem (its mount id, statx STATX_MNT_ID, Linux 5.8: a bind mount has
+# the root's st_dev, I59-F B-2): no mount point is descended. A parent that `mkdir -p` made ABOVE the root
+# is outside it and keeps its owner. A SIGKILL runs no trap, so no handback.
+# I59-F (B-3): the walk is iterative. It holds one directory open to read, plus the entry it hands back: it
+# goes down through that entry's descriptor and back up through "..", which must be the very directory it
+# came down from (st_dev and inode), or the walk stops there and the summary says so. So a tree of any depth
+# is handed back under RLIMIT_NOFILE 1024, and the summary counts every entry left as it is (the recursion it
+# replaces dropped a subtree below about 1,000 levels, or 511 under 1024 descriptors, as one entry). Round 4
+# (VERIFY-I59-F F-4, F-12): a climb checks the whole way up, each ".." to the root the directory the walk came
+# down through (st_dev and inode), and names what it found: a moved directory, a moved ancestor, or a mount on the
+# way up. Round 5 (VERIFY-I59-F R4-F3): the whole way at every climb cost d*d/2 opens of ".." for a tree d levels
+# deep (24 s at 3,300 levels, with INT and TERM ignored in `cleanup`). Each climb now earns CHECK_BUDGET levels of
+# checking: it checks the whole way up when its earnings cover the depth, and its parent alone otherwise. The cost
+# is linear in the depth, and a tree up to CHECK_BUDGET levels deep is checked the whole way at every climb, as in
+# round 4. The window this leaves (R4-F6's class): deeper, the whole-way checks come at most ceil(d / CHECK_BUDGET)
+# climbs apart at depth d, and an ancestor moved out of the root in between is seen at the next one, or when the
+# walk climbs out of it; until then the walk hands back what it finds below that ancestor, where it now is. Between
+# two climbs, at any depth, it hands back what it finds where it stands. No unit or canary is meant to be alive at
+# the handback (VERIFY-I59-F F-5 names a unit that leaves its namespace and outlives the teardown). (B-4)
+# Each id is at most 4294967294 and reaches fchownat as an unsigned int; the runner refuses a larger one
+# first (exit 64), and the handback refuses it too.
 _handback() {
   python3 -B - "$EVIDENCE_REAL" "${HANDBACK%%:*}" "${HANDBACK##*:}" <<'PY'
-import ctypes, os, stat, sys
+import ctypes, errno, os, stat, sys
 root, uid, gid = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+MAX_ID = 4294967294                            # uid_t is 32 bits; (uid_t)-1 = 4294967295 means "no change"
+CHECK_BUDGET = 32                              # levels of the whole-way-up check a climb earns (round 5, R4-F3)
+if not (0 <= uid <= MAX_ID and 0 <= gid <= MAX_ID):
+    sys.exit(print(f"run_s0_05_units: handback: nothing handed back: {uid}:{gid} is out of range (each id is 0 to "
+                   f"{MAX_ID})", file=sys.stderr))
 libc = ctypes.CDLL(None, use_errno=True)
+libc.fchownat.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_uint, ctypes.c_uint, ctypes.c_int)
+statx = getattr(libc, "statx", None)
+if statx is not None:
+    statx.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_uint, ctypes.c_void_p)
+AT_EMPTY_PATH = STATX_MNT_ID = 0x1000
 def own(fd):                                   # fchownat(fd, "", uid, gid, AT_EMPTY_PATH): the inode fd pins
-    if libc.fchownat(fd, b"", uid, gid, 0x1000) != 0:
+    if libc.fchownat(fd, b"", uid, gid, AT_EMPTY_PATH) != 0:
         err = ctypes.get_errno()
         raise OSError(err, os.strerror(err))
-done, left = 0, []
-def hand(fd, where, dev):
+def mount_id(fd):                              # statx(fd, "", AT_EMPTY_PATH, STATX_MNT_ID): the mount fd is on
+    buf = ctypes.create_string_buffer(256)     # struct statx: stx_mask at byte 0, stx_mnt_id at byte 144
+    if statx is None:
+        raise OSError(errno.ENOSYS, "this libc has no statx")
+    if statx(fd, b"", AT_EMPTY_PATH, STATX_MNT_ID, buf) != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
+    if not ctypes.c_uint32.from_buffer(buf, 0).value & STATX_MNT_ID:
+        raise OSError(errno.EOPNOTSUPP, "statx gives no mount id on this kernel")
+    return ctypes.c_uint64.from_buffer(buf, 144).value
+done, left, stack, stopped, budget = 0, [], [], "", 0
+def hand(fd, where):
+    """Hand back the entry fd pins, or name it in `left` with the reason. True for a directory handed back."""
     global done
     st = os.fstat(fd)
     if st.st_dev != dev:
         return left.append(f"{where} (another filesystem)")
+    if mount_id(fd) != mnt:
+        return left.append(f"{where} (a mount point: another mount of this filesystem)")
     if not stat.S_ISDIR(st.st_mode) and st.st_nlink != 1:
         return left.append(f"{where} (a hard link: {st.st_nlink} paths name it)")
     own(fd)
     done += 1
-    if stat.S_ISDIR(st.st_mode):
-        sub = os.open(".", os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
-        try:
-            for name in sorted(os.listdir(sub)):
-                child = None
-                try:
-                    child = os.open(name, os.O_PATH | os.O_NOFOLLOW, dir_fd=sub)
-                    hand(child, os.path.join(where, name), dev)
-                except FileNotFoundError:
-                    pass
-                except (OSError, RecursionError) as exc:
-                    left.append(f"{os.path.join(where, name)} ({exc.__class__.__name__}: {exc})")
-                finally:
-                    if child is not None:
-                        os.close(child)
-        finally:
-            os.close(sub)
+    return stat.S_ISDIR(st.st_mode)
+def off_the_way(fd, where, levels):
+    """The climb from <where> reached fd. fd and each ".." above it, for the top <levels> frames of the stack
+    (all of them: the whole way up to the root itself; 1: fd alone), must be the directory the walk came down
+    through (st_dev and inode). "" while they are, else why the walk stops. At most two descriptors of its own are
+    open at a time."""
+    at, own_at, last = fd, False, len(stack) - levels
+    try:
+        for level in range(len(stack) - 1, last - 1, -1):
+            st = os.fstat(at)
+            if (st.st_dev, st.st_ino) != stack[level][1]:
+                if st.st_dev != dev or mount_id(at) != mnt:
+                    return f"a mount appeared above {where} while it ran"
+                if level == len(stack) - 1:
+                    return f"{where} moved while it ran"
+                return f"an ancestor of {where} moved out of the root while it ran"
+            if level > last:
+                up = os.open("..", os.O_RDONLY | os.O_DIRECTORY, dir_fd=at)
+                if own_at:
+                    os.close(at)
+                at, own_at = up, True
+        return ""
+    except OSError as exc:
+        return f"the way up to the root from {where} could not be checked ({exc.__class__.__name__}: {exc})"
+    finally:
+        if own_at:
+            os.close(at)
+def enter(fd, where):
+    """Open the directory fd pins to read it; push its path, its (st_dev, inode) and the names still to walk."""
+    sub = os.open(".", os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
+    try:
+        st = os.fstat(sub)
+        stack.append((where, (st.st_dev, st.st_ino), sorted(os.listdir(sub), reverse=True)))
+    except OSError:
+        os.close(sub)
+        raise
+    return sub
 try:
     top = os.open(root, os.O_PATH | os.O_NOFOLLOW | os.O_DIRECTORY)
 except OSError as exc:
     sys.exit(print(f"run_s0_05_units: handback: nothing handed back: {root}: {exc.strerror}", file=sys.stderr))
 try:
-    hand(top, root, os.fstat(top).st_dev)
+    dev, mnt = os.fstat(top).st_dev, mount_id(top)
+except OSError as exc:
+    os.close(top)
+    sys.exit(print(f"run_s0_05_units: handback: nothing handed back: {root}: {exc.strerror}", file=sys.stderr))
+cur = None
+try:
+    if hand(top, root):
+        cur = enter(top, root)
 except OSError as exc:
     left.append(f"{root} ({exc.__class__.__name__}: {exc})")
 finally:
     os.close(top)
+while stack:
+    where, _, names = stack[-1]
+    if not names:                              # this directory is done: back up to the one it came down from
+        stack.pop()
+        if stack:
+            try:
+                up = os.open("..", os.O_RDONLY | os.O_DIRECTORY, dir_fd=cur)
+            except OSError as exc:
+                stopped = f"the way up from {where} would not open ({exc.__class__.__name__}: {exc})"
+                break
+            os.close(cur)
+            cur = up
+            budget += CHECK_BUDGET              # the whole way up when the earnings cover the depth, else the parent
+            levels = len(stack) if budget >= len(stack) else 1
+            budget -= levels if levels > 1 else 0
+            stopped = off_the_way(cur, where, levels)
+            if stopped:
+                break
+        continue
+    name = names.pop()
+    path = os.path.join(where, name)
+    child = None
+    try:
+        child = os.open(name, os.O_PATH | os.O_NOFOLLOW, dir_fd=cur)
+        if hand(child, path):
+            sub = enter(child, path)
+            os.close(cur)
+            cur = sub
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        left.append(f"{path} ({exc.__class__.__name__}: {exc})")
+    finally:
+        if child is not None:
+            os.close(child)
+if cur is not None:
+    os.close(cur)
 for entry in left:
     print(f"run_s0_05_units: handback: left as it is: {entry}", file=sys.stderr)
 print(f"run_s0_05_units: handback: {done} entries of {root} (the root included) now belong to {uid}:{gid}"
-      + (f"; {len(left)} left as they are" if left else ""), file=sys.stderr)
+      + (f"; {len(left)} left as they are" if left else "")
+      + (f"; then it stopped: {stopped}, so what it had not reached is left as it is" if stopped else ""),
+      file=sys.stderr)
 PY
 }
 # F3: cleanup destroys only namespaces this runner created and still owns (owner record = $$);
@@ -639,7 +819,7 @@ for unit in "${UNITS[@]}"; do
     RESULT[$unit]="not-run|unit user unresolved (set S0_05_UNIT_USER)"; echo "SKIP $unit: unit user unresolved" >&2
     continue
   fi
-  if [ "$UNIT_UID" = 0 ]; then
+  if [ "$UNIT_UID" -eq 0 ]; then                      # numeric (I59-F round 2): never a string compare
     RESULT[$unit]="not-run|unit would run as root"; echo "SKIP $unit: unit would run as root" >&2
     continue
   fi
@@ -725,7 +905,9 @@ for unit in "${UNITS[@]}"; do
   exec {unit_in}<>"$fifo_dir/in"
   cat <"$fifo_dir/out" >"$EVIDENCE_ROOT/$unit.launch.log" {unit_in}>&- &
   log_pid=$!; LOG_PIDS="$LOG_PIDS $log_pid"
-  # A4 + A5: dropped to the unit user INSIDE the namespace, with an environment built from nothing:
+  # A4 + A5: dropped to the unit user INSIDE the namespace, with no supplementary group (`--clear-groups`, the
+  # probe's own list: `--init-groups` took the user's groups from /etc/group, group 0 included where the host
+  # lists the user in it; I59-F round 4, VERIFY-I59-F F-7), and an environment built from nothing:
   # PATH (pinned), HOME and HERMES_HOME (the scratch tree), the locale, and PYTHONDONTWRITEBYTECODE
   # (the CD1 probes' own recipe: the agent must never write bytecode into S0-01's pinned tree). The
   # pair's identity reaches ITS environment through fd 3 and a tiny exec shim, never through an argv.
@@ -734,12 +916,12 @@ for unit in "${UNITS[@]}"; do
             LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1)
   if [ "$unit" = hermes-acp ]; then
     ( cd "$scratch/home" && exec "$ENV_BIN" -i "${unit_env[@]}" "$IP_BIN" netns exec "$ns" \
-        "$SETPRIV_BIN" --reuid="$UNIT_UID" --regid="$UNIT_GID" --init-groups -- "${PIN[$exe_pin]}"
+        "$SETPRIV_BIN" --reuid="$UNIT_UID" --regid="$UNIT_GID" --clear-groups -- "${PIN[$exe_pin]}"
     ) <"$fifo_dir/in" >"$fifo_dir/out" 2>&1 {unit_in}>&- &
   else
     # shellcheck disable=SC2016
     ( cd "$scratch/home" && exec "$ENV_BIN" -i "${unit_env[@]}" "$IP_BIN" netns exec "$ns" \
-        "$SETPRIV_BIN" --reuid="$UNIT_UID" --regid="$UNIT_GID" --init-groups -- "$PY_BIN" -I -c \
+        "$SETPRIV_BIN" --reuid="$UNIT_UID" --regid="$UNIT_GID" --clear-groups -- "$PY_BIN" -I -c \
         'import os, sys; key = os.read(3, 65536).decode().rstrip("\n"); os.close(3); os.environ["BUZZ_PRIVATE_KEY"] = key; os.execv(sys.argv[1], sys.argv[1:])' \
         "${PAIR_ARGV[@]}" 3<<<"$PAIR_KEY"
     ) <"$fifo_dir/in" >"$fifo_dir/out" 2>&1 {unit_in}>&- &

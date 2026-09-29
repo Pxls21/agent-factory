@@ -12,6 +12,8 @@ individually falsified is a tautology wearing six hats (AF-AP-30).
 """
 from __future__ import annotations
 
+import ast
+import hashlib
 import http.server
 import importlib.util
 import inspect
@@ -23,6 +25,7 @@ import socket
 import string
 import subprocess
 import sys
+import tempfile
 import threading
 import traceback
 from pathlib import Path
@@ -445,7 +448,7 @@ def test_conjunct_v_transport(passing):
     result = run_checker(passing)
     assert result.returncode == 1
     assert result.stdout.strip() == (
-        "failure_reason: transport: profile api_mode 'codex_app_server' "
+        f"failure_reason: transport: profile api_mode ({_shape_of('codex_app_server')}) "
         "is not in the permitted set")
 
 
@@ -550,7 +553,7 @@ def test_conjunct_v_requires_the_compression_header_in_the_profile(passing):
     profile.write_text(profile.read_text().replace("'off'", "'default'"))
     result = run_checker(passing)
     assert result.returncode == 1
-    assert "x-omniroute-compression is 'default', expected 'off'" in result.stdout
+    assert f"x-omniroute-compression ({_shape_of('default')}) is not 'off'" in result.stdout
 
 
 def test_conjunct_vi_env(passing):
@@ -870,6 +873,13 @@ def _profile_with_a_fake_key(root: Path, line) -> tuple:
     return key, profile
 
 
+def _profile_refusal(cls) -> str:
+    """How `_read_yaml` names an error of the profile: bytes that are no UTF-8 fail the READ since I59-F round 4
+    (VERIFY-I59-F F-9, as S0-04's capture_leg names them, C-1), anything else the parse. The class name only."""
+    verb = "cannot be read" if cls is UnicodeDecodeError else "is not valid YAML"
+    return f"bundle: hermes/profile.yaml {verb} ({cls.__name__})"
+
+
 @pytest.mark.parametrize("row", PROFILE_PARSE_ERRORS, ids=_PARSE_ERROR_IDS)
 def test_profile_parse_error_is_a_named_failure_that_never_prints_the_key(passing, row):
     """Through the real CLI: a parse error of the captured profile exits 1 with the checker's own
@@ -894,8 +904,10 @@ def test_profile_parse_error_is_a_named_failure_that_never_prints_the_key(passin
     assert _leaked_runs(key, result.stdout) == [], "the key leaked to stdout"
     assert _leaked_runs(key, result.stderr) == [], "the key leaked to stderr"
     assert result.returncode == 1, result.stdout + result.stderr
-    assert result.stdout.strip() == (
-        f"failure_reason: bundle: hermes/profile.yaml is not valid YAML ({cls.__name__})"), result.stderr[-2000:]
+    assert result.stdout.strip() == f"failure_reason: {_profile_refusal(cls)}", result.stderr[-2000:]
+    # I59-F (VERIFY-I59-BCE E-2): the failure goes to stdout, so stderr is empty. The 8-character screen above is the
+    # contract's own bound, and a write of 7 characters of the key to stderr passed under it (mutant E-X7).
+    assert result.stderr == "", result.stderr[-2000:]
 
 
 @pytest.mark.parametrize("row", PROFILE_PARSE_ERRORS, ids=_PARSE_ERROR_IDS)
@@ -907,10 +919,210 @@ def test_profile_parse_failure_chains_no_error_that_quotes_the_key(passing, row)
     with pytest.raises(check.Failure) as raised:
         check._read_yaml(profile, "hermes/profile.yaml")
     failure = raised.value
-    assert str(failure) == f"bundle: hermes/profile.yaml is not valid YAML ({cls.__name__})"
+    assert str(failure) == _profile_refusal(cls)
     rendered = "".join(traceback.format_exception(type(failure), failure, failure.__traceback__))
     assert _leaked_runs(key, rendered) == [], "the key rides the rendered traceback"
     assert failure.__cause__ is None and failure.__suppress_context__
+
+
+# --------------------------------------------------------------------------- a profile value is named by its shape
+# I59-F (VERIFY-I59-BCE E-1, AF-AP-232's class widened): no failure message prints a value read from the profile. A
+# profile can hold a key where a name belongs (`key_env: <the key>`), and a key with no `sk-`, `bearer ` or `basic `
+# prefix passes the credential walk. Three messages printed such a value whole: api_mode (the transport reason), the
+# compression header and key_env. Each now names the value by its shape: its type, its length and the first 8 hex
+# digits of its sha256, enough to match a value the operator holds.
+_MARKS = "~^|+*!@%&=<>?;"      # printable, and never in a checker message
+
+
+def _shape_of(value) -> str:
+    """The shape the contract prints for a value read from the profile (a non-string by its repr)."""
+    text = value if isinstance(value, str) else repr(value)
+    return f"{type(value).__name__}, {len(text)} characters, sha256 {hashlib.sha256(text.encode()).hexdigest()[:8]}"
+
+
+def _fake_profile_value() -> str:
+    """A FAKE value built at run time, with no `sk-`, `bearer ` or `basic ` prefix (the walk would catch those first).
+    Letters and marks alternate, so every run of 4 characters holds two marks, and no mark is in any checker message:
+    a run of 4 found in the output is the value itself, never a coincidence."""
+    return "".join(secrets.choice(string.ascii_letters) + secrets.choice(_MARKS) for _ in range(12))
+
+
+def _runs_of(value: str, text: str, width: int = 4) -> list:
+    """Every run of <width> characters of <value> that <text> carries, both sides case-folded."""
+    folded = text.casefold()
+    return sorted({value[i:i + width].casefold() for i in range(len(value) - width + 1)} & {
+        folded[i:i + width] for i in range(len(folded) - width + 1)})
+
+
+def _put_api_mode_in_the_provider_block(doc, value):
+    """The old layout: api_mode in the provider block, read when the model section names none."""
+    del doc["model"]["api_mode"]
+    doc["providers"]["s0-03-omniroute"]["api_mode"] = value
+
+
+def _as_is(value):
+    return value
+
+
+PROFILE_VALUE_PATHS = [
+    # (id, how the planted value enters the profile, the exact stdout with the planted value's shape, how the fake
+    # value is planted: as it is, or inside a list, a non-string (VERIFY-I59-F F-8; as api_mode, F-9's unhashable
+    # value, a traceback until I59-F round 4))
+    ("api_mode", lambda doc, value: doc["model"].__setitem__("api_mode", value),
+     lambda shape: f"failure_reason: transport: profile api_mode ({shape}) is not in the permitted set\n", _as_is),
+    ("api_mode-a-list", lambda doc, value: doc["model"].__setitem__("api_mode", value),
+     lambda shape: f"failure_reason: transport: profile api_mode ({shape}) is not in the permitted set\n",
+     lambda value: [value]),
+    ("api_mode-in-the-provider-block", _put_api_mode_in_the_provider_block,
+     lambda shape: f"failure_reason: transport: profile api_mode ({shape}) is not in the permitted set\n", _as_is),
+    ("compression-header", lambda doc, value: doc["providers"]["s0-03-omniroute"]["extra_headers"].__setitem__(
+        "x-omniroute-compression", value),
+     lambda shape: f"failure_reason: bundle: profile.yaml x-omniroute-compression ({shape}) is not 'off'\n", _as_is),
+    ("key_env", lambda doc, value: doc["providers"]["s0-03-omniroute"].__setitem__("key_env", value),
+     lambda shape: f"failure_reason: bundle: profile.yaml key_env ({shape}) is not 'OMNIROUTE_API_KEY'\n", _as_is),
+    ("key_env-a-list", lambda doc, value: doc["providers"]["s0-03-omniroute"].__setitem__("key_env", value),
+     lambda shape: f"failure_reason: bundle: profile.yaml key_env ({shape}) is not 'OMNIROUTE_API_KEY'\n",
+     lambda value: [value]),
+]
+
+
+@pytest.mark.parametrize("put,reason,plant", [row[1:] for row in PROFILE_VALUE_PATHS],
+                         ids=[row[0] for row in PROFILE_VALUE_PATHS])
+def test_a_failure_names_a_profile_value_by_its_shape_never_the_value(passing, put, reason, plant):
+    """Through the real CLI, one path per message: a fake value in the profile fails the check with the exact reason,
+    which carries the value's shape, and no case-folded run of 4 of its characters reaches stdout or stderr. The screen
+    is first shown to see a printed value, and the value to reach the file whole: the message is then the only reason
+    the value is absent."""
+    value = _fake_profile_value()
+    planted = plant(value)
+    assert not value.lower().startswith(("sk-", "sk_", "bearer ", "basic "))
+    assert _runs_of(value, f"key_env is {planted!r}") and not _runs_of(value, reason(_shape_of(planted)))
+    profile = passing / "hermes" / "profile.yaml"
+    doc = yaml.safe_load(profile.read_text())
+    put(doc, planted)
+    profile.write_text(yaml.safe_dump(doc, sort_keys=False))
+    assert yaml.safe_load(profile.read_text()) == doc
+    result = run_checker(passing)
+    assert _runs_of(value, result.stdout + result.stderr) == [], "a run of the profile value was printed"
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert result.stdout == reason(_shape_of(planted)), result.stdout
+    assert result.stderr == "", result.stderr[-2000:]
+
+
+# I59-F round 4 (VERIFY-I59-F F-9): a profile the checker cannot walk or read ends in a failure_reason line, never a
+# traceback. A YAML anchor inside itself (a recursive alias) made the credential walk recurse until RecursionError;
+# a read error was named "not valid YAML (<class>)".
+RECURSIVE_ALIASES = [
+    # (id, the lines added to the provider block, the path the refusal names: mapping keys and list indexes only)
+    ("a-list-inside-itself", "    loop: &loop\n      - *loop\n", "providers.s0-03-omniroute.loop.0"),
+    ("a-mapping-inside-itself", "    loop: &loop\n      again: *loop\n", "providers.s0-03-omniroute.loop.again"),
+]
+
+
+@pytest.mark.parametrize("lines,where", [row[1:] for row in RECURSIVE_ALIASES], ids=[row[0] for row in RECURSIVE_ALIASES])
+def test_a_recursive_alias_in_the_provider_block_fails_by_name(passing, lines, where):
+    """Through the real CLI: exit 1, the one refusal line naming where the alias closes, and an empty stderr."""
+    profile = passing / "hermes" / "profile.yaml"
+    text = profile.read_text()
+    assert text.count("    discover_models: true\n") == 1
+    profile.write_text(text.replace("    discover_models: true\n", "    discover_models: true\n" + lines))
+    result = run_checker(passing)
+    assert (result.returncode, result.stdout, result.stderr) == (
+        1, f"failure_reason: bundle: profile.yaml has a recursive alias under {where}\n", ""), result.stderr[-2000:]
+
+
+def test_an_anchor_used_twice_without_a_cycle_is_no_recursive_alias(passing):
+    """The negative control of the test above: one anchor aliased twice, each alias beside it, not inside it. The
+    walk meets the same node twice and passes."""
+    profile = passing / "hermes" / "profile.yaml"
+    text = profile.read_text()
+    lines = "    shared: &shared\n      a: b\n    first: *shared\n    second: *shared\n"
+    profile.write_text(text.replace("    discover_models: true\n", "    discover_models: true\n" + lines))
+    result = run_checker(passing)
+    assert result.returncode == 0, result.stdout + result.stderr[-2000:]
+
+
+# I59-F round 5 (VERIFY-I59-F R4-F1): a YAML key can load as an int, a bool or a null. The credential screen splits a
+# name, so such a key under the provider block ended in AttributeError, a traceback (F-9's class). It now fails by its
+# type and the path of the mapping that holds it; neither the key nor its value is printed.
+NON_STRING_KEYS = [
+    # (id, the key as the loaded profile holds it, built at run time where it can be; the mapping that holds it; the
+    # type the refusal names)
+    ("int", lambda: 10 ** 17 + secrets.randbelow(9 * 10 ** 17), ("providers", "s0-03-omniroute"), "int"),
+    ("bool", lambda: True, ("providers", "s0-03-omniroute"), "bool"),
+    ("null", lambda: None, ("providers", "s0-03-omniroute"), "NoneType"),
+    ("int-in-extra_headers", lambda: 10 ** 17 + secrets.randbelow(9 * 10 ** 17),
+     ("providers", "s0-03-omniroute", "extra_headers"), "int"),
+]
+
+
+@pytest.mark.parametrize("make_key,holder,kind", [row[1:] for row in NON_STRING_KEYS],
+                         ids=[row[0] for row in NON_STRING_KEYS])
+def test_a_non_string_key_in_the_provider_block_fails_by_its_type(passing, make_key, holder, kind):
+    """Through the real CLI: exit 1, the one refusal line naming the key's type and the mapping that holds it, and an
+    empty stderr. The value under the key is a fake built at run time, and so is an int key: no case-folded run of 4
+    characters of either reaches stdout or stderr. The row first shows that the key loads with that type."""
+    key, value = make_key(), _fake_profile_value()
+    profile = passing / "hermes" / "profile.yaml"
+    doc = yaml.safe_load(profile.read_text())
+    mapping = doc
+    for name in holder:
+        mapping = mapping[name]
+    mapping[key] = value
+    profile.write_text(yaml.safe_dump(doc, sort_keys=False))
+    loaded = yaml.safe_load(profile.read_text())
+    for name in holder:
+        loaded = loaded[name]
+    assert [type(k).__name__ for k in loaded if not isinstance(k, str)] == [kind] and loaded[key] == value
+    result = run_checker(passing)
+    assert (result.returncode, result.stdout, result.stderr) == (
+        1, f"failure_reason: bundle: profile.yaml has a non-string key ({kind}) under {'.'.join(holder)}\n",
+        ""), result.stderr[-2000:]
+    assert _runs_of(value, result.stdout + result.stderr) == [], "a run of the value was printed"
+    if kind == "int":
+        assert _runs_of(str(key), result.stdout + result.stderr) == [], "a run of the key was printed"
+
+
+@pytest.mark.parametrize("error", ["not-utf-8", "unreadable"])
+def test_a_profile_that_cannot_be_read_is_named_a_read_error(passing, error):
+    """A read error is named as one, with its class and never its message: bytes that are no UTF-8 (read as root),
+    and mode 0000 read as uid 65534 when the suite runs as root (root reads every file). For the second, the
+    bundle is copied into a directory of our own under /tmp (pytest's tmp_path is 0700), so only the profile's own
+    mode refuses the read."""
+    work = None
+    try:
+        root, drop = passing, {}
+        if error == "unreadable":
+            work = Path(tempfile.mkdtemp(prefix="s0-03-unreadable-", dir="/tmp"))
+            work.chmod(0o711)
+            root = work / "evidence"
+            shutil.copytree(passing, root)
+            (root / "hermes" / "profile.yaml").chmod(0o000)
+            drop = {"user": 65534, "group": 65534, "extra_groups": []} if os.geteuid() == 0 else {}
+            cause = "PermissionError"
+        else:
+            profile = root / "hermes" / "profile.yaml"
+            raw = profile.read_bytes() + "    name: caf\xe9\n".encode("latin-1")     # a lone 0xe9 is no UTF-8
+            with pytest.raises(UnicodeDecodeError):
+                raw.decode("utf-8")
+            profile.write_bytes(raw)
+            cause = "UnicodeDecodeError"
+        cmd = [sys.executable, str(CHECKER)] + _flags() + [str(root)]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=str(ROOT), **drop)
+        assert (result.returncode, result.stdout, result.stderr) == (
+            1, f"failure_reason: bundle: hermes/profile.yaml cannot be read ({cause})\n", ""), result.stderr[-2000:]
+    finally:
+        if work is not None:
+            shutil.rmtree(work, ignore_errors=True)
+
+
+def test_shape_says_it_protects_a_high_entropy_value_only():
+    """VERIFY-I59-F F-6: a short or guessable value is recoverable from its shape by brute force (a 6-digit code in
+    about a second). `_shape`'s docstring says so. A documentation pin, read from the source as data."""
+    tree = ast.parse(CHECKER.read_text(encoding="utf-8"))
+    doc = next(ast.get_docstring(node) for node in tree.body
+               if isinstance(node, ast.FunctionDef) and node.name == "_shape")
+    assert "high-entropy" in doc and "brute force" in doc, doc
 
 
 # --------------------------------------------------------------------------- spec + schema

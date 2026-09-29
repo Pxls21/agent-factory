@@ -870,7 +870,8 @@ def _stage0_ci_with_a_sourcing_step(apostrophe):
     one apostrophe in an earlier step name. Returns the text and the new run: line (1-based)."""
     lines = (REPO_ROOT / ".github" / "workflows" / "stage0-ci.yml").read_text().split("\n")
     name_at = lines.index("      - name: Install dependencies")
-    run_at = lines.index("        run: python -m pytest tests/ -q -rs   # -rs: every skip prints its reason (FU-4, VERIFY-I59-A)")
+    run_at = lines.index("        run: python -m pytest tests/ -q -rfEs   # -rfEs: every failure, error and skip prints its line"
+                         " (FU-4, VERIFY-I59-A; F2, VERIFY-I59-LANDING)")
     assert name_at < run_at
     if apostrophe:
         lines[name_at] = "      - name: Install the suite's dependencies"

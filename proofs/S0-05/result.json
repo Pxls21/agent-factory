@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-05",
   "classification": "execution_proof",
-  "recorded_at": "2026-09-26T10:26:35.430961Z",
+  "recorded_at": "2026-09-29T01:32:50.942044Z",
   "env_fingerprint": "pc-bridge:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-05/check_egress.py",
         "proofs/S0-05/fixtures/evidence-mechanism-sandbox"
       ],
-      "started_at": "2026-09-26T10:26:35.243839Z",
-      "finished_at": "2026-09-26T10:26:35.285101Z",
+      "started_at": "2026-09-29T01:32:50.728701Z",
+      "finished_at": "2026-09-29T01:32:50.780942Z",
       "exit_code": 0,
       "stdout_sha256": "ac7dd60606bf5427176480c017e2cb6eed1459154908b2b3f3818c00ff413bbf",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -26,10 +26,10 @@
         "--units",
         "hermes-acp,buzz-acp"
       ],
-      "started_at": "2026-09-26T10:26:35.285255Z",
-      "finished_at": "2026-09-26T10:26:35.326696Z",
+      "started_at": "2026-09-29T01:32:50.781220Z",
+      "finished_at": "2026-09-29T01:32:50.836834Z",
       "exit_code": 0,
-      "stdout_sha256": "593cc9741b217233f142bf32f2952541a18426be8bf35d87e6107c28dc69a63a",
+      "stdout_sha256": "1d2cc8d7beaea10e152174b97100245911198a4ecd23e78c5f386cd6a22ab399",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
@@ -39,8 +39,8 @@
         "proofs/S0-05/check_egress.py",
         "proofs/S0-05/fixtures/evidence-gate-off"
       ],
-      "started_at": "2026-09-26T10:26:35.326829Z",
-      "finished_at": "2026-09-26T10:26:35.381289Z",
+      "started_at": "2026-09-29T01:32:50.837099Z",
+      "finished_at": "2026-09-29T01:32:50.886964Z",
       "exit_code": 1,
       "stdout_sha256": "ade6d30e58f0e7424568eb9cedaf01522817a00d2ac2e9e678ec6d706fc31bf3",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -53,8 +53,8 @@
         "proofs/S0-05/check_egress.py",
         "proofs/S0-05/fixtures/evidence-bare-unshare"
       ],
-      "started_at": "2026-09-26T10:26:35.381464Z",
-      "finished_at": "2026-09-26T10:26:35.423982Z",
+      "started_at": "2026-09-29T01:32:50.887258Z",
+      "finished_at": "2026-09-29T01:32:50.941251Z",
       "exit_code": 1,
       "stdout_sha256": "f84841567fc09171e2f43c09d37ea18c2dee3422f284914f2f285b52f937d01b",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -84,18 +84,18 @@
     "proofs/S0-05/canaries/c5_udp_dns.sh": "04ab37a96dd7390de798122e8bd4e97a116ea78400acd047f2147d216c924483",
     "proofs/S0-05/canaries/c6_blocked_local.sh": "c26bda73bb4328151a0c1fb7c769902088936cc67fdeb527550ad3b400a31911",
     "proofs/S0-05/canaries/connect_probe.py": "5bd9d835004f7dd7047f18aec35b9611235600fffbc04a5f0fe020d529f36ee3",
-    "proofs/S0-05/check_egress.py": "6530cfaa482498faec0f1882abc8d75a3d190142979a2fb6c0dcd8171f63d37f",
-    "proofs/S0-05/evidence/buzz-acp/canaries.jsonl": "c4a83acb035d28784095162ad7d1e64597444db4b958ddf13e87fda68ef42790",
+    "proofs/S0-05/check_egress.py": "6a4ca561aff32507183ccf240ffc585a71d05fbd0ebaaa4bc010b2e256195eb8",
+    "proofs/S0-05/evidence/buzz-acp/canaries.jsonl": "fbfe9c3ad8a3e8618209706a86d3cbfac9e6d1137b47e8b02b0a29926638d618",
     "proofs/S0-05/evidence/buzz-acp/gate.json": "ad9f9464ee46eb23b1dab3c7ca3ed53ab6db1b38deb6f73466ed69c04e24a2f9",
     "proofs/S0-05/evidence/buzz-acp/runtime.json": "f882fc3812321d62d2c0e61a2430685711b55b488c632d7b4e5e9edfda40a2af",
-    "proofs/S0-05/evidence/buzz-acp/unit-identity.json": "e3e0c110834ece3c5140d21385533f5188147ba1f62629943b657e096f38eaf2",
-    "proofs/S0-05/evidence/buzz-acp.launch.log": "0f418dc9b1fab13cb6d3ba65e88b165747ecb3b3534bd3779044b3f9cfacb2e0",
-    "proofs/S0-05/evidence/hermes-acp/canaries.jsonl": "4e60fed3fe03362bbc5cbd6ff2cc26cba8e4700737b0fc0d2d5f7a783e6e595a",
+    "proofs/S0-05/evidence/buzz-acp/unit-identity.json": "d9645f652a63d4b0b6f6ee6a81019d5326868df654822f7e20dc6d1c96cb41ee",
+    "proofs/S0-05/evidence/buzz-acp.launch.log": "18b4fc413137b4e42cebc6269bedebe5e9ece697194b84f8283fad734fe270e6",
+    "proofs/S0-05/evidence/hermes-acp/canaries.jsonl": "dfda76cef92bb13e7b3f15c67e7afd7adfc7a229b5d0b74f91964ea8f29689dc",
     "proofs/S0-05/evidence/hermes-acp/gate.json": "378992b1aebb3837697ef04496329f656b058e7e8bc77a5b61af608614e9e319",
     "proofs/S0-05/evidence/hermes-acp/runtime.json": "6fc06f6fc11742069aafb6516cfc0b2e13a23909b59b27cd0d68a6b63a6ad9fe",
-    "proofs/S0-05/evidence/hermes-acp/unit-identity.json": "e4d1c07bf6222296b614afcb7a64f023097777e0305c77f7178f4913f98613d4",
-    "proofs/S0-05/evidence/hermes-acp.launch.log": "f80cf057b3fa5cf368a246e975fcf021d66ff9a7c52272c6bee3681fd016f416",
-    "proofs/S0-05/evidence/s0-01-census.json": "8d70ce0c16793f97e63badae11ed017287d095ea60d2587f2675ffb63dd0747b",
+    "proofs/S0-05/evidence/hermes-acp/unit-identity.json": "6634b75843bdfbd37d8e583f304507b5968a50db266f6f8046a899c5910f9e5f",
+    "proofs/S0-05/evidence/hermes-acp.launch.log": "fc3d162180154c05efaa6fb89ae0cdd7e0eecce28fd7a9d96261bd7ca9b3c427",
+    "proofs/S0-05/evidence/s0-01-census.json": "02f2f1c14cde5eee5cc41040ae8ffe91bda51bb93ffe0f8fc3ca4bcf123e85c7",
     "proofs/S0-05/evidence/units.json": "7e7c03219cc767ba81a9ae2f4884568af06fcff952bdb861bf9cbc8e2141c194",
     "proofs/S0-05/fixtures/evidence-bare-unshare/curl/canaries.jsonl": "f2f1bc756a2b8a78b2a715a5ff8e88978c488ed6066cf7772a15b34ddcde4935",
     "proofs/S0-05/fixtures/evidence-bare-unshare/curl/gate.json": "96a11164a6d71958218d331aaa90d56273fead2621197126b7fff44c91a84298",
@@ -115,7 +115,7 @@
     "proofs/S0-05/fixtures/evidence-synthetic-pass/hermes-acp/canaries.jsonl": "6ee5f1f8b801d6d2f9f95add44e101424366187b2d5fc2eae27e3c83319aa47d",
     "proofs/S0-05/fixtures/evidence-synthetic-pass/hermes-acp/gate.json": "0264fb25461884517f3a1a25e99c9774c41bab54159c0882b94d191aa886e150",
     "proofs/S0-05/fixtures/evidence-synthetic-pass/hermes-acp/runtime.json": "523130efa35529dd124a900de0286be66781755319c5e6c175f0813587684e8c",
-    "proofs/S0-05/fixtures/evidence-synthetic-pass/hermes-acp/unit-identity.json": "ae110871efafab8e5125b0f8574ac3c06d354029d255d95e4097a82a35f086f6",
+    "proofs/S0-05/fixtures/evidence-synthetic-pass/hermes-acp/unit-identity.json": "af1b9d92cbc1e4e7f641187baa0947bbef00cc885c6b61918e766e8e3c1b5587",
     "proofs/S0-05/fixtures/evidence-synthetic-pass/units.json": "0452e6c77318e3c0deb1874aaa64bcbf45c60a68120bac5afcb745b1f8d68b86",
     "proofs/S0-05/fixtures/evidence-synthetic-uid0/curl/canaries.jsonl": "7bb9d226fc1642709cd8886cb78f832aa207e4376183faab63c6fa8e8b2b7154",
     "proofs/S0-05/fixtures/evidence-synthetic-uid0/curl/gate.json": "bb720642a77cfae1dd85eab034994e11a11e5a51bfda9c854b8a145c88fa2d75",
@@ -123,13 +123,13 @@
     "proofs/S0-05/fixtures/evidence-synthetic-uid0/hermes-acp/canaries.jsonl": "6ee5f1f8b801d6d2f9f95add44e101424366187b2d5fc2eae27e3c83319aa47d",
     "proofs/S0-05/fixtures/evidence-synthetic-uid0/hermes-acp/gate.json": "0264fb25461884517f3a1a25e99c9774c41bab54159c0882b94d191aa886e150",
     "proofs/S0-05/fixtures/evidence-synthetic-uid0/hermes-acp/runtime.json": "523130efa35529dd124a900de0286be66781755319c5e6c175f0813587684e8c",
-    "proofs/S0-05/fixtures/evidence-synthetic-uid0/hermes-acp/unit-identity.json": "ef5fa031c08e08003d950fff5970430b410358fb1a40ca78f8ab0252616cdcdd",
+    "proofs/S0-05/fixtures/evidence-synthetic-uid0/hermes-acp/unit-identity.json": "7b176e89a4892b85709b80d7eb635331fbf30734b248464f0635b3045c52e2e6",
     "proofs/S0-05/fixtures/evidence-synthetic-uid0/units.json": "0452e6c77318e3c0deb1874aaa64bcbf45c60a68120bac5afcb745b1f8d68b86",
     "proofs/S0-05/netns_lib.sh": "d2837c4d073bf398ee8fb2c900d246a2647a38262b88d92e2c79b09dc01dce9b",
     "proofs/S0-05/run_canaries.sh": "5241b539c50a98b8fd7cbb8f5b11d3321c8be262fcba099f3f78b2e56fd10bb0",
     "proofs/S0-05/spec.json": "9f418af8859e4afc39b8b353647ebf3919fd4306cc4660e904c0a4ef079e549e",
-    "proofs/S0-05/tools/pc/run_s0_05_units.sh": "b6780a867b67aceb3d85c8d16830a65cc145603c041cb99b9a178a3ac511efd9",
+    "proofs/S0-05/tools/pc/run_s0_05_units.sh": "af3badbb5c10f587e14702eee18546c98032d76d3d0ef4eaf80fd87f98ab922b",
     "proofs/S0-01/pins.py": "1a2f9a38ddba14e3ea75c06e77e43083a059e8dc5caf5499c7e54e9013921981"
   },
-  "digest": "9d2a898760799ff45f3aa81bec2c233397a6ee43c5e37c97bbc07379037f5152"
+  "digest": "d17e9dfebc13b50c41c1fa27a422de7fc6244a510e61009397dd7769f567ea0a"
 }

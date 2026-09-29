@@ -9,15 +9,21 @@ record shape breaks here instead of silently at capture time on the PC.
 """
 from __future__ import annotations
 
+import ast
 import base64
+import errno
+import hashlib
 import http.client
 import json
+import locale
 import os
 import secrets
 import shutil
 import socket
+import string
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -89,7 +95,7 @@ def test_pass_line_is_exact():
 def test_observations_are_recorded_not_asserted():
     code, out = run_checker(PASS_BUNDLE)
     assert code == 0
-    assert "observation: config api_mode = chat_completions" in out
+    assert OBSERVATION.format("chat_completions") in out.splitlines(), out   # I59-F round 3 (route B): a known mode
     assert out.count("observation:") == 3
 
 
@@ -715,7 +721,7 @@ def test_config_field_mutations(tmp_path):
         ({"key_env": "not a variable name"}, "key-env-not-a-name"),
         ({"key_env": None}, "key-env-not-a-name"),
         ({"api_mode": ""}, "api-mode-absent"),
-        ({"extra_headers": {"x-omniroute-compression": "on"}}, "config-header-value: on"),
+        ({"extra_headers": {"x-omniroute-compression": "on"}}, f"config-header-value: {_shape_of('on')}"),
     ]
     for index, (patch, expected) in enumerate(cases):
         b = bundle(tmp_path, f"cfg-{index}")
@@ -726,6 +732,214 @@ def test_config_field_mutations(tmp_path):
         code, out = run_checker(b)
         assert code == 1, (patch, out)
         assert expected in out, (patch, out)
+
+
+# I59-F round 2 (A-2, the E-1 class in S0-04): no message of the checker prints a value of the captured provider
+# block. Three failure reasons and the api_mode observation printed one through `_short` (a 60-character cut, the value
+# itself): round 1 printed `config: key-env-not-a-name: Zq~FAKEnot-a-key~X9^v` whole. Each now names the value by
+# its shape, as S0-03's checker does: its type, its length and the first 8 hex digits of its sha256. Keys may print.
+_MARKS = "~^|+*!@%&=<>?;"      # printable, and never in a checker message
+
+
+def _shape_of(value) -> str:
+    """The shape the contract prints for a value of the provider block (a non-string by its repr)."""
+    text = value if isinstance(value, str) else repr(value)
+    return f"{type(value).__name__}, {len(text)} characters, sha256 {hashlib.sha256(text.encode()).hexdigest()[:8]}"
+
+
+def _fake_config_value() -> str:
+    """A FAKE value built at run time. Letters and marks alternate, so every run of 4 characters holds two marks, and
+    no mark is in any checker message: a run of 4 found in the output is the value itself, never a coincidence."""
+    return "".join(secrets.choice(string.ascii_letters) + secrets.choice(_MARKS) for _ in range(12))
+
+
+def _runs_of(value: str, text: str, width: int = 4) -> list:
+    """Every run of <width> characters of <value> that <text> carries, both sides case-folded."""
+    folded = text.casefold()
+    return sorted({value[i:i + width].casefold() for i in range(len(value) - width + 1)} & {
+        folded[i:i + width] for i in range(len(folded) - width + 1)})
+
+
+def _as_is(value):
+    return value
+
+
+CONFIG_VALUE_PATHS = [
+    # (id, how the planted value enters the provider block, the exit code, the exact stdout line with the planted
+    # value's shape, how the fake value is planted: as it is, or inside a list, a non-string (VERIFY-I59-F F-8))
+    ("config-header-value", lambda block, value: block["extra_headers"].__setitem__("x-omniroute-compression", value),
+     1, lambda shape: f"failure_reason: config: config-header-value: {shape}", _as_is),
+    ("base-url-unexpected", lambda block, value: block.__setitem__("base_url", value),
+     1, lambda shape: f"failure_reason: config: base-url-unexpected: {shape}", _as_is),
+    ("key-env-not-a-name", lambda block, value: block.__setitem__("key_env", value),
+     1, lambda shape: f"failure_reason: config: key-env-not-a-name: {shape}", _as_is),
+    ("key-env-a-list", lambda block, value: block.__setitem__("key_env", value),
+     1, lambda shape: f"failure_reason: config: key-env-not-a-name: {shape}", lambda value: [value]),
+    ("api-mode-observation", lambda block, value: block.__setitem__("api_mode", value),
+     0, lambda shape: OBSERVATION.format(shape), _as_is),
+]
+
+
+@pytest.mark.parametrize("put,code,line,plant", [row[1:] for row in CONFIG_VALUE_PATHS],
+                         ids=[row[0] for row in CONFIG_VALUE_PATHS])
+def test_a_message_names_a_config_value_by_its_shape_never_the_value(tmp_path, put, code, line, plant):
+    """Through the real CLI, one path per message: a fake value in the captured provider block gives the exact line,
+    which carries the value's shape, and no case-folded run of 4 of its characters reaches stdout or stderr. The screen
+    is first shown to see a printed value, and the value to reach the bundle whole: the message is then the only
+    reason the value is absent. The api_mode is recorded, not asserted, so that row passes and pins its observation."""
+    value = _fake_config_value()
+    planted = plant(value)
+    assert _runs_of(value, f"key-env-not-a-name: {planted}") and not _runs_of(value, line(_shape_of(planted)))
+    b = bundle(tmp_path)
+    path = b / "config" / "hermes-provider.json"
+    block = load(path)
+    put(block, planted)
+    store(path, block)
+    assert value in path.read_text()
+    proc = subprocess.run([sys.executable, str(CHECKER), str(b)], capture_output=True, text=True, timeout=180,
+                          cwd=str(ROOT))
+    assert _runs_of(value, proc.stdout + proc.stderr) == [], "a run of the config value was printed"
+    assert proc.returncode == code, proc.stdout + proc.stderr
+    assert line(_shape_of(planted)) in proc.stdout.splitlines(), proc.stdout
+    if code:
+        assert proc.stdout == line(_shape_of(planted)) + "\n", proc.stdout
+    assert proc.stderr == "", proc.stderr
+
+
+# I59-F round 3, route B (D-R2-2): the api_mode observation prints a KNOWN mode by its name (an enum the owner reads,
+# not a secret) and any other value by its shape. The known set is the checker's own copy of S0-03's
+# PERMITTED_API_MODES, pinned equal to it here: the checker never reads S0-03's file while it grades, so S0-04's
+# attestation stays its own. Failure messages print every value by its shape, a mode name included.
+S0_03_CHECKER = ROOT / "proofs" / "S0-03" / "check_omniroute_roundtrip.py"
+OBSERVATION = "observation: config api_mode = {} (RECORDED, not asserted - task #35 was decided by D-021 on 2026-09-08)"
+# I59-F round 4 (VERIFY-I59-F F-1): S0-04 observes the captured provider block's mode, which capture_leg.py fills
+# from Hermes' provider `transport` (`openai_chat` in the real bundle), not S0-03's model-section api_mode. The
+# known set is S0-03's two api_modes and every provider transport of the committed configs and the real capture,
+# each read here as data from its source.
+S0_03_CONFIG = ROOT / "proofs" / "S0-03" / "hermes" / "config.yaml"
+S0_04_CONFIG = ROOT / "proofs" / "S0-04" / "hermes" / "config.yaml"
+REAL_BUNDLE = ROOT / "proofs" / "S0-04" / "evidence"
+REAL_PROVIDER_BLOCK = REAL_BUNDLE / "config" / "hermes-provider.json"
+
+
+def _s0_03_permitted_api_modes():
+    """S0-03's PERMITTED_API_MODES, read from its checker's source as DATA: parsed, never imported or run."""
+    tree = ast.parse(S0_03_CHECKER.read_text(encoding="utf-8"))
+    found = [node.value for node in tree.body if isinstance(node, ast.Assign)
+             and [getattr(target, "id", None) for target in node.targets] == ["PERMITTED_API_MODES"]]
+    assert len(found) == 1, "S0-03's checker assigns PERMITTED_API_MODES once, at module level"
+    call = found[0]
+    assert isinstance(call, ast.Call) and getattr(call.func, "id", None) == "frozenset" and len(call.args) == 1
+    return frozenset(ast.literal_eval(call.args[0]))
+
+
+def _provider_block_with(tmp_path, set_value):
+    """A copy of the pass bundle whose captured provider block is changed by <set_value>."""
+    b = bundle(tmp_path)
+    path = b / "config" / "hermes-provider.json"
+    block = load(path)
+    set_value(block)
+    store(path, block)
+    return b
+
+
+def _hermes_transports(config):
+    """Every provider `transport` a committed Hermes config names, read as data (parsed, never run)."""
+    import yaml
+    providers = yaml.safe_load(config.read_text(encoding="utf-8"))["providers"]
+    return frozenset(block["transport"] for block in providers.values() if "transport" in block)
+
+
+def _known_mode_sources():
+    """The names the checker may print as they are, each set from its own pinned source."""
+    return {"S0-03's PERMITTED_API_MODES": _s0_03_permitted_api_modes(),
+            "proofs/S0-03/hermes/config.yaml": _hermes_transports(S0_03_CONFIG),
+            "proofs/S0-04/hermes/config.yaml": _hermes_transports(S0_04_CONFIG),
+            "the real provider block": frozenset({load(REAL_PROVIDER_BLOCK)["api_mode"]})}
+
+
+def test_the_known_api_modes_are_pinned_to_their_sources():
+    """The pin: the checker's KNOWN_API_MODES equals the union of its sources, each read as data, and every source
+    names at least one mode. A drift on any side reds here."""
+    sources = _known_mode_sources()
+    assert all(sources.values()), sources
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("check_compression", CHECKER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert isinstance(module.KNOWN_API_MODES, frozenset), type(module.KNOWN_API_MODES)
+    assert module.KNOWN_API_MODES == frozenset().union(*sources.values()), sorted(module.KNOWN_API_MODES)
+
+
+def test_the_real_bundle_observes_its_transport_by_name():
+    """VERIFY-I59-F F-1: the committed real capture's provider block says `openai_chat`, and the observation names
+    it; the bundle passes. The exact line is pinned."""
+    assert load(REAL_PROVIDER_BLOCK)["api_mode"] == "openai_chat"
+    code, out = run_checker(REAL_BUNDLE)
+    assert code == 0, out
+    assert ("observation: config api_mode = openai_chat (RECORDED, not asserted - task #35 was decided by D-021 on "
+            "2026-09-08)") in out.splitlines(), out
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "codex_responses", "openai_chat"])
+def test_a_known_api_mode_is_observed_by_its_name(tmp_path, mode):
+    """Through the real CLI: a mode one of the sources names, in the captured provider block, is observed by its
+    name, the exact line pinned. The bundle still passes: the mode is recorded, not asserted."""
+    assert mode in frozenset().union(*_known_mode_sources().values())
+    code, out = run_checker(_provider_block_with(tmp_path, lambda block: block.__setitem__("api_mode", mode)))
+    assert code == 0, out
+    assert OBSERVATION.format(mode) in out.splitlines(), out
+    assert _shape_of(mode) not in out, out
+
+
+@pytest.mark.parametrize("value", ["Chat_Completions", "chat_completions "], ids=["case", "trailing-space"])
+def test_a_value_near_a_known_api_mode_is_observed_by_its_shape(tmp_path, value):
+    """Membership is exact: a case or whitespace variant of a known mode is not one, and prints by its shape (the
+    fake-value row above covers a value that is nothing like a mode)."""
+    code, out = run_checker(_provider_block_with(tmp_path, lambda block: block.__setitem__("api_mode", value)))
+    assert code == 0, out
+    assert OBSERVATION.format(_shape_of(value)) in out.splitlines(), out
+
+
+FAILURE_FIELDS = [
+    ("config-header-value", lambda block, value: block["extra_headers"].__setitem__("x-omniroute-compression", value)),
+    ("base-url-unexpected", lambda block, value: block.__setitem__("base_url", value)),
+    ("key-env-not-a-name", lambda block, value: block.__setitem__("key_env", value)),
+]
+
+
+@pytest.mark.parametrize("reason,put", FAILURE_FIELDS, ids=[row[0] for row in FAILURE_FIELDS])
+def test_a_failure_prints_a_known_mode_name_by_its_shape(tmp_path, reason, put):
+    """Only the observation prints a known mode by name: a failure message prints its value by its shape, even when
+    the value is a mode name. The whole output is the one failure line."""
+    code, out = run_checker(_provider_block_with(tmp_path, lambda block: put(block, "chat_completions")))
+    assert code == 1, out
+    assert out == f"failure_reason: config: {reason}: {_shape_of('chat_completions')}\n", out
+
+
+@pytest.mark.parametrize("kind", ["array", "string", "number"])
+def test_a_provider_block_that_is_not_a_json_object_is_refused_and_prints_nothing_of_it(tmp_path, kind):
+    """VERIFY-I59-F F-2: a captured provider block that is not a JSON object fails by name before any field is
+    read. An array's elements and a string's characters printed through `unexpected-provider-fields`, and a number
+    ended in a traceback. The whole output is the one failure line; no run of the fake value reaches it."""
+    value = _fake_config_value()
+    planted = {"array": [value], "string": value, "number": 10 ** 17 + secrets.randbelow(9 * 10 ** 17)}[kind]
+    b = bundle(tmp_path)
+    store(b / "config" / "hermes-provider.json", planted)
+    proc = subprocess.run([sys.executable, str(CHECKER), str(b)], capture_output=True, text=True, timeout=180,
+                          cwd=str(ROOT))
+    assert _runs_of(value, proc.stdout + proc.stderr) == [], "a run of the provider block was printed"
+    assert (proc.returncode, proc.stdout, proc.stderr) == (
+        1, "failure_reason: config: provider block is not a JSON object\n", ""), (proc.stdout, proc.stderr[-2000:])
+
+
+def test_shape_says_it_protects_a_high_entropy_value_only():
+    """VERIFY-I59-F F-6: a short or guessable value is recoverable from its shape by brute force (a 6-digit code in
+    about a second). `_shape`'s docstring says so. A documentation pin, read from the source as data."""
+    tree = ast.parse(CHECKER.read_text(encoding="utf-8"))
+    doc = next(ast.get_docstring(node) for node in tree.body
+               if isinstance(node, ast.FunctionDef) and node.name == "_shape")
+    assert "high-entropy" in doc and "brute force" in doc, doc
 
 
 def test_unexpected_provider_field_is_refused(tmp_path):
@@ -1140,6 +1354,7 @@ def test_capture_leg_reports_a_yaml_error_by_position_only(tmp_path, cls, label,
     mark = raw.problem_mark
     assert proc.stderr == (f"capture_leg: profile {profile} is not valid YAML ({cls}) "
                            f"at line {mark.line + 1}, column {mark.column + 1}\n"), proc.stderr
+    assert proc.stdout == "", proc.stdout      # I59-F (C-2): the failure is on stderr only (mutant C-X6)
 
 
 # I59-C (VERIFY-S0-04-LEAK-R1 G2): some parse errors are not YAMLErrors. An explicit tag's constructor raises a plain
@@ -1169,6 +1384,58 @@ def test_capture_leg_reports_a_non_yaml_parse_error_by_class_only(tmp_path, cls,
     assert proc.returncode == 1, proc.stderr
     assert proc.stderr == f"capture_leg: profile {profile} is not valid YAML ({cls}) at an unknown position\n", \
         proc.stderr
+    assert proc.stdout == "", proc.stdout      # I59-F (C-2): the failure is on stderr only (mutant C-X6)
+
+
+# I59-F (VERIFY-I59-BCE C-1): `do_config` READS the profile outside its parse handler, so a read error keeps the
+# tool's own line and never reads as a YAML error. A handler that took the read in (mutant C-X4) printed each of them
+# as "not valid YAML (<Class>) at an unknown position", and no test saw it. One test per read error, the line whole,
+# on stderr only.
+def _run_config(profile, out, **drop):
+    return subprocess.run([sys.executable, str(CAPTURE), "--config", "--profile", str(profile), "--out", str(out)],
+                          capture_output=True, text=True, timeout=60, cwd=str(ROOT), **drop)
+
+
+@pytest.mark.parametrize("error", ["missing", "a-fifo", "not-utf-8"])
+def test_capture_leg_reports_a_profile_read_error_on_its_own_line(tmp_path, error):
+    """A missing profile, a FIFO (never opened) and a file that is not UTF-8 each end with exit 1 and the read's own
+    line: `read_regular`'s refusal, or the decode error main() names by its class. The oracle for the decode line is
+    this venue's own decoder, and it must refuse the bytes, or the row proves nothing."""
+    profile = tmp_path / "config.yaml"
+    if error == "missing":
+        expected = f"capture_leg: profile not found: {profile}\n"
+    elif error == "a-fifo":
+        os.mkfifo(profile)
+        expected = f"capture_leg: profile is not a regular file: {profile}\n"
+    else:
+        raw = (PROFILE_HEAD + "    name: caf\xe9\n").encode("latin-1")          # a lone 0xe9 is no UTF-8
+        profile.write_bytes(raw)
+        with pytest.raises(UnicodeDecodeError) as decoded:
+            raw.decode(locale.getpreferredencoding(False))
+        expected = f"capture_leg: UnicodeDecodeError: {decoded.value}\n"
+    proc = _run_config(profile, tmp_path / "out")
+    assert (proc.returncode, proc.stderr, proc.stdout) == (1, expected, ""), (proc.returncode, proc.stderr)
+    assert not (tmp_path / "out").exists()
+
+
+def test_capture_leg_reports_an_unreadable_profile_on_its_own_line():
+    """A profile its reader may not open: mode 0000, read as uid 65534 when the suite runs as root (root reads every
+    file) and as the suite's own uid otherwise. The directory is our own under /tmp, mode 0711 (pytest's tmp_path is
+    0700), so the open fails on the file itself, never on the way to it; the line is main()'s, with its errno."""
+    work = Path(tempfile.mkdtemp(prefix="s0-04-unreadable-", dir="/tmp"))
+    try:
+        work.chmod(0o711)
+        profile = work / "config.yaml"
+        profile.write_text(PROFILE_HEAD)
+        profile.chmod(0o000)
+        drop = {"user": 65534, "group": 65534, "extra_groups": []} if os.geteuid() == 0 else {}
+        proc = _run_config(profile, work / "out", **drop)
+        denied = PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(profile))
+        assert (proc.returncode, proc.stderr, proc.stdout) == (1, f"capture_leg: PermissionError: {denied}\n", ""), \
+            (proc.returncode, proc.stderr)
+        assert not (work / "out").exists()
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def test_runner_is_syntactically_valid():

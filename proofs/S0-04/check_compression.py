@@ -46,6 +46,7 @@ Usage: check_compression.py [--fixtures-dir <dir>] <evidence-root>
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import stat as _stat
@@ -69,6 +70,15 @@ COMPRESSION_SOURCE = "request-header"
 OMNIROUTE_PORT = 20128                           # PC-BRIDGE.md:153-163
 OMNIROUTE_BASE_SUFFIX = f":{OMNIROUTE_PORT}/v1"
 KEY_ENV_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
+# The api_mode names the observation prints as they are (I59-F round 3, route B; round 4, VERIFY-I59-F F-1): a mode
+# name is an enum the owner reads, not a secret; any other value prints by its shape. The captured provider block's
+# api_mode is Hermes' provider `transport` (tools/pc/capture_leg.py:121), so the set holds both vocabularies, each
+# name copied from a pinned source, so S0-04 reads no other proof's file while it grades:
+#   chat_completions, codex_responses: S0-03's PERMITTED_API_MODES (proofs/S0-03/check_omniroute_roundtrip.py:215);
+#   openai_chat: `transport: openai_chat` (proofs/S0-03/hermes/config.yaml:21, proofs/S0-04/hermes/config.yaml:26),
+#   and the real capture's `"api_mode": "openai_chat"` (proofs/S0-04/evidence/config/hermes-provider.json:2).
+# tests/test_s0_04_compression.py reads those sources as data and pins this set equal to their union.
+KNOWN_API_MODES = frozenset({"chat_completions", "codex_responses", "openai_chat"})
 FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 MAX_EVIDENCE_FILE = 8 * 1024 * 1024
 
@@ -120,6 +130,19 @@ def _redact(text: str) -> str:
 def _short(value, limit: int = 60) -> str:
     s = value if isinstance(value, str) else repr(value)
     return s if len(s) <= limit else s[:limit] + "...(truncated)"
+
+
+def _shape(value) -> str:
+    """How a message names a value of the captured provider block: its type, its length (a non-string's repr) and
+    the first 8 hex digits of its sha256, never the value (I59-F round 2, A-2; the format of S0-03's `_shape`).
+    `_short` printed the value itself, cut at 60 characters, so `key_env: <a key>` printed the key whole.
+    It protects a high-entropy value (a key, a token) only: a short or guessable value is recoverable from its
+    length and digest prefix by brute force (VERIFY-I59-F F-6: a 6-digit code in about a second)."""
+    if value is None:
+        return "absent"
+    text = value if isinstance(value, str) else repr(value)
+    digest = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()[:8]
+    return f"{type(value).__name__}, {len(text)} characters, sha256 {digest}"
 
 
 def _canon(obj) -> bytes:
@@ -322,6 +345,8 @@ def check_request_leg(leg: str, leg_dir: Path, fixtures_dir: Path, observations:
 
 def check_config_leg(leg_dir: Path, observations: list) -> None:
     provider = _read_json(leg_dir / "hermes-provider.json", CONFIG_LEG, "hermes-provider.json")
+    if not isinstance(provider, dict):    # VERIFY-I59-F F-2: its elements or characters would print as field names
+        raise Failure(f"{CONFIG_LEG}: provider block is not a JSON object")
     allowed = {"provider", "base_url", "api_mode", "key_env", "extra_headers"}
     unexpected = sorted(set(provider) - allowed)
     if unexpected:
@@ -335,22 +360,23 @@ def check_config_leg(leg_dir: Path, observations: list) -> None:
     if len(hits) > 1:
         raise Failure(f"{CONFIG_LEG}: config-header-duplicated: {len(hits)} keys")
     if hits[0][1] != COMPRESSION_VALUE:
-        raise Failure(f"{CONFIG_LEG}: config-header-value: {_short(hits[0][1])}")
+        raise Failure(f"{CONFIG_LEG}: config-header-value: {_shape(hits[0][1])}")
     base_url = provider.get("base_url")
     if not isinstance(base_url, str) or not base_url.endswith(OMNIROUTE_BASE_SUFFIX):
-        raise Failure(f"{CONFIG_LEG}: base-url-unexpected: {_short(base_url)}")
+        raise Failure(f"{CONFIG_LEG}: base-url-unexpected: {_shape(base_url)}")
     key_env = provider.get("key_env")
     if not isinstance(key_env, str) or not KEY_ENV_RE.match(key_env):
-        raise Failure(f"{CONFIG_LEG}: key-env-not-a-name: {_short(key_env)}")
+        raise Failure(f"{CONFIG_LEG}: key-env-not-a-name: {_shape(key_env)}")
     api_mode = provider.get("api_mode")
     if not isinstance(api_mode, str) or not api_mode:
         raise Failure(f"{CONFIG_LEG}: api-mode-absent")
-    # RECORDED, never asserted: docs/03 §2 pins `codex_responses` and the live profiles use
-    # `chat_completions` (docs/OMNIROUTE-HERMES-FEDORA-HANDOFF.md:17). That deviation is the
-    # owner's open decision (task #35); this proof reports it, it does not resolve it.
+    # RECORDED, never asserted: the mode Hermes' profile configures, which no wire carries (the request legs assert
+    # their wire path). Task #35 was decided by D-021 on 2026-09-08 (docs/08_DECISION_LOG.md:32): chat_completions
+    # is the live v1 transport and codex_responses is permitted per route.
+    # A known mode prints by its name, any other value by its shape (KNOWN_API_MODES); the failures above print shapes.
     observations.append(
-        f"observation: {CONFIG_LEG} api_mode = {_short(api_mode)} "
-        f"(RECORDED, not asserted - ADR 0002 deviation, owner task #35)")
+        f"observation: {CONFIG_LEG} api_mode = {api_mode if api_mode in KNOWN_API_MODES else _shape(api_mode)} "
+        f"(RECORDED, not asserted - task #35 was decided by D-021 on 2026-09-08)")
 
 
 def check_bundle(root: Path, fixtures_dir: Path) -> str:

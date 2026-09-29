@@ -15,7 +15,14 @@
   "entrypoint_realpath": "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp",
   "entrypoint_sha256": "a5a17ffc0c7ef878648a506b9d5066120b91984d1158a60e6ce9664a39f88064",
   "exe_realpath": "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp",
-  "pid": 930321,
+  "gid": [
+    1000,
+    1000,
+    1000,
+    1000
+  ],
+  "groups": [],
+  "pid": 4049191,
   "uid": [
     1000,
     1000,

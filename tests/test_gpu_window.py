@@ -312,14 +312,38 @@ def test_term_stops_the_running_job_at_once_and_restores(win):
 
 # Scripts under test start with SIGINT at its default disposition: a detached launcher (`nohup ... &`, as
 # scripts/lane_gate.sh advises) starts the whole run with SIGINT ignored, bash cannot trap a signal that was ignored at
-# entry, and every INT test would hang to its timeout (AF-AP-210). exec keeps the pid.
+# entry, and every INT test would hang to its timeout (AF-AP-210). exec keeps the pid. It also puts back SIGPIPE and
+# SIGXFSZ (I59-F round 2, A-3): this interpreter ignores both at its own startup, and a bare exec handed both ignores to
+# the script under test (SigIgn 0x1001000), which a shell never does.
 INT_DEFAULT = [sys.executable, "-c",
-               "import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])"]
+               "import os, signal, sys\n"
+               "for name in ('SIGINT', 'SIGPIPE', 'SIGXFSZ'):\n"
+               "    signal.signal(getattr(signal, name), signal.SIG_DFL)\n"
+               "os.execvp(sys.argv[1], sys.argv[1:])"]
 
 
 def _start(w, jobs, **extra):
     return subprocess.Popen(INT_DEFAULT + ["bash", str(SCRIPT), jobs], env=dict(w.env, **extra), stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True)
+
+
+def test_scripts_under_test_start_with_int_pipe_and_xfsz_at_their_defaults():
+    """I59-F round 2 (A-3): the script under test starts as a shell would start it. The launch first ignores SIGINT, as
+    a detached gate does; through INT_DEFAULT, bash then has none of SIGINT, SIGPIPE and SIGXFSZ ignored. The shim's
+    own interpreter ignores SIGPIPE and SIGXFSZ at its startup, and a bare exec handed both on (SigIgn 0x1001000). The
+    bare launch shows the SIGINT ignore reaching bash, so the probe is one that can see an ignore."""
+    def ignore_int():
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+    probe = ["bash", "-c", "grep '^SigIgn:' /proc/$$/status"]
+    watched = (signal.SIGINT, signal.SIGPIPE, signal.SIGXFSZ)
+
+    def ignored(run):
+        mask = int(run.stdout.split()[1], 16)
+        return {sig for sig in watched if mask >> (sig - 1) & 1}
+    bare = subprocess.run(probe, preexec_fn=ignore_int, capture_output=True, text=True, timeout=30)
+    shimmed = subprocess.run(INT_DEFAULT + probe, preexec_fn=ignore_int, capture_output=True, text=True, timeout=30)
+    assert ignored(bare) == {signal.SIGINT}, bare.stdout
+    assert ignored(shimmed) == set(), shimmed.stdout
 
 
 def _wait_for(pred, seconds=15):

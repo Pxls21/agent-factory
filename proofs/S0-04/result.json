@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-04",
   "classification": "execution_proof",
-  "recorded_at": "2026-09-26T10:26:36.385250Z",
+  "recorded_at": "2026-09-29T01:32:42.245801Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,10 +11,10 @@
         "proofs/S0-04/check_compression.py",
         "proofs/S0-04/evidence"
       ],
-      "started_at": "2026-09-26T10:26:36.295231Z",
-      "finished_at": "2026-09-26T10:26:36.338398Z",
+      "started_at": "2026-09-29T01:32:42.126515Z",
+      "finished_at": "2026-09-29T01:32:42.189006Z",
       "exit_code": 0,
-      "stdout_sha256": "9166513f18cbf57a9674637a498f1424d840e9e1102854b82692f73587ea8ea1",
+      "stdout_sha256": "a8add7a909130d4818f6abedf1d095b73226d1a7697a1e13e992764abdee29c3",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
@@ -24,8 +24,8 @@
         "proofs/S0-04/check_compression.py",
         "proofs/S0-04/fixtures/evidence-header-missing"
       ],
-      "started_at": "2026-09-26T10:26:36.338560Z",
-      "finished_at": "2026-09-26T10:26:36.378579Z",
+      "started_at": "2026-09-29T01:32:42.189338Z",
+      "finished_at": "2026-09-29T01:32:42.245034Z",
       "exit_code": 1,
       "stdout_sha256": "caf92711fbc2f8aed11b0bb76de42dbbc56fb5c364a27f35d5311d5c106f2730",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -47,7 +47,7 @@
     "proofs/schemas/spec.schema.json": "f425996d48f22316e96b9ca638de1aee617d7ca063388741534d5cffe95f5715",
     "proofs/schemas/spike.schema.json": "d2c3ad52b76b48e727cb748cfde9f9ad1e92ad801a6bbef3266b6f4342a6c773",
     "proofs/S0-04/LIVE-CAPTURE-FINDINGS.md": "6f231adadb1446175c3e29ed15c23326c70a1f37cd33b236b3139c27388f0505",
-    "proofs/S0-04/check_compression.py": "033333c57e3c371efdd7aed17223357ad4e2dc1c397f4e11f6b187060cbf9d7f",
+    "proofs/S0-04/check_compression.py": "09c45268d76dbfd1af7a8af97fc02b3b3bfc98889a77ca7ce0a721d7b796b7f7",
     "proofs/S0-04/evidence/config/hermes-provider.json": "e33b10c37d3da9292f13fe3eddd092b39c1822b3b614bff710a8d3e4a0c1775d",
     "proofs/S0-04/evidence/off/request.json": "5e5d2b85673a18bbb25e596b748a2b750e378b1f655ce062a6e41f1e9ca0d418",
     "proofs/S0-04/evidence/off/response.json": "3e15611c5d18a29eb6ecdf0215a03c07bc9174aee293f6d80948a02cec9d422e",
@@ -83,5 +83,5 @@
     "proofs/S0-04/tools/pc/capture_leg.py": "f2e5d54c80343e61ae7e619269fe0683d8d55450acf4d4249c46fe2f73318b9f",
     "proofs/S0-04/tools/pc/run_s0_04_legs.sh": "a871c9a12c65000002a20d3121c468040ad2bda69937004d9a9c1c42fc090e8c"
   },
-  "digest": "6d201608b525fbea99c566df070646e4064f79d70fea6d5c60ebe4fd41562428"
+  "digest": "8b9d40acee3de543d0091b234c6b0758614ebd2a9a2cdd3457a5f66c8757e1f7"
 }

@@ -2,31 +2,31 @@
   "proofs": [
     {
       "classification": "execution_proof",
-      "normalized_digest": "768b9641d2352f23939f48908ac09070629aac3eb46447239066963b76e46489",
+      "normalized_digest": "63eb7b9853288c6341f5b6dbfa213508b48c3164f6349c4e16f21822880b7bc0",
       "proof_id": "S0-01",
       "state": "PRESENT"
     },
     {
       "classification": "execution_proof",
-      "normalized_digest": "ff3cefbc79315f8ba1cc6ce5ae8cd08b777bdc1ed62755f86fbf4c6feb3bdb01",
+      "normalized_digest": "96fe3170e9909795bd3a8a11fc5e3ebc24fb460ec3966f6954826bbbdaa8ff41",
       "proof_id": "S0-02",
       "state": "PRESENT"
     },
     {
       "classification": "execution_proof",
-      "normalized_digest": "ddc2161f803dbbbf4ff9c89de5eabd4c22567faca3a5f032c8c1e87440f695e7",
+      "normalized_digest": "ae3344854589a1a79357206576064809a6c4c506ddda156be09a30ad58bf8c3a",
       "proof_id": "S0-03",
       "state": "PRESENT"
     },
     {
       "classification": "execution_proof",
-      "normalized_digest": "b7ecf5ed8ac8aec4fb786419e79cf09fd98c21d00a19aa6996b77e98bbd1f6eb",
+      "normalized_digest": "b29e430ca76a10bbb879e4eaecfc553f7cad61bed4b8ba178ef817e791c5afa0",
       "proof_id": "S0-04",
       "state": "PRESENT"
     },
     {
       "classification": "execution_proof",
-      "normalized_digest": "9be34788ef254e3017793bd4837369ff92bc81d6600340006310010945fb861e",
+      "normalized_digest": "d3e937b46baa0750c7c0328185b55d7c90b370d19afe9d37875e9b867ab488c7",
       "proof_id": "S0-05",
       "state": "PRESENT"
     },

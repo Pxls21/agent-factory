@@ -39,10 +39,10 @@ def _parse_manifest_gz(gz_path: Path) -> dict:
     for line in text.splitlines():
         if line.startswith("## "):
             current = line[3:].strip()
-            sections[current] = ""
+            sections[current] = []             # joined once below (task #344: `+=` was quadratic)
         elif current is not None:
-            sections[current] += line + "\n"
-    return {k: _sha256(v.encode("utf-8")) for k, v in sections.items()}
+            sections[current].append(line)
+    return {k: _sha256("".join(f"{line}\n" for line in v).encode("utf-8")) for k, v in sections.items()}
 
 
 def main() -> int:

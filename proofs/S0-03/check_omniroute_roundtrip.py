@@ -88,6 +88,7 @@ Usage: check_omniroute_roundtrip.py --route-id ID --expected-model-id ID
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import importlib.util
 import json
 import re
@@ -145,7 +146,7 @@ REASONS = {
     "identity_status": "identity: {} leg row status {!r}, expected 200",
     "identity_no_hermes_rows": "identity: 0 call_logs rows for the hermes leg's session_tag — unattributable",
     "roundtrip": "roundtrip: {}",
-    "transport": "transport: profile api_mode {!r} is not in the permitted set",
+    "transport": "transport: profile api_mode ({}) is not in the permitted set",   # `_shape` of the value
     "transport_method": "transport: {} leg row method {!r}, expected 'POST'",
     "transport_path": "transport: {} leg row path {!r} is not a permitted transport path",
     "env_provider_key": "env: upstream provider key {} present in the Hermes environ",
@@ -233,6 +234,20 @@ def _fail(key: str, *args):
     raise Failure(_reason(key, *args))
 
 
+def _shape(value) -> str:
+    """How a failure message names a value read from the profile: its type, its length (a non-string's repr) and the
+    first 8 hex digits of its sha256, never the value (I59-F, VERIFY-I59-BCE E-1). A profile can hold a key where a
+    name belongs (`key_env: <the key>`), and a key with no `sk-`, `bearer ` or `basic ` prefix passes the credential
+    walk; the shape still lets the operator match the value they hold. It protects a high-entropy value (a key, a
+    token) only: a short or guessable value is recoverable from its length and digest prefix by brute force
+    (VERIFY-I59-F F-6: a 6-digit code in about a second)."""
+    if value is None:
+        return "absent"
+    text = value if isinstance(value, str) else repr(value)
+    digest = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()[:8]
+    return f"{type(value).__name__}, {len(text)} characters, sha256 {digest}"
+
+
 # --- bounded, typed reads ---------------------------------------------------------------------
 def _require_file(path: Path, name: str) -> Path:
     """Reject a non-regular file (FIFO, directory, socket, device) with a named reason BEFORE any
@@ -265,8 +280,14 @@ def _read_yaml(path: Path, name: str):
     import yaml
 
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
-    except Exception as exc:  # noqa: BLE001 - every error of the read and the parse, never its message
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        # A read error is named as one (I59-F round 4, VERIFY-I59-F F-9; the C-1 class of S0-04's capture_leg),
+        # never as "not valid YAML". The class name only: a UnicodeDecodeError's message quotes the bytes.
+        raise Failure(f"bundle: {name} cannot be read ({exc.__class__.__name__})") from None
+    try:
+        return yaml.safe_load(text)
+    except Exception as exc:  # noqa: BLE001 - every error of the parse, never its message
         # PyYAML raises more than YAMLError: an explicit tag's constructor raises a ValueError or a
         # KeyError that quotes the value (`!!float` and `!!bool` lower-cased), a bad `!!timestamp` an
         # AttributeError, a deep nesting a RecursionError (AF-AP-232). The class name only, never the
@@ -755,10 +776,29 @@ def _provider_block(profile) -> tuple[str, dict]:
     return str(name), _obj(block, "profile.yaml provider block")
 
 
-def _walk_credentials(node, path: str):
-    """Reject credential-bearing names or values anywhere below a provider block."""
+def _walk_credentials(node, path: str, _open=None):
+    """Reject credential-bearing names or values anywhere below a provider block. A mapping or list met again on
+    its own path is a recursive alias (a YAML anchor inside itself): it fails by name, never by RecursionError
+    (I59-F round 4, VERIFY-I59-F F-9). One node aliased twice side by side is no cycle and is walked twice."""
+    _open = set() if _open is None else _open
+    if isinstance(node, (dict, list)):
+        if id(node) in _open:
+            raise Failure(f"bundle: profile.yaml has a recursive alias under {path}")
+        _open.add(id(node))
+    try:
+        _walk_node(node, path, _open)
+    finally:
+        _open.discard(id(node))
+
+
+def _walk_node(node, path: str, _open: set):
     if isinstance(node, dict):
         for key, value in node.items():
+            if not isinstance(key, str):
+                # A YAML key can load as an int, a bool or a null, and the screen below splits a name: such a key fails
+                # by its type and the mapping that holds it, never by AttributeError (I59-F round 5, VERIFY-I59-F
+                # R4-F1). Neither the key nor its value is printed.
+                raise Failure(f"bundle: profile.yaml has a non-string key ({type(key).__name__}) under {path}")
             child_path = f"{path}.{key}"
             key_is_allowed_env_name = (
                 key == "key_env" and path.count(".") == 1 and path.startswith("providers."))
@@ -769,10 +809,10 @@ def _walk_credentials(node, path: str):
                     and value.lower().startswith(("bearer ", "basic ", "sk-", "sk_"))):
                 raise Failure(
                     f"bundle: profile.yaml carries an inline credential under {child_path}")
-            _walk_credentials(value, child_path)
+            _walk_credentials(value, child_path, _open)
     elif isinstance(node, list):
         for index, value in enumerate(node):
-            _walk_credentials(value, f"{path}.{index}")
+            _walk_credentials(value, f"{path}.{index}", _open)
 
 
 def check_transport(profile):
@@ -785,8 +825,8 @@ def check_transport(profile):
         api_mode = model_section.get("api_mode")
     if api_mode is None:
         api_mode = block.get("api_mode")
-    if api_mode not in PERMITTED_API_MODES:
-        _fail("transport", api_mode)
+    if not isinstance(api_mode, str) or api_mode not in PERMITTED_API_MODES:   # a list or a mapping is unhashable
+        _fail("transport", _shape(api_mode))
 
     headers = block.get("extra_headers")
     if not isinstance(headers, dict):
@@ -797,7 +837,7 @@ def check_transport(profile):
             value = val
     if not isinstance(value, str) or value.strip().lower() != COMPRESSION_OFF:
         raise Failure(
-            f"bundle: profile.yaml {COMPRESSION_REQUEST_HEADER} is {value!r}, expected 'off'"
+            f"bundle: profile.yaml {COMPRESSION_REQUEST_HEADER} ({_shape(value)}) is not 'off'"
         )
 
     # The launched profile must never carry a key VALUE. Only the exact provider-level env NAME
@@ -805,7 +845,7 @@ def check_transport(profile):
     _walk_credentials(block, f"providers.{provider_name}")
     if block.get("key_env") != "OMNIROUTE_API_KEY":
         raise Failure(
-            f"bundle: profile.yaml key_env is {block.get('key_env')!r}, expected 'OMNIROUTE_API_KEY'"
+            f"bundle: profile.yaml key_env ({_shape(block.get('key_env'))}) is not 'OMNIROUTE_API_KEY'"
         )
 
 

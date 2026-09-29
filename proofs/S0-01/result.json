@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-01",
   "classification": "execution_proof",
-  "recorded_at": "2026-09-26T10:26:31.629720Z",
+  "recorded_at": "2026-09-29T01:32:36.421021Z",
   "env_fingerprint": "pc-bridge:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-01/check_acp_conformance.py",
         "proofs/S0-01/evidence"
       ],
-      "started_at": "2026-09-26T10:26:23.005935Z",
-      "finished_at": "2026-09-26T10:26:31.482936Z",
+      "started_at": "2026-09-29T01:32:33.923477Z",
+      "finished_at": "2026-09-29T01:32:36.228677Z",
       "exit_code": 0,
       "stdout_sha256": "ae7ea2ee68d14b93ac834f3b99fbad7a437daf3d5377324527cae62efaa8dc69",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -25,8 +25,8 @@
         "request",
         "proofs/S0-01/evidence/golden/negative"
       ],
-      "started_at": "2026-09-26T10:26:31.483192Z",
-      "finished_at": "2026-09-26T10:26:31.621873Z",
+      "started_at": "2026-09-29T01:32:36.228952Z",
+      "finished_at": "2026-09-29T01:32:36.412218Z",
       "exit_code": 1,
       "stdout_sha256": "319663a8c66200cc2ea9e765229d542040791eca5952567c5ec5d4e7edf81e40",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -48,7 +48,7 @@
     "proofs/schemas/spec.schema.json": "f425996d48f22316e96b9ca638de1aee617d7ca063388741534d5cffe95f5715",
     "proofs/schemas/spike.schema.json": "d2c3ad52b76b48e727cb748cfde9f9ad1e92ad801a6bbef3266b6f4342a6c773",
     "proofs/S0-01/GROUNDING.md": "93cba4a4a7059fa643ea14a2d0974d4436deab81dbcbf7b2f536a760b5511eea",
-    "proofs/S0-01/check_acp_conformance.py": "868b8705699b5e78b1468252ecbdec93736d2a7e2f4819424311c31c243db46a",
+    "proofs/S0-01/check_acp_conformance.py": "41014abdff4601cf03cf5a2d876245f138ccc3140d841df7d4da7cf4426b2c39",
     "proofs/S0-01/check_initialize.py": "304d44d6f8dcdbad6c41931ffbb8f6d45e3c2cf3456dd6285848581a39872c28",
     "proofs/S0-01/evidence/determinism-live-route.json": "d3c0c97f0f86473e2c6c78d4721a1245d84b9d40203411b82c5fdb3cc1527056",
     "proofs/S0-01/evidence/golden/cancel/argv.txt": "f3bd1ea1e82c0994814e08f060883ab4f4e2e4d56643ec204f1f3c1dced794f8",
@@ -272,7 +272,7 @@
     "proofs/S0-01/tools/archive/README.md": "da2c608986fb7a720acac5c1bf31895cfce48756a50a486c8c586d9626b7810b",
     "proofs/S0-01/tools/archive/build_capture_record_v1.py": "2b3da13a325408c26231a7ad2240ab439bcc6189d3500acf370d166e29d6d605",
     "proofs/S0-01/tools/archive/frame_tee_v1.py": "a7a0c367e5251b2cca2aca145ff6b4308ce5b9a40d4a184c73d79b27d32d1f38",
-    "proofs/S0-01/tools/build_capture_record.py": "c9709755c60bfe994fe063bcc4e88cd38178ef3a8b4bd540bd596dc87e9e646c",
+    "proofs/S0-01/tools/build_capture_record.py": "1557dc3010401225acb6b02db5488cc571d31d644db6b153bd530956f7b14b69",
     "proofs/S0-01/tools/frame_tee.py": "990a2ad24475fde35291cd940e5f02d5e8dcf8f413cb16e4948f46407362cdb0",
     "proofs/S0-01/tools/nostr_verify.py": "53005edc0f230329d38eaee5e01ed4056f7415c1cef08878b914115edded3375",
     "proofs/S0-01/tools/pc/collect_leg.sh": "c2fcf34f2527c024834db97acd12f499c4e3d6805226827d42fa02d6b5a7fa06",
@@ -287,5 +287,5 @@
     "proofs/S0-01/vendor/buzz-acp/VENDORED-FROM.md": "04c67f19d0438df51bb4dd52980dbc7719e2e4d8d938399202423bd37840da63",
     "proofs/S0-01/vendor/buzz-acp/acp.rs": "44e82861763694d2b82d02b15ee100ffd6c78874a2b2282865e6656c539c38f1"
   },
-  "digest": "dad5c0ffd591ac27572896ff9226d4647934e9fda5571eb5594f50b0840cbff7"
+  "digest": "a232afbcf22a4700d6e2027084836c3e0b1e862d08e4d6765e9900b2b14da574"
 }

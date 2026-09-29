@@ -45,9 +45,11 @@ Order is part of the contract, and it runs in this order for a reason:
      for it in units.json (the runner's stand-in input) is `units-manifest-invalid: <unit>
      override present` — a stand-in run can never pass as the live leg — and
      `<unit>/unit-identity.json` must exist and match the pinned identity in proofs/S0-01/pins.py
-     (exe realpath, entrypoint realpath and sha256) with no uid 0, else
-     `unit-identity-invalid: <unit> <detail>`. The record is unkeyed: it binds the unit that ran
-     to the pins, not against a forger with root on the PC.
+     (exe realpath, entrypoint realpath and sha256) with no uid 0 and no gid 0 (the gid since I59-F
+     round 4, VERIFY-I59-F F-11: a record without the Gid line fails too), each id at most
+     4294967294, and, when the record carries the Groups line, no supplementary group 0 (since
+     round 5, VERIFY-I59-F R4-F4), else `unit-identity-invalid: <unit> <detail>`. The record is
+     unkeyed: it binds the unit that ran to the pins, not against a forger with root on the PC.
 
 Deferral (exit 2), never a pass: the evidence root does not exist (the live units run on the
 PC), or a canary is recorded `status: not-run` — a discriminator that could not run is a DEFER
@@ -107,8 +109,13 @@ IPV4_PORT = re.compile(rf"{_OCTET}\.{_OCTET}\.{_OCTET}\.{_OCTET}:(0|[1-9][0-9]{{
 CURL_CONNECT = re.compile(r"Failed to connect to (\S+) port (\d+)")
 CURL_RESOLVE = re.compile(r"Could not resolve host: (\S+?)\.?$")
 # A7: the record run_s0_05_units.sh writes for each live unit (its pid, what /proc says it runs,
-# and the Uid line's real/effective/saved/fs uids).
-IDENTITY_KEYS = ("unit", "pid", "exe_realpath", "entrypoint_realpath", "entrypoint_sha256", "uid", "argv")
+# and the Uid and Gid lines' real/effective/saved/fs ids; the gid since I59-F round 4, VERIFY-I59-F F-11). A
+# record may carry more: the Groups line since round 4, graded when present (round 5, VERIFY-I59-F R4-F4), so a
+# record written before round 4 still reads; any other key is ignored.
+IDENTITY_KEYS = ("unit", "pid", "exe_realpath", "entrypoint_realpath", "entrypoint_sha256", "uid", "gid", "argv")
+# The largest id a unit can hold: uid_t and gid_t are 32 bits, 4294967295 is (uid_t)-1 ("no id", setresuid's
+# "unchanged"), and /proc reports no larger value (I59-F round 5, VERIFY-I59-F R4-F4).
+ID_MAX = 4294967294
 LIVE_VENUE = "pc"
 
 # The pinned unit identities come from proofs/S0-01/pins.py — the ONE source of every pinned value,
@@ -404,8 +411,23 @@ def check_unit_identity(unit_dir, unit):
     uid = record["uid"]
     if not isinstance(uid, list) or len(uid) != 4 or not all(_is_int(u) and u >= 0 for u in uid):
         refuse(f"uid {uid!r} is not the four uids of the Uid line")
+    if max(uid) > ID_MAX:
+        refuse(f"uid {max(uid)} is above {ID_MAX}")
     if 0 in uid:
         refuse("uid 0")
+    gid = record["gid"]
+    if not isinstance(gid, list) or len(gid) != 4 or not all(_is_int(g) and g >= 0 for g in gid):
+        refuse(f"gid {gid!r} is not the four gids of the Gid line")
+    if max(gid) > ID_MAX:
+        refuse(f"gid {max(gid)} is above {ID_MAX}")
+    if 0 in gid:
+        refuse("gid 0")
+    if "groups" in record:
+        groups = record["groups"]
+        if not isinstance(groups, list) or not all(_is_int(g) and g >= 0 for g in groups):
+            refuse(f"groups {groups!r} is not the gids of the Groups line")
+        if 0 in groups:
+            refuse("supplementary group 0")
     return f"unit-identity: {unit} pid {record['pid']} runs {entrypoint} (sha256 {sha256[:12]}) as uid {uid[0]}"
 
 
