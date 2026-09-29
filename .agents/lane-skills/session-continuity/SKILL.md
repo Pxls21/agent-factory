@@ -334,6 +334,8 @@ once they are).
 *(Since CTX1, D-089, the post-commit hook re-indexes a graph only when the commit changed a file that graph
 reads; a commit of only Markdown, `wiki/`, `todo/`, `transcripts/` or `tasks/` re-indexes none.)*
 
+**A live-state edit targets the newest block only (2026-09-29):** older blocks repeat the same status lines (`- **BRIEFED, WAITING FOR A SLOT:** …` stood in two blocks), so a scripted edit anchors on the newest block's heading and asserts each line once inside that block, never across the file; an exactly-once assertion over the whole file stopped such an edit before it wrote, which was the right outcome.
+
 ## The task list before the view (superseded by D-102 on 2026-09-28)
 
 Since D-102 went live, the Stop and SessionStart hooks write the task list from the ledger (`scripts/task_sync.py`;
