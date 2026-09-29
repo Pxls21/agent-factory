@@ -6,6 +6,7 @@ V-d F19: assert the EXACT summary line format (full regex), not substrings.
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import textwrap
 
@@ -125,3 +126,16 @@ def test_a_basetemp_whose_parent_is_missing_is_made_first(tmp_path):
         r = subprocess.run(["bash", SCRIPT, str(test), *form], capture_output=True, text=True, timeout=60)
         assert r.returncode == 0, (form, r.stdout)
         assert r.stdout.splitlines()[-1].startswith("pytest-summary: 1 passed"), (form, r.stdout)
+
+
+def test_a_direct_pytest_run_makes_a_missing_basetemp_parent(tmp_path):
+    # The same trap outside the wrapper (2026-09-29): a mutant run called pytest directly with --basetemp under a
+    # missing parent, and every test errored at setup; a mutation driver reads that as KILLED (AF-AP-223).
+    # tests/conftest.py's pytest_configure makes the parent for every pytest run over tests/.
+    root = os.path.join(os.path.dirname(__file__), os.pardir)
+    target = "tests/test_test_summary.py::test_a_basetemp_whose_parent_is_missing_is_made_first"   # takes tmp_path
+    bt = tmp_path / "gone" / "deeper" / "bt"
+    r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--basetemp=%s" % bt, target],
+                       capture_output=True, text=True, timeout=120, cwd=root)
+    assert r.returncode == 0, r.stdout[-2000:]
+    assert r.stdout.strip().splitlines()[-1].startswith("1 passed"), r.stdout[-2000:]

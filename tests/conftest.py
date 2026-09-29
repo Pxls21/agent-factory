@@ -12,12 +12,21 @@ actually asks for the fixture.
 """
 import gzip
 import json
+import os
 import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def pytest_configure(config):
+    """A --basetemp whose parent is missing makes every test that takes tmp_path error at setup, and a mutation
+    driver then reads each mutant KILLED (AF-AP-223; twice more on 2026-09-29, a brief's premise line and a mutant run):
+    make the parent. pytest itself removes and remakes the basetemp. Imports nothing, touches no sys.path."""
+    if config.option.basetemp:
+        Path(os.path.abspath(str(config.option.basetemp))).parent.mkdir(parents=True, exist_ok=True)
 
 
 @pytest.fixture
