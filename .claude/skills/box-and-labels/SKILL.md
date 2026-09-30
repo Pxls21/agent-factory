@@ -10,12 +10,13 @@ The owner's design (D-113, 2026-09-29): a word, the LABEL, names a reviewed sequ
 with those inputs and answers with one receipt. D-114 (the owner, 2026-09-29): CLAUDE.md lists every label, and this
 skill holds the details.
 
-## State (measured 2026-09-29)
+## State (measured 2026-09-30)
 
 - The labels run today as a tool call: `python3 scripts/stack.py <label> key=value ...`. `python3 scripts/stack.py
   explain <label> ...` prints the plan and runs nothing. The SessionStart hook prints the catalog.
-- The box is BUILT (LS-B11, task #380, landed GATED-PENDING-VERIFY) and NOT ON. Its hooks (LS-B10's Stop and prompt
-  hooks, `tasks/briefs/labeling/LS-B10-registration.patch`) are not registered. Until they are, a box in the chat does
+- The box is BUILT (LS-B11, task #380) and VERIFIED (VERIFY-LS-B11: MERGE-READY-WITH-FOLLOWUPS, 2026-09-30; its
+  follow-ups are issue #87), and NOT ON. Its hooks (LS-B10's Stop and prompt hooks,
+  `tasks/briefs/labeling/LS-B10-registration.patch`) are not registered. Until they are, a box in the chat does
   nothing, and no nonce line is injected.
 - A box's body runs only when it is one line of at most 500 characters (LS-B11 D4: the runner's text type refuses a
   newline). A longer body gets a plain refusal, never a run.
@@ -69,6 +70,9 @@ KC-J1, D-077). Each new label gets a row here and a word in CLAUDE.md's labels l
 
 - A box never carries a shell command or a script (D-111: the Stop hook runs outside the permission checks). The label
   comes from the registry, and the runner refuses an unknown input.
+- Draw an example box with `<nonce>` in its top edge, never 12 hex digits (VERIFY-LS-B11 F-3). A well-formed box with
+  an old nonce is a stale request, so it counts as the message's first request, and any prose after it refuses every
+  request of that message, a real one included.
 - No stack calls a model (KC-J1) or acts outward; `scripts/stack.py` refuses a registry that tries.
 - After a rated stack's run, rate it: `--rate <run id>=<rel>/<use>` on the next stack call, or `python3
   scripts/stack.py rate <run id>=<rel>/<use>` (0 to 3 each). The ratings are System 1's data.
