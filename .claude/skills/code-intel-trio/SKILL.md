@@ -61,6 +61,12 @@ codebase-memory-mcp cli detect_changes --project home-user-agent-factory        
 - QUIRK: CLI-mode `trace_path` returns an empty echo of its args — use
   `query_graph` Cypher for caller/callee traces instead (works, verified).
 - Project name = slugged path (`home-user-agent-factory`); `list_projects` when unsure.
+- QUIRK: one daemon per account, in `CBM_RUNTIME_DIR` (default `/tmp/cbm-daemon-<uid>`). A call on another
+  cache (`CBM_CACHE_DIR`, or another HOME) fails while a daemon on a different cache lives there ("the active
+  account daemon uses a different cache directory"), and a connected codebase-memory MCP server keeps one live
+  on the real cache for its whole session. A private cache needs a private runtime dir too, short and under
+  /tmp: the socket path must fit in 108 bytes, and `TMPDIR` does not move it (AF-AP-251; measured
+  2026-09-30).
 
 ### code-review-graph (venv: /root/venv-crg/bin/code-review-graph)
 ```bash
