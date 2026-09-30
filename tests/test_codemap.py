@@ -385,7 +385,10 @@ def check_edit_context(repo, base):
     payload.write_text(json.dumps({"tool_name": "Edit", "tool_input": {
         "file_path": str(repo / "scripts" / "alpha.py"), "old_string": old, "new_string": old + "  # x"}}))
     out = _run([sys.executable, "scripts/codemap.py", "demo", str(payload)], repo, _env(base["home"])).stdout
-    assert out.startswith("old_string at: L32-33\nenclosing: main\n"), out
+    # the fixture holds no scripts/filepacks.py, whose checks label the CLIs' text (VERIFY-K2-RS F3): the first line
+    # says the text was not checked; tests/test_filepacks.py (cli-label) runs the checks themselves
+    assert out.startswith("codemap: NOT CHECKED against HEAD's committed code: scripts/filepacks.py, which holds the "
+                          "checks, is absent\nold_string at: L32-33\nenclosing: main\n"), out
 
 
 def check_record_that_lies(repo, base):

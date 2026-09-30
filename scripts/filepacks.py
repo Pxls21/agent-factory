@@ -25,8 +25,10 @@ P1, `hook` (PreToolUse on Read, Edit, Write and Bash, through scripts/hook_conte
 touches a tracked file, its entry is injected (`entry`): for a code file with a code-map pack (scripts/codemap.py, L2a)
 the code part first (the enclosing symbol for an Edit, the symbols in range for a Read with offset and limit, else the
 file's own entry, each keeping the code map's STALE mark), then the pack's lines, the sources taken in turn (GROUPS),
-all cut at a line boundary within PACK_BUDGET bytes. Every byte shown is committed text of HEAD's tree (task #353, K2
-RE-SCOPE, D-117):
+all cut at a line boundary within PACK_BUDGET bytes. Every byte shown, the readers' own words aside, is committed text
+of HEAD's tree or the build's commit history (P2's commit lines, a brief's last commit and date, the head line's
+`@commit`), and after a same-tree ref move that history can hold commits HEAD's history lacks (task #353, K2 RE-SCOPE,
+D-117):
   - nothing at all (`tree`) unless the build's tree is HEAD's, resolved once per hook call (`git rev-parse HEAD^{tree}`,
     within HEAD_TIMEOUT; a HEAD that cannot be resolved gives nothing): the packs describe the build's commit, and git
     moves HEAD with no hook (a reset, a checkout). Trees, not commits: scripts/push_clean.sh moves the branch to a
@@ -53,7 +55,8 @@ pipeline (it runs in a subshell), a heredoc fed to a shell, `case` patterns insi
 Once per window: `file:<path>` (Read, Write, Bash; an Edit sets it too) and `sym:<path>:<symbol>` (Edit) go into
 <state>/filepacks-seen/<window>.json under the System-1 WindowLock. At most CALL_MAX files a call (the first named that
 inject) and PACK_WINDOW_MAX a window. `hook --reset` (SessionStart) has the System-1 reset's semantics: a compaction
-forgets the compacted window, a resume or a clear every window of its session, and a marker idle 7 days goes.
+forgets the compacted window, a resume or a clear every window of its session, and a marker idle 7 days goes. When
+BUILD.json is the marker of a build that crashed (no build holds the lock), the reset starts one build (`recover`).
 
 Boundary: only files tracked at the last build (TRACKED.txt, one exact line per path), and only while that build's tree
 is HEAD's. A path outside the root or with a `..` component and an untracked file give nothing. A pack that is itself a
@@ -67,7 +70,8 @@ reset still runs). A call that names no tracked file, or that comes before the f
 marker; one while the build's tree is not HEAD's logs its files as skipped (`tree`) and writes no marker. What a call
 does write (VERIFY-K2 F12): a payload that is not JSON logs one line, creating <state> when it is missing; the first
 call with <state> present caches the System-1 hook's bytecode under <state>/pycache; the import of scripts/codemap.py
-caches its bytecode in scripts/__pycache__, which git ignores.
+caches its bytecode in scripts/__pycache__, which git ignores; a reset that starts a build writes
+<state>/filepacks-recover.log, and the build its packs.
 
 `replay` runs the main loop's recorded tool calls through the hook's planner, window by window (split at the compaction
 boundaries), with the seen keys in memory, never the live markers. It reads only compaction boundaries and tool_use
@@ -118,6 +122,7 @@ HEADLINE = 160                       # characters
 GROUPS = ("ledger", "incidents", "decisions", "briefs", "skills", "commits")   # the order an entry takes them in
 GIT_TIMEOUT = 300
 HEAD_TIMEOUT = 2                     # seconds the hook waits for `git rev-parse HEAD^{tree}` (a few ms when it answers)
+GIT_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE")    # each names a repository git would read
 OBJECT_RX = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")      # a git object id (SHA-1 or SHA-256)
 STALE_MARK = "STALE: the file changed"     # the code map's own freshness mark, in each of its entries
 
@@ -550,12 +555,19 @@ class Packs:
         return p[len(str(self.root)) + 1:] if p.startswith(str(self.root) + os.sep) else p
 
 
+def _own_env():
+    """os.environ without GIT_ENV: git then finds the repository from the directory it runs in, never from a variable
+    its caller left set (VERIFY-K2-RS F4: an inherited GIT_DIR named a clone's HEAD, whose tree was the build's)."""
+    return {k: v for k, v in os.environ.items() if k not in GIT_ENV}
+
+
 def _rev(root, name):
-    """`git rev-parse --verify -q NAME` in `root`: the object id, or None when git cannot resolve it (no repository, an
-    unborn branch, an error) or does not answer within HEAD_TIMEOUT seconds."""
+    """`git rev-parse --verify -q NAME` in the repository at `root`, with GIT_ENV removed from its environment
+    (_own_env): the object id, or None when git cannot resolve it (no repository, an unborn branch, an error) or does
+    not answer within HEAD_TIMEOUT seconds."""
     import subprocess
     try:
-        r = subprocess.run(["git", "rev-parse", "--verify", "-q", name], cwd=root, capture_output=True,
+        r = subprocess.run(["git", "rev-parse", "--verify", "-q", name], cwd=root, env=_own_env(), capture_output=True,
                            stdin=subprocess.DEVNULL, timeout=HEAD_TIMEOUT)
     except (OSError, subprocess.SubprocessError):
         return None
@@ -794,7 +806,8 @@ def plan(payload, rels, seen, packs, budget=PACK_BUDGET, timings=None):
 
 def reset(payload, state, now):
     """SessionStart, with the System-1 reset's semantics on <state>/filepacks-seen: a compaction forgets the compacted
-    window, a resume or a clear every window of the session; a marker idle MARKER_MAX_AGE_S goes whatever the source."""
+    window, a resume or a clear every window of the session; a marker idle MARKER_MAX_AGE_S goes whatever the source.
+    Then `recover`: a build that crashed after its marker gets one new build."""
     sys1 = s1()
     seen_dir = Path(state) / "filepacks-seen"
     src = payload.get("source")
@@ -811,7 +824,41 @@ def reset(payload, state, now):
                 removed += name.endswith(".json")
         except FileNotFoundError:
             pass
-    return {"event": "SessionStart", "source": src if isinstance(src, str) else None, "removed": removed}
+    return dict({"event": "SessionStart", "source": src if isinstance(src, str) else None, "removed": removed},
+                **recover(state))
+
+
+def recover(state):
+    """VERIFY-K2-RS F15: a build that crashed after its marker (`"building": true`, no tree) leaves the hook showing
+    nothing until a build writes its record, and without this only the next commit's build would. When BUILD.json is
+    that marker and no build holds <state>/filepacks.lock, one build of HEAD starts in the background: a new session,
+    niced, in this repository (_own_env), its output in <state>/filepacks-recover.log. The session start waits for the
+    spawn, never for the build. While a build holds the lock, none starts: the marker is that build's. Returns the
+    reset record's part: {} (the record is not a marker), {"rebuild": "busy"} or {"rebuild": "started", "pid": N}."""
+    import fcntl
+    import subprocess
+    sys1 = s1()
+    try:
+        rec = json.loads(sys1.read_regular(str(Path(state) / "filepacks" / "BUILD.json")))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(rec, dict) or rec.get("building") is not True:
+        return {}
+    lock = sys1.open_regular(str(Path(state) / "filepacks.lock"), os.O_WRONLY | os.O_CREAT)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return {"rebuild": "busy"}
+    finally:
+        os.close(lock)            # free before the build takes it: the build's own lock keeps builds one at a time
+    out = sys1.open_regular(str(Path(state) / "filepacks-recover.log"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+    try:
+        p = subprocess.Popen([sys.executable, str(ROOT / "scripts" / "filepacks.py"), "build"], cwd=str(ROOT),
+                             env=dict(_own_env(), AF_FILEPACKS_STATE=str(state)), stdin=subprocess.DEVNULL, stdout=out,
+                             stderr=out, start_new_session=True, preexec_fn=lambda: os.nice(19))
+    finally:
+        os.close(out)
+    return {"rebuild": "started", "pid": p.pid}
 
 
 def log(state, rec):

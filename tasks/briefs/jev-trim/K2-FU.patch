@@ -1,0 +1,777 @@
+diff --git a/scripts/codemap.py b/scripts/codemap.py
+index 39c91dc..8aafd62 100644
+--- a/scripts/codemap.py
++++ b/scripts/codemap.py
+@@ -8,8 +8,8 @@ A pack describes ONE content of the file: its blob in the build's commit, read f
+ (task #353, K2 RE-SCOPE, D-117). A file with no blob there (untracked, or no commit) gets no pack, and an old pack of it
+ is removed. The pack holds:
+   - the file's symbols (names, qualified names, kinds, line spans with the decorators above them, signatures), parsed
+-    from that blob by Python's own `ast` (`symbols_from: "ast"`); a file in any other language has none. No symbol,
+-    name, line or count comes from a graph;
++    from that blob by Python's own `ast` (`symbols_from: "ast"`; `parsed` says whether the blob parsed); a file in any
++    other language has none. No symbol, name, line or count comes from a graph;
+   - the registry rows the blob's lines match (`scripts/ap_screen.py`, in process, with each row's message), screened by
+     code run from bytes read once, whose blob ids the pack records (`instruments.ap_screen.screens`);
+   - the graph sections, which no reader shows any more (the lookups below render the symbols and the registry rows
+@@ -27,7 +27,11 @@ Usage:
+       the post-commit refresh: wait until each graph re-indexed for this commit is idle and has indexed each file's
+       current bytes, then build; prints one result line
+   codemap.py lookup PATH --line N [--end-line M] [--json]
+-  codemap.py demo PAYLOAD.json|-            what L2b would inject for a recorded Edit payload (file_path, old_string)
++  codemap.py demo PAYLOAD.json|-            the code map's entry for a recorded Edit payload (file_path, old_string)
++lookup and demo print their text as the file-pack hook's code part would, and when the hook would not show it (not
++HEAD's committed code), a first line says so and names the check it fails (`head_check`: tree, blob or symbols; without
++scripts/filepacks.py the first line says the text was not checked). The file-pack state is read once at start:
++AF_FILEPACKS_STATE, else <root>/.jev (as scripts/filepacks.py reads it).
+ Python (the hook): lookup(path, line, end_line=None, root=None) and edit_context(file_path, old_string, root=None).
+ """
+ from __future__ import annotations
+@@ -592,13 +596,13 @@ def _ast_symbols(data):
+     and class its name, qualified name, kind (class; method when its parent is a class; else function), start and end
+     lines, its first decorator's line when it has one (`from`, so an edit on a decorator resolves to the symbol it
+     decorates) and its signature (its first line, stripped, the colon dropped, at most 160 characters), in line order.
+-    [] when the bytes do not parse. No def sits inside an expression, so the walk enters none: a deep expression cannot
+-    exhaust the stack."""
++    None when the bytes do not parse, or nest too deep to walk (the pack records it, VERIFY-K2-RS F6). No def sits
++    inside an expression, so the walk enters none: a deep expression cannot exhaust the stack."""
+     import ast
+     try:
+         tree = ast.parse(data)
+     except (SyntaxError, ValueError, RecursionError, MemoryError):
+-        return []
++        return None
+     lines = re.split(r"\r\n?|\n", data.decode("utf-8", "replace"))      # the line breaks Python's own lines end at
+     out = []
+ 
+@@ -617,16 +621,19 @@ def _ast_symbols(data):
+     try:
+         walk(tree, "", False)
+     except RecursionError:
+-        return []
++        return None
+     return sorted(out, key=lambda s: (s["start"], -s["end"], s["qualname"]))
+ 
+ 
+ def _ast_starts(text):
+-    """{qualified name: def line} from the file's own AST: the reference a graph's spans are checked against."""
++    """{qualified name: def line} from the file's own AST: the reference a graph's spans are checked against. None when
++    the text does not parse or its tree is too deep to walk (VERIFY-K2-RS F5: a 200,000-deep unary chain raised
++    MemoryError in the parse, and a 1,000-deep one, which parses, RecursionError in the walk, which enters
++    expressions; either ended the whole build)."""
+     import ast
+     try:
+         tree = ast.parse(text)
+-    except (SyntaxError, ValueError):
++    except (SyntaxError, ValueError, RecursionError, MemoryError):
+         return None
+     out = {}
+ 
+@@ -637,7 +644,10 @@ def _ast_starts(text):
+                 walk(n, prefix + n.name + ".")
+             else:
+                 walk(n, prefix)
+-    walk(tree, "")
++    try:
++        walk(tree, "")
++    except RecursionError:
++        return None
+     return out
+ 
+ 
+@@ -742,6 +752,8 @@ def build_one(root, rel, gn, env, commit):
+     graft_sec, graft_syms = _graft(root, rel, sha, env)
+     timing["graft_ms"] = round((time.monotonic() - t) * 1000)
+     syms = _ast_symbols(data) if lang == "python" else []       # D-117 (a): the committed blob's own ast, no graph
++    parsed = syms is not None if lang == "python" else None     # F6: the readers say why a pack names no symbol
++    syms = syms or []
+     starts = _ast_starts(text) if lang == "python" else None
+     if starts and graft_syms:
+         _moved(graft_sec, {s["qualname"]: s["start"] for s in _nest(graft_syms)}, starts, "graft")
+@@ -765,7 +777,7 @@ def build_one(root, rel, gn, env, commit):
+     timing["total_ms"] = round((time.monotonic() - t0) * 1000)
+     pack = {"schema": SCHEMA, "path": rel, "language": lang, "blob": blob_sha(data), "sha256": sha,
+             "lines": text.count("\n") + (0 if text.endswith("\n") or not text else 1), "bytes": len(data),
+-            "commit": commit, "symbols_from": "ast", "caller_files": caller_files,
++            "commit": commit, "symbols_from": "ast", "parsed": parsed, "caller_files": caller_files,
+             "instruments": {"graft": graft_sec, "gitnexus": gn_sec, "code-review-graph": crg_sec, "ap_screen": reg_sec},
+             "symbols": syms, "tests": tests, "registry": registry,
+             "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "timing": timing}
+@@ -791,7 +803,8 @@ def open_gitnexus(root, env):
+ 
+ def build(root, rels, env=None, gn=None):
+     """Build the packs of `rels` (repo-relative) in one pass; one GitNexus session serves every file (`gn`, when the
+-    caller holds one open, else one opened and closed here)."""
++    caller holds one open, else one opened and closed here). A file whose build raises costs that file only: its outcome
++    is `failed`, the reason goes to stderr, and the files after it are built (VERIFY-K2-RS F5)."""
+     root = Path(root)
+     env = dict(os.environ if env is None else env)
+     commit = _head(root)
+@@ -802,7 +815,11 @@ def build(root, rels, env=None, gn=None):
+     results = []
+     try:
+         for rel in rels:
+-            results.append((rel,) + build_one(root, rel, gn, env, commit))
++            try:
++                results.append((rel,) + build_one(root, rel, gn, env, commit))
++            except Exception as e:              # one bad file never ends the build (F5)
++                print("codemap: %s failed: %s: %s" % (rel, type(e).__name__, str(e)[:160]), file=sys.stderr)
++                results.append((rel, "failed", None))
+     finally:
+         if own and isinstance(gn, GitNexus):
+             gn.close()
+@@ -866,11 +883,23 @@ def _cap(text, cap=TEXT_CAP):
+     return raw[:cap - len(tail.encode("utf-8"))].decode("utf-8", "ignore") + tail
+ 
+ 
++def _no_symbols(pack):
++    """Why a pack names no symbol (VERIFY-K2-RS F6: "0 symbols" read as a fact about the file): another language, a
++    committed blob that does not parse, or one that defines none; a pack built before `parsed` was recorded says only
++    that it has none."""
++    if pack.get("language") != "python":
++        return "no symbols for %s" % pack.get("language")
++    return {False: "no symbols: the committed blob does not parse",
++            True: "no symbols: the committed blob defines no function or class"}.get(pack.get("parsed"), "no symbols")
++
++
+ def _entry_text(pack, rel, line, end_line, stale, sym, where_rows):
+     span = "%d" % line if end_line == line else "%d-%d" % (line, end_line)
+     head = "codemap %s:%s — " % (rel, span)
+     lines = []
+-    if sym is None:
++    if sym is None and not pack["symbols"]:
++        head += "module level (%s)" % _no_symbols(pack)
++    elif sym is None:
+         head += "module level (no enclosing symbol; %d symbols in the file)" % len(pack["symbols"])
+     else:
+         head += "%s %s L%d-%d" % (sym.get("kind", "symbol"), sym["qualname"], sym.get("from", sym["start"]), sym["end"])
+@@ -1011,13 +1040,15 @@ def file_entry(path, line=None, end_line=None, root=None, pack=None):
+     rows = pack.get("registry") or []
+     if line is None:
+         shown = [s for s in syms if "." not in s["qualname"]]
+-        head = "codemap %s — %d symbols, %d at top level" % (rel, len(syms), len(shown))
++        head = "codemap %s — %s" % (rel, "%d symbols, %d at top level" % (len(syms), len(shown)) if syms
++                                    else _no_symbols(pack))
+     else:
+         if line < 1 or end_line < line:
+             return dict(res, status="miss", text="codemap: %d-%d is not a line range" % (line, end_line))
+         shown = [s for s in syms if s.get("from", s["start"]) <= end_line and s["end"] >= line]
+         rows = [h for h in rows if line <= h["line"] <= end_line]
+-        head = "codemap %s:%d-%d — %d of the file's %d symbols in range" % (rel, line, end_line, len(shown), len(syms))
++        head = "codemap %s:%d-%d — %s" % (rel, line, end_line, "%d of the file's %d symbols in range" % (
++            len(shown), len(syms)) if syms else _no_symbols(pack))
+     lines = [head + "  [pack %s]" % res["pack"]]
+     if stale:
+         lines.append("STALE: the file changed since this pack was built (blob %s); lines may have moved" %
+@@ -1032,6 +1063,68 @@ def file_entry(path, line=None, end_line=None, root=None, pack=None):
+     return dict(res, status="file" if line is None else "range", text=_cap("\n".join(lines)))
+ 
+ 
++_FP = None
++HEAD_CHECKS = {"tree": "no file-pack build of HEAD's tree",
++               "blob": "the pack is not of the file's blob at the file-pack build",
++               "symbols": "the pack's symbols are not its blob's own ast",
++               "unchecked": "scripts/filepacks.py, which holds the checks, is absent"}
++SHOWN = ("hit", "module", "past-end")         # a lookup's statuses whose text a pack gave
++
++
++def _filepacks():
++    """scripts/filepacks.py beside this file (the file-pack hook), imported once per process for its own checks; it
++    shares this process's System-1 import. None when it is absent."""
++    global _FP
++    if _FP is None:
++        import importlib.util
++        path = Path(__file__).resolve().parent / "filepacks.py"
++        if not path.is_file():
++            return None
++        spec = importlib.util.spec_from_file_location("codemap_filepacks", path)
++        mod = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(mod)
++        mod._S1 = _system1()
++        _FP = mod
++    return _FP
++
++
++def head_check(root, rel, pack, state):
++    """The first check the file-pack hook runs before it shows a code part (scripts/filepacks.py `entry` and
++    `_code_part`, run here through its own Packs) that `pack` fails: `tree` (the file-pack build is not of HEAD's tree,
++    or there is none), `blob` (the pack is not of the file's blob at that build) or `symbols` (its symbols are not that
++    blob's own ast); `unchecked` when scripts/filepacks.py is absent; None when it passes them all. The dev CLIs label
++    their text with it (VERIFY-K2-RS F3: after a reset they showed an undone commit's symbols, unmarked)."""
++    fp = _filepacks()
++    if fp is None:
++        return "unchecked"
++    packs = fp.Packs(root, state)
++    if not packs.current():
++        return "tree"
++    if pack.get("blob") != packs.blob(rel):
++        return "blob"
++    if pack.get("symbols_from") != "ast":
++        return "symbols"
++    return None
++
++
++def _cli_pack(root, path):
++    """(rel, pack) for lookup and demo: the pack read once, then shown and checked (None: no pack to read)."""
++    rel = rel_path(root, path)
++    return rel, (_load_pack(root, rel)[0] if in_scope(rel) and language(root, rel) else None)
++
++
++def _label(root, rel, pack, res, state):
++    """The first line of lookup's and demo's output when their text came from a pack the file-pack hook would not show:
++    it says the text is not HEAD's committed code and names the check (F3), or that it could not be checked. A label,
++    not a gate: the rest prints."""
++    if pack is not None and res.get("status") in SHOWN:
++        why = head_check(root, rel, pack, state)
++        if why == "unchecked":
++            print("codemap: NOT CHECKED against HEAD's committed code: %s" % HEAD_CHECKS[why])
++        elif why:
++            print("codemap: NOT HEAD's committed code (%s): %s" % (why, HEAD_CHECKS[why]))
++
++
+ # ---------- the CLI ----------
+ 
+ def _refresh(ns):
+@@ -1116,8 +1209,11 @@ def main(argv=None):
+         return 0
+     if ns.cmd == "refresh":
+         return _refresh(ns)
++    state = Path(os.environ.get("AF_FILEPACKS_STATE") or root / ".jev")     # the file-pack state, as filepacks.py
+     if ns.cmd == "lookup":
+-        res = lookup(ns.path, ns.line, ns.end_line, root=root)
++        rel, pack = _cli_pack(root, ns.path)
++        res = lookup(ns.path, ns.line, ns.end_line, root=root, pack=pack)
++        _label(root, rel, pack, res, state)
+         print(json.dumps(res, indent=1) if ns.json else res["text"])
+         return 0
+     raw = sys.stdin.read() if ns.payload == "-" else Path(ns.payload).read_text(encoding="utf-8")
+@@ -1126,7 +1222,10 @@ def main(argv=None):
+     if not isinstance(ti, dict) or "file_path" not in ti or "old_string" not in ti:
+         print("codemap demo: the payload needs file_path and old_string (an Edit's tool_input)", file=sys.stderr)
+         return 2
+-    res = edit_context(ti["file_path"], ti["old_string"], root=root, replace_all=ti.get("replace_all") is True)
++    rel, pack = _cli_pack(root, ti["file_path"])
++    res = edit_context(ti["file_path"], ti["old_string"], root=root, replace_all=ti.get("replace_all") is True,
++                       pack=pack)
++    _label(root, rel, pack, res, state)
+     if ns.json:
+         print(json.dumps(res, indent=1))
+     else:
+diff --git a/scripts/filepacks.py b/scripts/filepacks.py
+index 114d0b5..916f12f 100644
+--- a/scripts/filepacks.py
++++ b/scripts/filepacks.py
+@@ -25,8 +25,10 @@ P1, `hook` (PreToolUse on Read, Edit, Write and Bash, through scripts/hook_conte
+ touches a tracked file, its entry is injected (`entry`): for a code file with a code-map pack (scripts/codemap.py, L2a)
+ the code part first (the enclosing symbol for an Edit, the symbols in range for a Read with offset and limit, else the
+ file's own entry, each keeping the code map's STALE mark), then the pack's lines, the sources taken in turn (GROUPS),
+-all cut at a line boundary within PACK_BUDGET bytes. Every byte shown is committed text of HEAD's tree (task #353, K2
+-RE-SCOPE, D-117):
++all cut at a line boundary within PACK_BUDGET bytes. Every byte shown, the readers' own words aside, is committed text
++of HEAD's tree or the build's commit history (P2's commit lines, a brief's last commit and date, the head line's
++`@commit`), and after a same-tree ref move that history can hold commits HEAD's history lacks (task #353, K2 RE-SCOPE,
++D-117):
+   - nothing at all (`tree`) unless the build's tree is HEAD's, resolved once per hook call (`git rev-parse HEAD^{tree}`,
+     within HEAD_TIMEOUT; a HEAD that cannot be resolved gives nothing): the packs describe the build's commit, and git
+     moves HEAD with no hook (a reset, a checkout). Trees, not commits: scripts/push_clean.sh moves the branch to a
+@@ -53,7 +55,8 @@ pipeline (it runs in a subshell), a heredoc fed to a shell, `case` patterns insi
+ Once per window: `file:<path>` (Read, Write, Bash; an Edit sets it too) and `sym:<path>:<symbol>` (Edit) go into
+ <state>/filepacks-seen/<window>.json under the System-1 WindowLock. At most CALL_MAX files a call (the first named that
+ inject) and PACK_WINDOW_MAX a window. `hook --reset` (SessionStart) has the System-1 reset's semantics: a compaction
+-forgets the compacted window, a resume or a clear every window of its session, and a marker idle 7 days goes.
++forgets the compacted window, a resume or a clear every window of its session, and a marker idle 7 days goes. When
++BUILD.json is the marker of a build that crashed (no build holds the lock), the reset starts one build (`recover`).
+ 
+ Boundary: only files tracked at the last build (TRACKED.txt, one exact line per path), and only while that build's tree
+ is HEAD's. A path outside the root or with a `..` component and an untracked file give nothing. A pack that is itself a
+@@ -67,7 +70,8 @@ reset still runs). A call that names no tracked file, or that comes before the f
+ marker; one while the build's tree is not HEAD's logs its files as skipped (`tree`) and writes no marker. What a call
+ does write (VERIFY-K2 F12): a payload that is not JSON logs one line, creating <state> when it is missing; the first
+ call with <state> present caches the System-1 hook's bytecode under <state>/pycache; the import of scripts/codemap.py
+-caches its bytecode in scripts/__pycache__, which git ignores.
++caches its bytecode in scripts/__pycache__, which git ignores; a reset that starts a build writes
++<state>/filepacks-recover.log, and the build its packs.
+ 
+ `replay` runs the main loop's recorded tool calls through the hook's planner, window by window (split at the compaction
+ boundaries), with the seen keys in memory, never the live markers. It reads only compaction boundaries and tool_use
+@@ -118,6 +122,7 @@ HEADLINE = 160                       # characters
+ GROUPS = ("ledger", "incidents", "decisions", "briefs", "skills", "commits")   # the order an entry takes them in
+ GIT_TIMEOUT = 300
+ HEAD_TIMEOUT = 2                     # seconds the hook waits for `git rev-parse HEAD^{tree}` (a few ms when it answers)
++GIT_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE")    # each names a repository git would read
+ OBJECT_RX = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")      # a git object id (SHA-1 or SHA-256)
+ STALE_MARK = "STALE: the file changed"     # the code map's own freshness mark, in each of its entries
+ 
+@@ -550,12 +555,19 @@ class Packs:
+         return p[len(str(self.root)) + 1:] if p.startswith(str(self.root) + os.sep) else p
+ 
+ 
++def _own_env():
++    """os.environ without GIT_ENV: git then finds the repository from the directory it runs in, never from a variable
++    its caller left set (VERIFY-K2-RS F4: an inherited GIT_DIR named a clone's HEAD, whose tree was the build's)."""
++    return {k: v for k, v in os.environ.items() if k not in GIT_ENV}
++
++
+ def _rev(root, name):
+-    """`git rev-parse --verify -q NAME` in `root`: the object id, or None when git cannot resolve it (no repository, an
+-    unborn branch, an error) or does not answer within HEAD_TIMEOUT seconds."""
++    """`git rev-parse --verify -q NAME` in the repository at `root`, with GIT_ENV removed from its environment
++    (_own_env): the object id, or None when git cannot resolve it (no repository, an unborn branch, an error) or does
++    not answer within HEAD_TIMEOUT seconds."""
+     import subprocess
+     try:
+-        r = subprocess.run(["git", "rev-parse", "--verify", "-q", name], cwd=root, capture_output=True,
++        r = subprocess.run(["git", "rev-parse", "--verify", "-q", name], cwd=root, env=_own_env(), capture_output=True,
+                            stdin=subprocess.DEVNULL, timeout=HEAD_TIMEOUT)
+     except (OSError, subprocess.SubprocessError):
+         return None
+@@ -794,7 +806,8 @@ def plan(payload, rels, seen, packs, budget=PACK_BUDGET, timings=None):
+ 
+ def reset(payload, state, now):
+     """SessionStart, with the System-1 reset's semantics on <state>/filepacks-seen: a compaction forgets the compacted
+-    window, a resume or a clear every window of the session; a marker idle MARKER_MAX_AGE_S goes whatever the source."""
++    window, a resume or a clear every window of the session; a marker idle MARKER_MAX_AGE_S goes whatever the source.
++    Then `recover`: a build that crashed after its marker gets one new build."""
+     sys1 = s1()
+     seen_dir = Path(state) / "filepacks-seen"
+     src = payload.get("source")
+@@ -811,7 +824,41 @@ def reset(payload, state, now):
+                 removed += name.endswith(".json")
+         except FileNotFoundError:
+             pass
+-    return {"event": "SessionStart", "source": src if isinstance(src, str) else None, "removed": removed}
++    return dict({"event": "SessionStart", "source": src if isinstance(src, str) else None, "removed": removed},
++                **recover(state))
++
++
++def recover(state):
++    """VERIFY-K2-RS F15: a build that crashed after its marker (`"building": true`, no tree) leaves the hook showing
++    nothing until a build writes its record, and without this only the next commit's build would. When BUILD.json is
++    that marker and no build holds <state>/filepacks.lock, one build of HEAD starts in the background: a new session,
++    niced, in this repository (_own_env), its output in <state>/filepacks-recover.log. The session start waits for the
++    spawn, never for the build. While a build holds the lock, none starts: the marker is that build's. Returns the
++    reset record's part: {} (the record is not a marker), {"rebuild": "busy"} or {"rebuild": "started", "pid": N}."""
++    import fcntl
++    import subprocess
++    sys1 = s1()
++    try:
++        rec = json.loads(sys1.read_regular(str(Path(state) / "filepacks" / "BUILD.json")))
++    except (OSError, ValueError):
++        return {}
++    if not isinstance(rec, dict) or rec.get("building") is not True:
++        return {}
++    lock = sys1.open_regular(str(Path(state) / "filepacks.lock"), os.O_WRONLY | os.O_CREAT)
++    try:
++        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++    except BlockingIOError:
++        return {"rebuild": "busy"}
++    finally:
++        os.close(lock)            # free before the build takes it: the build's own lock keeps builds one at a time
++    out = sys1.open_regular(str(Path(state) / "filepacks-recover.log"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
++    try:
++        p = subprocess.Popen([sys.executable, str(ROOT / "scripts" / "filepacks.py"), "build"], cwd=str(ROOT),
++                             env=dict(_own_env(), AF_FILEPACKS_STATE=str(state)), stdin=subprocess.DEVNULL, stdout=out,
++                             stderr=out, start_new_session=True, preexec_fn=lambda: os.nice(19))
++    finally:
++        os.close(out)
++    return {"rebuild": "started", "pid": p.pid}
+ 
+ 
+ def log(state, rec):
+diff --git a/tests/test_codemap.py b/tests/test_codemap.py
+index 6d8f50f..5616fe7 100644
+--- a/tests/test_codemap.py
++++ b/tests/test_codemap.py
+@@ -385,7 +385,10 @@ def check_edit_context(repo, base):
+     payload.write_text(json.dumps({"tool_name": "Edit", "tool_input": {
+         "file_path": str(repo / "scripts" / "alpha.py"), "old_string": old, "new_string": old + "  # x"}}))
+     out = _run([sys.executable, "scripts/codemap.py", "demo", str(payload)], repo, _env(base["home"])).stdout
+-    assert out.startswith("old_string at: L32-33\nenclosing: main\n"), out
++    # the fixture holds no scripts/filepacks.py, whose checks label the CLIs' text (VERIFY-K2-RS F3): the first line
++    # says the text was not checked; tests/test_filepacks.py (cli-label) runs the checks themselves
++    assert out.startswith("codemap: NOT CHECKED against HEAD's committed code: scripts/filepacks.py, which holds the "
++                          "checks, is absent\nold_string at: L32-33\nenclosing: main\n"), out
+ 
+ 
+ def check_record_that_lies(repo, base):
+diff --git a/tests/test_filepacks.py b/tests/test_filepacks.py
+index a7314eb..9a0e6fd 100644
+--- a/tests/test_filepacks.py
++++ b/tests/test_filepacks.py
+@@ -45,6 +45,13 @@ names no tree before it changes any pack, and the reader reads the record again
+ Read while a build of the undone commit runs, after a reset) and record-rechecked (a build that begins between the two
+ reads) show nothing. Every build's record carries its own random id: record-rebuilt (two builds between the reads, the
+ second of the commit the record names, both 0 ms long) shows nothing.
++
++Round 6 (VERIFY-K2-RS's follow-ups, task #420, D-120): registry-committed (F1: a registry row comes from the committed
++blob, never the working copy), head-unresolved's record with no tree beside a git that fails (F2), cli-label (F3: the
++code map's lookup and demo CLIs label a text the hook would not show), foreign-git-dir (F4: a GIT_DIR its caller left
++set never picks the reader's HEAD), deep-chain (F5: one bad file never ends a code-map build), no-symbols-lines (F6: a
++file with no symbols says why) and recover (F15: the SessionStart reset starts one build after a build that crashed
++after its marker, never beside a live one). The verifier's two surviving mutants are here by name.
+ """
+ import ast
+ import fcntl
+@@ -205,7 +212,7 @@ def plant_code_pack(repo, rel, commit_id):
+     screens = {p: git(repo, "hash-object", "--", p).strip() if (repo / p).is_file() else "0" * 40 for p in SCREENS}
+     pack = {"schema": 1, "path": rel, "language": "python", "blob": git(repo, "hash-object", "--", rel).strip(),
+             "sha256": sha, "lines": data.count(b"\n"), "bytes": len(data), "commit": commit_id,
+-            "symbols_from": "ast", "caller_files": [],
++            "symbols_from": "ast", "parsed": True, "caller_files": [],
+             "instruments": {"graft": dict(fresh), "gitnexus": dict(fresh, indexed_commit=commit_id, symbols=len(syms),
+                                                                    unmatched=[]),
+                             "code-review-graph": dict(fresh, tests_found=1),
+@@ -1139,7 +1146,9 @@ def check_same_tree_move(repo, st, ids, tmp):
+ def check_head_unresolved(repo, st, ids, tmp):
+     """A HEAD that cannot be resolved shows nothing: an unborn branch, no repository (.git moved away; the search stops
+     at the repo's parent), a git that does not answer within HEAD_TIMEOUT (a `git` first on PATH that sleeps: the real
+-    one cannot be made to hang on demand); a HEAD that resolves shows (the control, before and after)."""
++    one cannot be made to hang on demand), and a git that fails beside a record that names no tree (a build's from before
++    the check, and a marker; VERIFY-K2-RS F2: None equals None); a HEAD that resolves shows (the control, before and
++    after)."""
+     build(repo, st)
+     env = dict(env_for(repo, st), GIT_CEILING_DIRECTORIES=str(repo.parent))
+     assert context(run(repo, st, read(repo, "docs/NOTE.md", sid="hu0"), env=env)), "the control: a HEAD that resolves"
+@@ -1164,6 +1173,21 @@ def check_head_unresolved(repo, st, ids, tmp):
+     ctx = context(run(repo, st, read(repo, "docs/NOTE.md", sid="hu3"), env=dict(env, PATH="%s:%s" % (
+         shim, env["PATH"])), timeout=25))
+     assert ctx == "" and time.monotonic() - t0 < 15, "an unresolved HEAD showed a pack (a git that does not answer)"
++    path = st / "filepacks" / "BUILD.json"            # VERIFY-K2-RS F2: a record with no tree and a git that fails
++    raw = path.read_bytes()
++    old = {k: v for k, v in json.loads(raw).items() if k not in ("tree", "id")}      # a record from before the check
++    shim = tmp / "failing-git"
++    shim.mkdir()
++    (shim / "git").write_text("#!/bin/sh\nexit 128\n")
++    (shim / "git").chmod(0o755)
++    try:
++        for k, rec in enumerate((old, {"schema": 1, "commit": old["commit"], "building": True})):     # and a marker
++            path.write_text(json.dumps(rec, sort_keys=True) + "\n")
++            ctx = context(run(repo, st, read(repo, "docs/NOTE.md", sid="hu5%d" % k), env=dict(env, PATH="%s:%s" % (
++                shim, env["PATH"]))))
++            assert ctx == "", "a record with no tree and a git that fails showed a pack: %r" % ctx[:80]
++    finally:
++        path.write_bytes(raw)
+     assert context(run(repo, st, read(repo, "docs/NOTE.md", sid="hu4"), env=env)), "the control: after"
+ 
+ 
+@@ -1387,6 +1411,238 @@ def check_record_rebuilt(repo, st, ids, tmp):
+     assert cn not in e["text"] and e["text"] == "" and e["skip"] == "tree", \
+         "a part another build wrote reached the model (two builds while the parts were read): %r" % e["text"][:120]
+ 
++
++# ---------- round 6: VERIFY-K2-RS's follow-ups (task #420, D-120) ----------
++
++def check_registry_committed(repo, st, ids, tmp):
++    """VERIFY-K2-RS F1: a registry row comes from the committed blob, never from the working copy. The repo's own screen
++    committed, alpha.py commits a line the AF-AP-175 screen hits; after that commit a working-copy line the screen hits
++    too, with a canary. The real code-map build, then the file-pack build and the hook: an Edit on the canary line shows
++    the code part and no byte of that line; an Edit on the committed line shows its row, at its committed line (the
++    control)."""
++    commit(repo, {rel: (ROOT / rel).read_text(encoding="utf-8") for rel in SCREENS}, "the screen", 9)
++    alpha = (repo / "scripts" / "alpha.py").read_text().replace(
++        "    return Box(os.getpid()).get()", '    ref = "HEAD"  # the committed hit\n    return Box(os.getpid()).get()')
++    commit(repo, {"scripts/alpha.py": alpha}, "a committed hit", 10)
++    cn = "rw" + secrets.token_hex(5)
++    line = '    leak = "%s" + "HEAD"' % cn
++    (repo / "scripts" / "alpha.py").write_text(alpha.replace("    return x + 1", line + "\n    return x + 1"))
++    out = codemap_build(repo, tmp, "scripts/alpha.py")
++    assert out.startswith("built scripts/alpha.py "), "not the real builder: %r" % out[-300:]
++    build(repo, st)
++    ctx = context(run(repo, st, edit(repo, "scripts/alpha.py", line, sid="rw0")))
++    assert cn not in ctx and "leak = " not in ctx, \
++        "an uncommitted line reached the model through a registry row: %r" % ctx[:300]
++    assert ctx.startswith("codemap scripts/alpha.py:6 — function helper L5-6 · def helper(x)"), \
++        "the control: no code part on the canary line: %r" % ctx[:120]
++    ctx = context(run(repo, st, edit(repo, "scripts/alpha.py", '    ref = "HEAD"  # the committed hit', sid="rw1")))
++    assert 'registry rows here 1: AF-AP-175 :18 ref = "HEAD"  # the committed hit — ' in ctx, \
++        "the control: the committed line's row: %r" % ctx[:300]
++
++
++def codemap_cli(repo, st, *args):
++    """The fixture's code-map dev CLI (`codemap.py lookup` or `demo`) with the file-pack state `st`: its output lines."""
++    r = subprocess.run([sys.executable, "scripts/codemap.py", *args], cwd=repo, capture_output=True, text=True,
++                       timeout=60, env={"PATH": "/usr/bin:/bin", "HOME": str(repo.parent), "LANG": "C.UTF-8",
++                                        "PYTHONDONTWRITEBYTECODE": "1", "AF_FILEPACKS_STATE": str(st)})
++    assert r.returncode == 0, (r.stdout[-400:], r.stderr[-400:])
++    return r.stdout.split("\n")
++
++
++LABEL = "codemap: NOT HEAD's committed code (%s): "
++
++
++def check_cli_label(repo, st, ids, tmp):
++    """VERIFY-K2-RS F3: `codemap.py lookup` and `demo` run the checks the hook runs before it shows a code part, and
++    when one fails their first line says the text is not HEAD's committed code and names it; the rest prints as without
++    it. A commit adds a def with a canary to alpha.py, its code pack and a build follow: at HEAD's tree neither CLI
++    prints a label (the control); after `git reset --mixed HEAD~1` and, the commit made again, after `git reset --hard
++    HEAD~1`, both print the tree label, then the undone commit's symbol. Then a build of HEAD's tree beside that code
++    pack (blob), the pack of HEAD's blob (no label), and its symbols from a graph (symbols)."""
++    cn = "cl" + secrets.token_hex(5)
++    new = (repo / "scripts" / "alpha.py").read_text() + "\n\ndef leak_%s(x):\n    return x\n" % cn
++    at = str(new.count("\n") - 1)                                # the canary def's line
++    payload = tmp / "edit.json"
++    payload.write_text(json.dumps(edit(repo, "scripts/alpha.py", "    return x + 1")))
++    sym = "codemap scripts/alpha.py:%s — function leak_%s" % (at, cn)
++
++    def outs():
++        return (codemap_cli(repo, st, "lookup", "scripts/alpha.py", "--line", at),
++                codemap_cli(repo, st, "demo", str(payload)))
++    for k, mode in enumerate(("--mixed", "--hard")):
++        head = commit(repo, {"scripts/alpha.py": new}, "a canary def", 9 + k)
++        plant_code_pack(repo, "scripts/alpha.py", head)
++        build(repo, st)
++        lk, dm = outs()
++        assert lk[0].startswith(sym) and dm[0] == "old_string at: L6-6", \
++            "the control: at HEAD's tree a CLI printed a label: %r %r" % (lk[:2], dm[:2])
++        git(repo, "reset", "-q", mode, "HEAD~1")
++        lk, dm = outs()
++        assert lk[0].startswith(LABEL % "tree") and dm[0].startswith(LABEL % "tree"), \
++            "a CLI printed a pack of another tree without the label: %r %r" % (lk[:2], dm[:2])
++        assert lk[1].startswith(sym) and dm[1:3] == ["old_string at: L6-6", "enclosing: helper"], \
++            "the text after the label is not the text without it: %r %r" % (lk[:3], dm[:3])
++    build(repo, st)                                  # HEAD's tree; alpha's code pack is still the undone commit's
++    lk = codemap_cli(repo, st, "lookup", "scripts/alpha.py", "--line", "6")
++    assert lk[0].startswith(LABEL % "blob"), "a CLI printed a pack of another blob without the label: %r" % lk[:2]
++    plant_code_pack(repo, "scripts/alpha.py", ids["fourth"])
++    lk = codemap_cli(repo, st, "lookup", "scripts/alpha.py", "--line", "6")
++    assert lk[0].startswith("codemap scripts/alpha.py:6 — function helper L5-6"), "the control: %r" % lk[:2]
++    alter_pack(repo, lambda pk: pk.update(symbols_from="graft"))
++    lk = codemap_cli(repo, st, "lookup", "scripts/alpha.py", "--line", "6")
++    assert lk[0].startswith(LABEL % "symbols"), "a CLI printed a graph's symbols without the label: %r" % lk[:2]
++
++
++def check_foreign_git_dir(repo, st, ids, tmp):
++    """VERIFY-K2-RS F4: the reader resolves HEAD in this repository, whatever GIT_* variable its caller left set. A
++    commit adds a ledger line naming scripts/beta.py with a canary; a clone takes that commit; a build follows, and
++    `git reset --mixed HEAD~1` undoes the commit here: the clone's HEAD has the build's tree, this repository's has not.
++    With GIT_DIR naming the clone, nothing shows and the record says tree. The leak control: a git that reads the clone
++    whatever its environment (a shim first on PATH) shows the canary. (GIT_COMMON_DIR, GIT_WORK_TREE or GIT_INDEX_FILE
++    alone did not move the PIN's HEAD: measured, so none is a case here.)"""
++    cn = "fg" + secrets.token_hex(5)
++    commit(repo, {LEDGER: (repo / LEDGER).read_text() + "**T9 HOME.** %s: a line naming scripts/beta.py\n" % cn},
++           "a canary line", 9)
++    clone = tmp / "clone"
++    git(tmp, "clone", "-q", str(repo), str(clone))
++    build(repo, st)
++    git(repo, "reset", "-q", "--mixed", "HEAD~1")
++    tree = json.loads((st / "filepacks" / "BUILD.json").read_text())["tree"]
++    assert git(clone, "rev-parse", "HEAD^{tree}").strip() == tree != git(repo, "rev-parse", "HEAD^{tree}").strip(), \
++        "not the case: the clone's HEAD has the build's tree and this HEAD has another"
++    env = env_for(repo, st)
++    ctx = context(run(repo, st, read(repo, "scripts/beta.py", sid="fg0"), env=dict(env, GIT_DIR=str(clone / ".git"))))
++    assert cn not in ctx and ctx == "", "a foreign GIT_DIR's HEAD decided what shows: %r" % ctx[:120]
++    assert records(st)[-1]["skipped"] == [{"key": "file:scripts/beta.py", "why": "tree"}], records(st)[-1]
++    shim = tmp / "foreign-git"
++    shim.mkdir()
++    (shim / "git").write_text('#!/bin/sh\nGIT_DIR=%s exec %s "$@"\n' % (clone / ".git", shutil.which("git")))
++    (shim / "git").chmod(0o755)
++    ctx = context(run(repo, st, read(repo, "scripts/beta.py", sid="fg9"), env=dict(env, PATH="%s:%s" % (
++        shim, env["PATH"]))))
++    assert cn in ctx, "the control: a git that reads the clone did not show the canary: %r" % ctx[:120]
++
++
++LONG_NAME = "scripts/" + "n" * 245 + ".py"      # its pack's temporary file name is past NAME_MAX (255): the write raises
++
++
++def check_deep_chain(repo, st, ids, tmp):
++    """VERIFY-K2-RS F5: one bad file never ends a code-map build. One real `codemap.py build` of four committed files,
++    alpha.py last: a 20,000-deep unary chain (its parse raises MemoryError on Python 3.11, 3.12 and 3.13, measured), a
++    1,500-deep one with a def after it (it parses; a walk into its expressions raises RecursionError) and a file whose
++    pack cannot be written (LONG_NAME). The build exits 0, alpha.py gets its pack and symbols, each chain its pack
++    (the deep one with no symbols and `parsed` false), and the long name is `failed`, with its reason on stderr."""
++    deep, mid = "scripts/chain_deep.py", "scripts/chain_mid.py"
++    commit(repo, {deep: "x = " + "-" * 20000 + "1\n", mid: "x = " + "-" * 1500 + "1\n\n\ndef after():\n    return 1\n",
++                  LONG_NAME: "def f():\n    return 1\n"}, "deep files", 9)
++    r = subprocess.run([sys.executable, "scripts/codemap.py", "build", deep, mid, LONG_NAME, "scripts/alpha.py"],
++                       cwd=repo, capture_output=True, text=True, timeout=120,
++                       env={"PATH": "/usr/bin:/bin", "HOME": str(tmp), "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"})
++    assert r.returncode == 0, "one bad file ended the code-map build: rc %d %r" % (r.returncode, r.stderr[-300:])
++    out = r.stdout.split("\n")
++    assert out[3].startswith("built scripts/alpha.py 5 symbols") and out[2] == "failed " + LONG_NAME, out[:4]
++    assert "codemap: %s failed: OSError: " % LONG_NAME in r.stderr, r.stderr[-300:]
++    got = {}
++    for rel in (deep, mid):
++        p = repo / ".jev" / "codemap" / (rel + ".json")
++        assert p.exists(), "a file whose parse fails lost its pack, not only its symbols: %s %r" % (rel, out[:2])
++        pk = json.loads(p.read_text(encoding="utf-8"))
++        got[rel] = (pk["parsed"], [s["qualname"] for s in pk["symbols"]])
++    assert got == {deep: (False, []), mid: (True, ["after"])}, got
++
++
++NO_SYMBOLS = {"scripts/broken.py": ("def broken(:\n    return 1\n", "def broken(:",
++                                    "no symbols: the committed blob does not parse"),
++              "scripts/run.sh": ("#!/bin/sh\necho one\necho two\n", "echo one", "no symbols for shell"),
++              "scripts/consts.py": ("ONE = 1\nTWO = 2\n", "ONE = 1",
++                                    "no symbols: the committed blob defines no function or class")}
++
++
++def check_no_symbols_lines(repo, st, ids, tmp):
++    """VERIFY-K2-RS F6: a code file with no symbols says why, never "0 symbols, 0 at top level". Three committed files
++    through the real code-map build: a Python file that does not parse, a shell file, a Python file with no def. Through
++    the hook, for each: a whole Read, a Read range and an Edit."""
++    commit(repo, {rel: v[0] for rel, v in NO_SYMBOLS.items()}, "files with no symbols", 9)
++    codemap_build(repo, tmp, *NO_SYMBOLS)
++    build(repo, st)
++    ctxs = []
++    for k, (rel, (_, old, why)) in enumerate(NO_SYMBOLS.items()):
++        ctxs.append(context(run(repo, st, read(repo, rel, sid="ns%da" % k))))
++        assert ctxs[-1].startswith("codemap %s — %s  [pack " % (rel, why)), \
++            "a file with no symbols did not say why (a whole Read): %r" % ctxs[-1][:120]
++        ctxs.append(context(run(repo, st, read(repo, rel, sid="ns%db" % k, offset=1, limit=2))))
++        assert ctxs[-1].startswith("codemap %s:1-2 — %s  [pack " % (rel, why)), \
++            "a file with no symbols did not say why (a Read range): %r" % ctxs[-1][:120]
++        line = NO_SYMBOLS[rel][0].split("\n").index(old) + 1
++        ctxs.append(context(run(repo, st, edit(repo, rel, old, sid="ns%dc" % k))))
++        assert ctxs[-1].startswith("codemap %s:%d — module level (%s)  [pack " % (rel, line, why)), \
++            "a file with no symbols did not say why (an Edit): %r" % ctxs[-1][:120]
++    assert not any("0 symbols" in c or "0 at top level" in c for c in ctxs), ctxs
++
++
++def crash_after_marker(repo, st):
++    """A build that crashes after its marker (in process: its first step after the marker raises). BUILD.json is left
++    the marker, and the build's lock is free."""
++    fp = load(repo)
++
++    def crash(pdir, keep):
++        raise RuntimeError("a crash after the marker")
++    fp._clean = crash
++    with pytest.raises(RuntimeError, match="a crash after the marker"):
++        fp.build(repo, st)
++    rec = json.loads((st / "filepacks" / "BUILD.json").read_text())
++    assert rec.get("building") is True and "tree" not in rec, "not the case: no marker left: %s" % rec
++
++
++def gone(pid):
++    """True once `pid` has ended (no process, or a zombie its new parent has not reaped yet)."""
++    try:
++        with open("/proc/%d/stat" % pid) as f:
++            return f.read().rsplit(")", 1)[1].split()[0] == "Z"
++    except OSError:
++        return True
++
++
++def wait_builds(pids, bound=60):
++    deadline = time.monotonic() + bound
++    for pid in pids:
++        while not gone(pid):
++            assert time.monotonic() < deadline, "a build the reset started ran past %d s: %s" % (bound, cmdline(pid))
++            time.sleep(0.1)
++
++
++def check_recover(repo, st, ids, tmp):
++    """VERIFY-K2-RS F15: a build that crashed after its marker leaves the hook dark until a build writes its record. The
++    SessionStart reset (the registration's command) starts one build when no build holds the lock, and none while one
++    does. A build, then one that crashes after its marker (the hook shows nothing: else not the case). With the lock
++    free, the reset's record says `rebuild: started`, a build writes a record with a tree, and the hook shows the pack
++    again. After a second crash, with the lock held (a build in flight): `busy`, and no build process."""
++    build(repo, st)
++    crash_after_marker(repo, st)
++    assert context(run(repo, st, read(repo, "docs/NOTE.md", sid="rv0"))) == "", "not the case: a marker still shows"
++    r = run(repo, st, start("startup", sid="rv-s1"), cmd=REG_RESET)
++    assert (r.returncode, r.stdout) == (0, b""), r
++    rec = records(st)[-1]
++    wait_builds([rec["pid"]] if "pid" in rec else [])
++    assert rec.get("rebuild") == "started", "a crashed build's marker was not rebuilt at SessionStart: %s" % rec
++    built = json.loads((st / "filepacks" / "BUILD.json").read_text())
++    assert "tree" in built and "building" not in built, "the build it started wrote no record: %s %r" % (
++        built, (st / "filepacks-recover.log").read_text()[-300:])
++    assert context(run(repo, st, read(repo, "docs/NOTE.md", sid="rv1"))).startswith("filepack docs/NOTE.md @"), \
++        "the hook did not show the pack again after the rebuild"
++    crash_after_marker(repo, st)
++    fd = os.open(st / "filepacks.lock", os.O_WRONLY | os.O_CREAT, 0o600)
++    fcntl.flock(fd, fcntl.LOCK_EX)                   # a build in flight holds it
++    try:
++        r = run(repo, st, start("startup", sid="rv-s2"), cmd=REG_RESET)
++        rec = records(st)[-1]
++        procs = [p for p in fixture_processes(tmp) if "filepacks.py" in cmdline(p)]
++    finally:
++        os.close(fd)
++    wait_builds(procs + ([rec["pid"]] if "pid" in rec else []))
++    assert (r.returncode, rec.get("rebuild"), procs) == (0, "busy", []), \
++        "a second build started beside a live build: %s %s" % (rec, [cmdline(p) for p in procs])
++
+ CHECKS = {"edit-once-per-symbol": check_edit_once_per_symbol, "read-range": check_read_range,
+           "bash-readers": check_bash_readers, "reset": check_reset, "doc-pack-lines": check_doc_pack_lines,
+           "build-lines": check_build_lines, "build-briefs-commits": check_build_briefs_commits,
+@@ -1420,7 +1676,11 @@ CHECKS = {"edit-once-per-symbol": check_edit_once_per_symbol, "read-range": chec
+           "committed-symbols": check_committed_symbols, "legacy-symbols": check_legacy_symbols,
+           "no-graph-text": check_no_graph_text, "registry-screens": check_registry_screens,
+           "build-in-flight": check_build_in_flight, "record-rechecked": check_record_rechecked,
+-          "record-rebuilt": check_record_rebuilt}
++          "record-rebuilt": check_record_rebuilt,
++          # round 6: VERIFY-K2-RS's follow-ups (F2 is in head-unresolved)
++          "registry-committed": check_registry_committed, "cli-label": check_cli_label,
++          "foreign-git-dir": check_foreign_git_dir, "deep-chain": check_deep_chain,
++          "no-symbols-lines": check_no_symbols_lines, "recover": check_recover}
+ # one mutation per property: (the check it must fail, old text, new text, the failure it must fail with)
+ TREE_GATE = ('    if not packs.current():\n        return dict(res, skip="tree")                    # D-117 (b): the '
+              "packs describe a tree that is not HEAD's\n")
+@@ -1625,6 +1885,17 @@ MUTANTS = {
+                              "a part read while a build began reached the model"),
+     "record-without-id": ("record-rebuilt", ', "id": os.urandom(8).hex()}', "}",
+                           "a part another build wrote reached the model (two builds while the parts were read)"),
++    # round 6: VERIFY-K2-RS's follow-ups (task #420, D-120); the first is the verifier's own (its p8disc.py)
++    "current-none-equals-none": ("head-unresolved", "            self._current = isinstance(want, str) and "
++                                 "OBJECT_RX.fullmatch(want) is not None and got == want\n",
++                                 "            self._current = got == want\n",
++                                 "a record with no tree and a git that fails showed a pack"),
++    "env-strip-removed": ("foreign-git-dir", "cwd=root, env=_own_env(), capture_output=True,",
++                          "cwd=root, capture_output=True,", "a foreign GIT_DIR's HEAD decided what shows"),
++    "recovery-removed": ("recover", ",\n                **recover(state))", ")",
++                         "a crashed build's marker was not rebuilt at SessionStart"),
++    "recovery-ignores-the-lock": ("recover", "        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)\n", "        pass\n",
++                                  "a second build started beside a live build"),
+ }
+ 
+ 
+@@ -1657,6 +1928,40 @@ CM_MUTANTS = {
+                              '(x["name"], x["file"], x["line"]) for x in sym["gitnexus"]["callers"]["sample"]))\n'
+                              '    if where_rows:\n        lines.append("registry rows here %d: "',
+                              "a graph's caller, test, count or state reached the model"),
++    # round 6: VERIFY-K2-RS's follow-ups; the first is the verifier's own (its p8disc.py)
++    "registry-from-working-text-fullfp": ("registry-committed", "    reg_sec, registry = _registry(root, rel, text)\n",
++                                          '    reg_sec, registry = _registry(root, rel, path.read_text(encoding="utf-8", '
++                                          'errors="replace"))\n',
++                                          "an uncommitted line reached the model through a registry row"),
++    "cli-label-removed": ("cli-label", '            print("codemap: NOT HEAD\'s committed code (%s): %s" % (why, '
++                          'HEAD_CHECKS[why]))\n', "            pass\n",
++                          "a CLI printed a pack of another tree without the label"),
++    "per-file-guard-removed": ("deep-chain", "            try:\n                results.append((rel,) + build_one(root, rel, "
++                               "gn, env, commit))\n            except Exception as e:",
++                               "            results.append((rel,) + build_one(root, rel, gn, env, commit))\n"
++                               "            if False:", "one bad file ended the code-map build"),
++    "ast-starts-parse-uncaught": ("deep-chain", "        tree = ast.parse(text)\n    except (SyntaxError, ValueError, "
++                                  "RecursionError, MemoryError):\n", "        tree = ast.parse(text)\n    except "
++                                  "(SyntaxError, ValueError):\n",
++                                  "a file whose parse fails lost its pack, not only its symbols"),
++    "ast-starts-walk-uncaught": ("deep-chain", '    try:\n        walk(tree, "")\n    except RecursionError:\n        '
++                                 'return None\n', '    walk(tree, "")\n    if False:\n        return None\n',
++                                 "a file whose parse fails lost its pack, not only its symbols"),
++    "zero-symbols-restored": ("no-symbols-lines", '        head = "codemap %s — %s" % (rel, "%d symbols, %d at top level" '
++                              '% (len(syms), len(shown)) if syms\n                                    else '
++                              '_no_symbols(pack))\n', '        head = "codemap %s — %d symbols, %d at top level" % (rel, '
++                              'len(syms), len(shown))\n', "a file with no symbols did not say why (a whole Read)"),
++    "zero-symbols-in-range": ("no-symbols-lines", '        head = "codemap %s:%d-%d — %s" % (rel, line, end_line, "%d of '
++                              'the file\'s %d symbols in range" % (\n            len(shown), len(syms)) if syms else '
++                              '_no_symbols(pack))\n', '        head = "codemap %s:%d-%d — %d of the file\'s %d symbols '
++                              'in range" % (rel, line, end_line, len(shown), len(syms))\n',
++                              "a file with no symbols did not say why (a Read range)"),
++    "module-level-count-restored": ("no-symbols-lines", '    if sym is None and not pack["symbols"]:\n        head += '
++                                    '"module level (%s)" % _no_symbols(pack)\n    elif sym is None:\n',
++                                    "    if sym is None:\n", "a file with no symbols did not say why (an Edit)"),
++    "parsed-always-true": ("no-symbols-lines", '    parsed = syms is not None if lang == "python" else None',
++                           '    parsed = True if lang == "python" else None',
++                           "a file with no symbols did not say why (a whole Read)"),
+ }
+ 
+ 
+@@ -2150,8 +2455,8 @@ def test_the_planted_code_pack_has_the_real_builders_fields(tmp_path):
+     outcome, real = cm.build_one(repo, "scripts/alpha.py", ("absent", "not in this test"), {"PATH": "/usr/bin:/bin"},
+                                  ids["fourth"])
+     assert outcome == "built" and set(real) == set(planted) and set(real["instruments"]) == set(planted["instruments"])
+-    assert (real["blob"], real["lines"], real["schema"], real["symbols_from"]) == (
+-        planted["blob"], planted["lines"], planted["schema"], planted["symbols_from"])
++    assert (real["blob"], real["lines"], real["schema"], real["symbols_from"], real["parsed"]) == (
++        planted["blob"], planted["lines"], planted["schema"], planted["symbols_from"], planted["parsed"])
+     ap, pap = real["instruments"]["ap_screen"], planted["instruments"]["ap_screen"]
+     assert ap["status"] == "ok" and set(ap) == set(pap) and ap["screens"] == pap["screens"], (ap, pap)
+     bare = [[{k: v for k, v in s.items() if k != "gitnexus"} for s in pk["symbols"]] for pk in (real, planted)]

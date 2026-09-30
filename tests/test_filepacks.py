@@ -31,8 +31,10 @@ became condition (a) below. B3: `hook_dir` applies the post-commit patch only to
 negative control's hook comes from UNPATCHED_AT (refused unless it is the patch's pre-image), so this file passes before
 the patch lands and after. The verifier's seven checks that killed mutants the round-2 checks missed are here.
 
-K2 RE-SCOPE (task #353, contract revision 5, D-117; VERIFY-K2-R4's R4-1): every byte shown is committed text of HEAD's
-tree. (b) Nothing is shown unless the build's tree is HEAD's: tree-after-reset (`git reset --mixed` and `--soft` after
+K2 RE-SCOPE (task #353, contract revision 5, D-117; VERIFY-K2-R4's R4-1): every byte shown, its readers' words aside,
+is committed text of HEAD's tree or the build's commit history, which after a same-tree ref move can hold commits
+HEAD's history lacks (round 6, F9).
+(b) Nothing is shown unless the build's tree is HEAD's: tree-after-reset (`git reset --mixed` and `--soft` after
 a build: nothing, the record says tree), same-tree-move (push_clean's ref move to a commit with HEAD's tree: the packs
 stay), head-unresolved (an unborn branch, no repository, a git that does not answer), and the class test through the
 REAL patched post-commit hook (`reset_scenario`: both resets and the ledger line they uncommit, and the same-tree ref
@@ -45,6 +47,13 @@ names no tree before it changes any pack, and the reader reads the record again 
 Read while a build of the undone commit runs, after a reset) and record-rechecked (a build that begins between the two
 reads) show nothing. Every build's record carries its own random id: record-rebuilt (two builds between the reads, the
 second of the commit the record names, both 0 ms long) shows nothing.
+
+Round 6 (VERIFY-K2-RS's follow-ups, task #420, D-120): registry-committed (F1: a registry row comes from the committed
+blob, never the working copy), head-unresolved's record with no tree beside a git that fails (F2), cli-label (F3: the
+code map's lookup and demo CLIs label a text the hook would not show), foreign-git-dir (F4: a GIT_DIR its caller left
+set never picks the reader's HEAD), deep-chain (F5: one bad file never ends a code-map build), no-symbols-lines (F6: a
+file with no symbols says why) and recover (F15: the SessionStart reset starts one build after a build that crashed
+after its marker, never beside a live one). The verifier's two surviving mutants are here by name.
 """
 import ast
 import fcntl
@@ -205,7 +214,7 @@ def plant_code_pack(repo, rel, commit_id):
     screens = {p: git(repo, "hash-object", "--", p).strip() if (repo / p).is_file() else "0" * 40 for p in SCREENS}
     pack = {"schema": 1, "path": rel, "language": "python", "blob": git(repo, "hash-object", "--", rel).strip(),
             "sha256": sha, "lines": data.count(b"\n"), "bytes": len(data), "commit": commit_id,
-            "symbols_from": "ast", "caller_files": [],
+            "symbols_from": "ast", "parsed": True, "caller_files": [],
             "instruments": {"graft": dict(fresh), "gitnexus": dict(fresh, indexed_commit=commit_id, symbols=len(syms),
                                                                    unmatched=[]),
                             "code-review-graph": dict(fresh, tests_found=1),
@@ -1139,7 +1148,9 @@ def check_same_tree_move(repo, st, ids, tmp):
 def check_head_unresolved(repo, st, ids, tmp):
     """A HEAD that cannot be resolved shows nothing: an unborn branch, no repository (.git moved away; the search stops
     at the repo's parent), a git that does not answer within HEAD_TIMEOUT (a `git` first on PATH that sleeps: the real
-    one cannot be made to hang on demand); a HEAD that resolves shows (the control, before and after)."""
+    one cannot be made to hang on demand), and a git that fails beside a record that names no tree (a build's from before
+    the check, and a marker; VERIFY-K2-RS F2: None equals None); a HEAD that resolves shows (the control, before and
+    after)."""
     build(repo, st)
     env = dict(env_for(repo, st), GIT_CEILING_DIRECTORIES=str(repo.parent))
     assert context(run(repo, st, read(repo, "docs/NOTE.md", sid="hu0"), env=env)), "the control: a HEAD that resolves"
@@ -1164,6 +1175,21 @@ def check_head_unresolved(repo, st, ids, tmp):
     ctx = context(run(repo, st, read(repo, "docs/NOTE.md", sid="hu3"), env=dict(env, PATH="%s:%s" % (
         shim, env["PATH"])), timeout=25))
     assert ctx == "" and time.monotonic() - t0 < 15, "an unresolved HEAD showed a pack (a git that does not answer)"
+    path = st / "filepacks" / "BUILD.json"            # VERIFY-K2-RS F2: a record with no tree and a git that fails
+    raw = path.read_bytes()
+    old = {k: v for k, v in json.loads(raw).items() if k not in ("tree", "id")}      # a record from before the check
+    shim = tmp / "failing-git"
+    shim.mkdir()
+    (shim / "git").write_text("#!/bin/sh\nexit 128\n")
+    (shim / "git").chmod(0o755)
+    try:
+        for k, rec in enumerate((old, {"schema": 1, "commit": old["commit"], "building": True})):     # and a marker
+            path.write_text(json.dumps(rec, sort_keys=True) + "\n")
+            ctx = context(run(repo, st, read(repo, "docs/NOTE.md", sid="hu5%d" % k), env=dict(env, PATH="%s:%s" % (
+                shim, env["PATH"]))))
+            assert ctx == "", "a record with no tree and a git that fails showed a pack: %r" % ctx[:80]
+    finally:
+        path.write_bytes(raw)
     assert context(run(repo, st, read(repo, "docs/NOTE.md", sid="hu4"), env=env)), "the control: after"
 
 
@@ -1387,6 +1413,238 @@ def check_record_rebuilt(repo, st, ids, tmp):
     assert cn not in e["text"] and e["text"] == "" and e["skip"] == "tree", \
         "a part another build wrote reached the model (two builds while the parts were read): %r" % e["text"][:120]
 
+
+# ---------- round 6: VERIFY-K2-RS's follow-ups (task #420, D-120) ----------
+
+def check_registry_committed(repo, st, ids, tmp):
+    """VERIFY-K2-RS F1: a registry row comes from the committed blob, never from the working copy. The repo's own screen
+    committed, alpha.py commits a line the AF-AP-175 screen hits; after that commit a working-copy line the screen hits
+    too, with a canary. The real code-map build, then the file-pack build and the hook: an Edit on the canary line shows
+    the code part and no byte of that line; an Edit on the committed line shows its row, at its committed line (the
+    control)."""
+    commit(repo, {rel: (ROOT / rel).read_text(encoding="utf-8") for rel in SCREENS}, "the screen", 9)
+    alpha = (repo / "scripts" / "alpha.py").read_text().replace(
+        "    return Box(os.getpid()).get()", '    ref = "HEAD"  # the committed hit\n    return Box(os.getpid()).get()')
+    commit(repo, {"scripts/alpha.py": alpha}, "a committed hit", 10)
+    cn = "rw" + secrets.token_hex(5)
+    line = '    leak = "%s" + "HEAD"' % cn
+    (repo / "scripts" / "alpha.py").write_text(alpha.replace("    return x + 1", line + "\n    return x + 1"))
+    out = codemap_build(repo, tmp, "scripts/alpha.py")
+    assert out.startswith("built scripts/alpha.py "), "not the real builder: %r" % out[-300:]
+    build(repo, st)
+    ctx = context(run(repo, st, edit(repo, "scripts/alpha.py", line, sid="rw0")))
+    assert cn not in ctx and "leak = " not in ctx, \
+        "an uncommitted line reached the model through a registry row: %r" % ctx[:300]
+    assert ctx.startswith("codemap scripts/alpha.py:6 — function helper L5-6 · def helper(x)"), \
+        "the control: no code part on the canary line: %r" % ctx[:120]
+    ctx = context(run(repo, st, edit(repo, "scripts/alpha.py", '    ref = "HEAD"  # the committed hit', sid="rw1")))
+    assert 'registry rows here 1: AF-AP-175 :18 ref = "HEAD"  # the committed hit — ' in ctx, \
+        "the control: the committed line's row: %r" % ctx[:300]
+
+
+def codemap_cli(repo, st, *args):
+    """The fixture's code-map dev CLI (`codemap.py lookup` or `demo`) with the file-pack state `st`: its output lines."""
+    r = subprocess.run([sys.executable, "scripts/codemap.py", *args], cwd=repo, capture_output=True, text=True,
+                       timeout=60, env={"PATH": "/usr/bin:/bin", "HOME": str(repo.parent), "LANG": "C.UTF-8",
+                                        "PYTHONDONTWRITEBYTECODE": "1", "AF_FILEPACKS_STATE": str(st)})
+    assert r.returncode == 0, (r.stdout[-400:], r.stderr[-400:])
+    return r.stdout.split("\n")
+
+
+LABEL = "codemap: NOT HEAD's committed code (%s): "
+
+
+def check_cli_label(repo, st, ids, tmp):
+    """VERIFY-K2-RS F3: `codemap.py lookup` and `demo` run the checks the hook runs before it shows a code part, and
+    when one fails their first line says the text is not HEAD's committed code and names it; the rest prints as without
+    it. A commit adds a def with a canary to alpha.py, its code pack and a build follow: at HEAD's tree neither CLI
+    prints a label (the control); after `git reset --mixed HEAD~1` and, the commit made again, after `git reset --hard
+    HEAD~1`, both print the tree label, then the undone commit's symbol. Then a build of HEAD's tree beside that code
+    pack (blob), the pack of HEAD's blob (no label), and its symbols from a graph (symbols)."""
+    cn = "cl" + secrets.token_hex(5)
+    new = (repo / "scripts" / "alpha.py").read_text() + "\n\ndef leak_%s(x):\n    return x\n" % cn
+    at = str(new.count("\n") - 1)                                # the canary def's line
+    payload = tmp / "edit.json"
+    payload.write_text(json.dumps(edit(repo, "scripts/alpha.py", "    return x + 1")))
+    sym = "codemap scripts/alpha.py:%s — function leak_%s" % (at, cn)
+
+    def outs():
+        return (codemap_cli(repo, st, "lookup", "scripts/alpha.py", "--line", at),
+                codemap_cli(repo, st, "demo", str(payload)))
+    for k, mode in enumerate(("--mixed", "--hard")):
+        head = commit(repo, {"scripts/alpha.py": new}, "a canary def", 9 + k)
+        plant_code_pack(repo, "scripts/alpha.py", head)
+        build(repo, st)
+        lk, dm = outs()
+        assert lk[0].startswith(sym) and dm[0] == "old_string at: L6-6", \
+            "the control: at HEAD's tree a CLI printed a label: %r %r" % (lk[:2], dm[:2])
+        git(repo, "reset", "-q", mode, "HEAD~1")
+        lk, dm = outs()
+        assert lk[0].startswith(LABEL % "tree") and dm[0].startswith(LABEL % "tree"), \
+            "a CLI printed a pack of another tree without the label: %r %r" % (lk[:2], dm[:2])
+        assert lk[1].startswith(sym) and dm[1:3] == ["old_string at: L6-6", "enclosing: helper"], \
+            "the text after the label is not the text without it: %r %r" % (lk[:3], dm[:3])
+    build(repo, st)                                  # HEAD's tree; alpha's code pack is still the undone commit's
+    lk = codemap_cli(repo, st, "lookup", "scripts/alpha.py", "--line", "6")
+    assert lk[0].startswith(LABEL % "blob"), "a CLI printed a pack of another blob without the label: %r" % lk[:2]
+    plant_code_pack(repo, "scripts/alpha.py", ids["fourth"])
+    lk = codemap_cli(repo, st, "lookup", "scripts/alpha.py", "--line", "6")
+    assert lk[0].startswith("codemap scripts/alpha.py:6 — function helper L5-6"), "the control: %r" % lk[:2]
+    alter_pack(repo, lambda pk: pk.update(symbols_from="graft"))
+    lk = codemap_cli(repo, st, "lookup", "scripts/alpha.py", "--line", "6")
+    assert lk[0].startswith(LABEL % "symbols"), "a CLI printed a graph's symbols without the label: %r" % lk[:2]
+
+
+def check_foreign_git_dir(repo, st, ids, tmp):
+    """VERIFY-K2-RS F4: the reader resolves HEAD in this repository, whatever GIT_* variable its caller left set. A
+    commit adds a ledger line naming scripts/beta.py with a canary; a clone takes that commit; a build follows, and
+    `git reset --mixed HEAD~1` undoes the commit here: the clone's HEAD has the build's tree, this repository's has not.
+    With GIT_DIR naming the clone, nothing shows and the record says tree. The leak control: a git that reads the clone
+    whatever its environment (a shim first on PATH) shows the canary. (GIT_COMMON_DIR, GIT_WORK_TREE or GIT_INDEX_FILE
+    alone did not move the PIN's HEAD: measured, so none is a case here.)"""
+    cn = "fg" + secrets.token_hex(5)
+    commit(repo, {LEDGER: (repo / LEDGER).read_text() + "**T9 HOME.** %s: a line naming scripts/beta.py\n" % cn},
+           "a canary line", 9)
+    clone = tmp / "clone"
+    git(tmp, "clone", "-q", str(repo), str(clone))
+    build(repo, st)
+    git(repo, "reset", "-q", "--mixed", "HEAD~1")
+    tree = json.loads((st / "filepacks" / "BUILD.json").read_text())["tree"]
+    assert git(clone, "rev-parse", "HEAD^{tree}").strip() == tree != git(repo, "rev-parse", "HEAD^{tree}").strip(), \
+        "not the case: the clone's HEAD has the build's tree and this HEAD has another"
+    env = env_for(repo, st)
+    ctx = context(run(repo, st, read(repo, "scripts/beta.py", sid="fg0"), env=dict(env, GIT_DIR=str(clone / ".git"))))
+    assert cn not in ctx and ctx == "", "a foreign GIT_DIR's HEAD decided what shows: %r" % ctx[:120]
+    assert records(st)[-1]["skipped"] == [{"key": "file:scripts/beta.py", "why": "tree"}], records(st)[-1]
+    shim = tmp / "foreign-git"
+    shim.mkdir()
+    (shim / "git").write_text('#!/bin/sh\nGIT_DIR=%s exec %s "$@"\n' % (clone / ".git", shutil.which("git")))
+    (shim / "git").chmod(0o755)
+    ctx = context(run(repo, st, read(repo, "scripts/beta.py", sid="fg9"), env=dict(env, PATH="%s:%s" % (
+        shim, env["PATH"]))))
+    assert cn in ctx, "the control: a git that reads the clone did not show the canary: %r" % ctx[:120]
+
+
+LONG_NAME = "scripts/" + "n" * 245 + ".py"      # its pack's temporary file name is past NAME_MAX (255): the write raises
+
+
+def check_deep_chain(repo, st, ids, tmp):
+    """VERIFY-K2-RS F5: one bad file never ends a code-map build. One real `codemap.py build` of four committed files,
+    alpha.py last: a 20,000-deep unary chain (its parse raises MemoryError on Python 3.11, 3.12 and 3.13, measured), a
+    1,500-deep one with a def after it (it parses; a walk into its expressions raises RecursionError) and a file whose
+    pack cannot be written (LONG_NAME). The build exits 0, alpha.py gets its pack and symbols, each chain its pack
+    (the deep one with no symbols and `parsed` false), and the long name is `failed`, with its reason on stderr."""
+    deep, mid = "scripts/chain_deep.py", "scripts/chain_mid.py"
+    commit(repo, {deep: "x = " + "-" * 20000 + "1\n", mid: "x = " + "-" * 1500 + "1\n\n\ndef after():\n    return 1\n",
+                  LONG_NAME: "def f():\n    return 1\n"}, "deep files", 9)
+    r = subprocess.run([sys.executable, "scripts/codemap.py", "build", deep, mid, LONG_NAME, "scripts/alpha.py"],
+                       cwd=repo, capture_output=True, text=True, timeout=120,
+                       env={"PATH": "/usr/bin:/bin", "HOME": str(tmp), "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"})
+    assert r.returncode == 0, "one bad file ended the code-map build: rc %d %r" % (r.returncode, r.stderr[-300:])
+    out = r.stdout.split("\n")
+    assert out[3].startswith("built scripts/alpha.py 5 symbols") and out[2] == "failed " + LONG_NAME, out[:4]
+    assert "codemap: %s failed: OSError: " % LONG_NAME in r.stderr, r.stderr[-300:]
+    got = {}
+    for rel in (deep, mid):
+        p = repo / ".jev" / "codemap" / (rel + ".json")
+        assert p.exists(), "a file whose parse fails lost its pack, not only its symbols: %s %r" % (rel, out[:2])
+        pk = json.loads(p.read_text(encoding="utf-8"))
+        got[rel] = (pk["parsed"], [s["qualname"] for s in pk["symbols"]])
+    assert got == {deep: (False, []), mid: (True, ["after"])}, got
+
+
+NO_SYMBOLS = {"scripts/broken.py": ("def broken(:\n    return 1\n", "def broken(:",
+                                    "no symbols: the committed blob does not parse"),
+              "scripts/run.sh": ("#!/bin/sh\necho one\necho two\n", "echo one", "no symbols for shell"),
+              "scripts/consts.py": ("ONE = 1\nTWO = 2\n", "ONE = 1",
+                                    "no symbols: the committed blob defines no function or class")}
+
+
+def check_no_symbols_lines(repo, st, ids, tmp):
+    """VERIFY-K2-RS F6: a code file with no symbols says why, never "0 symbols, 0 at top level". Three committed files
+    through the real code-map build: a Python file that does not parse, a shell file, a Python file with no def. Through
+    the hook, for each: a whole Read, a Read range and an Edit."""
+    commit(repo, {rel: v[0] for rel, v in NO_SYMBOLS.items()}, "files with no symbols", 9)
+    codemap_build(repo, tmp, *NO_SYMBOLS)
+    build(repo, st)
+    ctxs = []
+    for k, (rel, (_, old, why)) in enumerate(NO_SYMBOLS.items()):
+        ctxs.append(context(run(repo, st, read(repo, rel, sid="ns%da" % k))))
+        assert ctxs[-1].startswith("codemap %s — %s  [pack " % (rel, why)), \
+            "a file with no symbols did not say why (a whole Read): %r" % ctxs[-1][:120]
+        ctxs.append(context(run(repo, st, read(repo, rel, sid="ns%db" % k, offset=1, limit=2))))
+        assert ctxs[-1].startswith("codemap %s:1-2 — %s  [pack " % (rel, why)), \
+            "a file with no symbols did not say why (a Read range): %r" % ctxs[-1][:120]
+        line = NO_SYMBOLS[rel][0].split("\n").index(old) + 1
+        ctxs.append(context(run(repo, st, edit(repo, rel, old, sid="ns%dc" % k))))
+        assert ctxs[-1].startswith("codemap %s:%d — module level (%s)  [pack " % (rel, line, why)), \
+            "a file with no symbols did not say why (an Edit): %r" % ctxs[-1][:120]
+    assert not any("0 symbols" in c or "0 at top level" in c for c in ctxs), ctxs
+
+
+def crash_after_marker(repo, st):
+    """A build that crashes after its marker (in process: its first step after the marker raises). BUILD.json is left
+    the marker, and the build's lock is free."""
+    fp = load(repo)
+
+    def crash(pdir, keep):
+        raise RuntimeError("a crash after the marker")
+    fp._clean = crash
+    with pytest.raises(RuntimeError, match="a crash after the marker"):
+        fp.build(repo, st)
+    rec = json.loads((st / "filepacks" / "BUILD.json").read_text())
+    assert rec.get("building") is True and "tree" not in rec, "not the case: no marker left: %s" % rec
+
+
+def gone(pid):
+    """True once `pid` has ended (no process, or a zombie its new parent has not reaped yet)."""
+    try:
+        with open("/proc/%d/stat" % pid) as f:
+            return f.read().rsplit(")", 1)[1].split()[0] == "Z"
+    except OSError:
+        return True
+
+
+def wait_builds(pids, bound=60):
+    deadline = time.monotonic() + bound
+    for pid in pids:
+        while not gone(pid):
+            assert time.monotonic() < deadline, "a build the reset started ran past %d s: %s" % (bound, cmdline(pid))
+            time.sleep(0.1)
+
+
+def check_recover(repo, st, ids, tmp):
+    """VERIFY-K2-RS F15: a build that crashed after its marker leaves the hook dark until a build writes its record. The
+    SessionStart reset (the registration's command) starts one build when no build holds the lock, and none while one
+    does. A build, then one that crashes after its marker (the hook shows nothing: else not the case). With the lock
+    free, the reset's record says `rebuild: started`, a build writes a record with a tree, and the hook shows the pack
+    again. After a second crash, with the lock held (a build in flight): `busy`, and no build process."""
+    build(repo, st)
+    crash_after_marker(repo, st)
+    assert context(run(repo, st, read(repo, "docs/NOTE.md", sid="rv0"))) == "", "not the case: a marker still shows"
+    r = run(repo, st, start("startup", sid="rv-s1"), cmd=REG_RESET)
+    assert (r.returncode, r.stdout) == (0, b""), r
+    rec = records(st)[-1]
+    wait_builds([rec["pid"]] if "pid" in rec else [])
+    assert rec.get("rebuild") == "started", "a crashed build's marker was not rebuilt at SessionStart: %s" % rec
+    built = json.loads((st / "filepacks" / "BUILD.json").read_text())
+    assert "tree" in built and "building" not in built, "the build it started wrote no record: %s %r" % (
+        built, (st / "filepacks-recover.log").read_text()[-300:])
+    assert context(run(repo, st, read(repo, "docs/NOTE.md", sid="rv1"))).startswith("filepack docs/NOTE.md @"), \
+        "the hook did not show the pack again after the rebuild"
+    crash_after_marker(repo, st)
+    fd = os.open(st / "filepacks.lock", os.O_WRONLY | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)                   # a build in flight holds it
+    try:
+        r = run(repo, st, start("startup", sid="rv-s2"), cmd=REG_RESET)
+        rec = records(st)[-1]
+        procs = [p for p in fixture_processes(tmp) if "filepacks.py" in cmdline(p)]
+    finally:
+        os.close(fd)
+    wait_builds(procs + ([rec["pid"]] if "pid" in rec else []))
+    assert (r.returncode, rec.get("rebuild"), procs) == (0, "busy", []), \
+        "a second build started beside a live build: %s %s" % (rec, [cmdline(p) for p in procs])
+
 CHECKS = {"edit-once-per-symbol": check_edit_once_per_symbol, "read-range": check_read_range,
           "bash-readers": check_bash_readers, "reset": check_reset, "doc-pack-lines": check_doc_pack_lines,
           "build-lines": check_build_lines, "build-briefs-commits": check_build_briefs_commits,
@@ -1420,7 +1678,11 @@ CHECKS = {"edit-once-per-symbol": check_edit_once_per_symbol, "read-range": chec
           "committed-symbols": check_committed_symbols, "legacy-symbols": check_legacy_symbols,
           "no-graph-text": check_no_graph_text, "registry-screens": check_registry_screens,
           "build-in-flight": check_build_in_flight, "record-rechecked": check_record_rechecked,
-          "record-rebuilt": check_record_rebuilt}
+          "record-rebuilt": check_record_rebuilt,
+          # round 6: VERIFY-K2-RS's follow-ups (F2 is in head-unresolved)
+          "registry-committed": check_registry_committed, "cli-label": check_cli_label,
+          "foreign-git-dir": check_foreign_git_dir, "deep-chain": check_deep_chain,
+          "no-symbols-lines": check_no_symbols_lines, "recover": check_recover}
 # one mutation per property: (the check it must fail, old text, new text, the failure it must fail with)
 TREE_GATE = ('    if not packs.current():\n        return dict(res, skip="tree")                    # D-117 (b): the '
              "packs describe a tree that is not HEAD's\n")
@@ -1625,6 +1887,17 @@ MUTANTS = {
                              "a part read while a build began reached the model"),
     "record-without-id": ("record-rebuilt", ', "id": os.urandom(8).hex()}', "}",
                           "a part another build wrote reached the model (two builds while the parts were read)"),
+    # round 6: VERIFY-K2-RS's follow-ups (task #420, D-120); the first is the verifier's own (its p8disc.py)
+    "current-none-equals-none": ("head-unresolved", "            self._current = isinstance(want, str) and "
+                                 "OBJECT_RX.fullmatch(want) is not None and got == want\n",
+                                 "            self._current = got == want\n",
+                                 "a record with no tree and a git that fails showed a pack"),
+    "env-strip-removed": ("foreign-git-dir", "cwd=root, env=_own_env(), capture_output=True,",
+                          "cwd=root, capture_output=True,", "a foreign GIT_DIR's HEAD decided what shows"),
+    "recovery-removed": ("recover", ",\n                **recover(state))", ")",
+                         "a crashed build's marker was not rebuilt at SessionStart"),
+    "recovery-ignores-the-lock": ("recover", "        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)\n", "        pass\n",
+                                  "a second build started beside a live build"),
 }
 
 
@@ -1657,6 +1930,40 @@ CM_MUTANTS = {
                              '(x["name"], x["file"], x["line"]) for x in sym["gitnexus"]["callers"]["sample"]))\n'
                              '    if where_rows:\n        lines.append("registry rows here %d: "',
                              "a graph's caller, test, count or state reached the model"),
+    # round 6: VERIFY-K2-RS's follow-ups; the first is the verifier's own (its p8disc.py)
+    "registry-from-working-text-fullfp": ("registry-committed", "    reg_sec, registry = _registry(root, rel, text)\n",
+                                          '    reg_sec, registry = _registry(root, rel, path.read_text(encoding="utf-8", '
+                                          'errors="replace"))\n',
+                                          "an uncommitted line reached the model through a registry row"),
+    "cli-label-removed": ("cli-label", '            print("codemap: NOT HEAD\'s committed code (%s): %s" % (why, '
+                          'HEAD_CHECKS[why]))\n', "            pass\n",
+                          "a CLI printed a pack of another tree without the label"),
+    "per-file-guard-removed": ("deep-chain", "            try:\n                results.append((rel,) + build_one(root, rel, "
+                               "gn, env, commit))\n            except Exception as e:",
+                               "            results.append((rel,) + build_one(root, rel, gn, env, commit))\n"
+                               "            if False:", "one bad file ended the code-map build"),
+    "ast-starts-parse-uncaught": ("deep-chain", "        tree = ast.parse(text)\n    except (SyntaxError, ValueError, "
+                                  "RecursionError, MemoryError):\n", "        tree = ast.parse(text)\n    except "
+                                  "(SyntaxError, ValueError):\n",
+                                  "a file whose parse fails lost its pack, not only its symbols"),
+    "ast-starts-walk-uncaught": ("deep-chain", '    try:\n        walk(tree, "")\n    except RecursionError:\n        '
+                                 'return None\n', '    walk(tree, "")\n    if False:\n        return None\n',
+                                 "a file whose parse fails lost its pack, not only its symbols"),
+    "zero-symbols-restored": ("no-symbols-lines", '        head = "codemap %s — %s" % (rel, "%d symbols, %d at top level" '
+                              '% (len(syms), len(shown)) if syms\n                                    else '
+                              '_no_symbols(pack))\n', '        head = "codemap %s — %d symbols, %d at top level" % (rel, '
+                              'len(syms), len(shown))\n', "a file with no symbols did not say why (a whole Read)"),
+    "zero-symbols-in-range": ("no-symbols-lines", '        head = "codemap %s:%d-%d — %s" % (rel, line, end_line, "%d of '
+                              'the file\'s %d symbols in range" % (\n            len(shown), len(syms)) if syms else '
+                              '_no_symbols(pack))\n', '        head = "codemap %s:%d-%d — %d of the file\'s %d symbols '
+                              'in range" % (rel, line, end_line, len(shown), len(syms))\n',
+                              "a file with no symbols did not say why (a Read range)"),
+    "module-level-count-restored": ("no-symbols-lines", '    if sym is None and not pack["symbols"]:\n        head += '
+                                    '"module level (%s)" % _no_symbols(pack)\n    elif sym is None:\n',
+                                    "    if sym is None:\n", "a file with no symbols did not say why (an Edit)"),
+    "parsed-always-true": ("no-symbols-lines", '    parsed = syms is not None if lang == "python" else None',
+                           '    parsed = True if lang == "python" else None',
+                           "a file with no symbols did not say why (a whole Read)"),
 }
 
 
@@ -2150,8 +2457,8 @@ def test_the_planted_code_pack_has_the_real_builders_fields(tmp_path):
     outcome, real = cm.build_one(repo, "scripts/alpha.py", ("absent", "not in this test"), {"PATH": "/usr/bin:/bin"},
                                  ids["fourth"])
     assert outcome == "built" and set(real) == set(planted) and set(real["instruments"]) == set(planted["instruments"])
-    assert (real["blob"], real["lines"], real["schema"], real["symbols_from"]) == (
-        planted["blob"], planted["lines"], planted["schema"], planted["symbols_from"])
+    assert (real["blob"], real["lines"], real["schema"], real["symbols_from"], real["parsed"]) == (
+        planted["blob"], planted["lines"], planted["schema"], planted["symbols_from"], planted["parsed"])
     ap, pap = real["instruments"]["ap_screen"], planted["instruments"]["ap_screen"]
     assert ap["status"] == "ok" and set(ap) == set(pap) and ap["screens"] == pap["screens"], (ap, pap)
     bare = [[{k: v for k, v in s.items() if k != "gitnexus"} for s in pk["symbols"]] for pk in (real, planted)]

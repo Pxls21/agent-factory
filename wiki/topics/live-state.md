@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-30 20:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 20:4xZ): 1ff748b; CI run #1194 runs on 910dbd6. The retro bake (session-continuity) and the K2-FU landing (task #420) ride the next push.**
+- **RUNNING (as of 20:4xZ):** the Jev relay (pid 6662, 127.0.0.1:47430). The K2-FU lane is home, and its patch lands GATED-PENDING-VERIFY (`tasks/briefs/jev-trim/K2-FU-report.md`, with the coordinator's review C1 to C6). Next: the push once CI reports; the K2 verifier's narrow re-check of the landed patch; then the owner's yes to register K2 (the must-hold list is item 13 of `tasks/briefs/jev-trim/VERIFY-K2-RS-report.md`); then the repack (D-121).
+
 **2026-09-30 20:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 20:1xZ): 9312ec0; CI run #1193 passed on d399a86. The relay code push's own run (#1192) was cancelled by the push after it (the incident log's 19:5xZ entry, task #425). The relay retro (task #424), that incident entry and D-121 ride the next push.**
 - **RUNNING (as of 20:1xZ):** the K2-FU lane (task #420) and the Jev relay (pid 6662, 127.0.0.1:47430). D-121: the owner allowed one `git repack -d` (`gc.auto` is 0 in `.git/config` and no record says why); it runs when the lane is home, at low priority, with the loose object count and the grep walk's time measured before and after (task #422). Next: harvest the lane, land its patch, the verifier's narrow re-check, the owner's yes to register K2, then the repack.

@@ -8,8 +8,8 @@ A pack describes ONE content of the file: its blob in the build's commit, read f
 (task #353, K2 RE-SCOPE, D-117). A file with no blob there (untracked, or no commit) gets no pack, and an old pack of it
 is removed. The pack holds:
   - the file's symbols (names, qualified names, kinds, line spans with the decorators above them, signatures), parsed
-    from that blob by Python's own `ast` (`symbols_from: "ast"`); a file in any other language has none. No symbol,
-    name, line or count comes from a graph;
+    from that blob by Python's own `ast` (`symbols_from: "ast"`; `parsed` says whether the blob parsed); a file in any
+    other language has none. No symbol, name, line or count comes from a graph;
   - the registry rows the blob's lines match (`scripts/ap_screen.py`, in process, with each row's message), screened by
     code run from bytes read once, whose blob ids the pack records (`instruments.ap_screen.screens`);
   - the graph sections, which no reader shows any more (the lookups below render the symbols and the registry rows
@@ -27,7 +27,11 @@ Usage:
       the post-commit refresh: wait until each graph re-indexed for this commit is idle and has indexed each file's
       current bytes, then build; prints one result line
   codemap.py lookup PATH --line N [--end-line M] [--json]
-  codemap.py demo PAYLOAD.json|-            what L2b would inject for a recorded Edit payload (file_path, old_string)
+  codemap.py demo PAYLOAD.json|-            the code map's entry for a recorded Edit payload (file_path, old_string)
+lookup and demo print their text as the file-pack hook's code part would, and when the hook would not show it (not
+HEAD's committed code), a first line says so and names the check it fails (`head_check`: tree, blob or symbols; without
+scripts/filepacks.py the first line says the text was not checked). The file-pack state is read once at start:
+AF_FILEPACKS_STATE, else <root>/.jev (as scripts/filepacks.py reads it).
 Python (the hook): lookup(path, line, end_line=None, root=None) and edit_context(file_path, old_string, root=None).
 """
 from __future__ import annotations
@@ -592,13 +596,13 @@ def _ast_symbols(data):
     and class its name, qualified name, kind (class; method when its parent is a class; else function), start and end
     lines, its first decorator's line when it has one (`from`, so an edit on a decorator resolves to the symbol it
     decorates) and its signature (its first line, stripped, the colon dropped, at most 160 characters), in line order.
-    [] when the bytes do not parse. No def sits inside an expression, so the walk enters none: a deep expression cannot
-    exhaust the stack."""
+    None when the bytes do not parse, or nest too deep to walk (the pack records it, VERIFY-K2-RS F6). No def sits
+    inside an expression, so the walk enters none: a deep expression cannot exhaust the stack."""
     import ast
     try:
         tree = ast.parse(data)
     except (SyntaxError, ValueError, RecursionError, MemoryError):
-        return []
+        return None
     lines = re.split(r"\r\n?|\n", data.decode("utf-8", "replace"))      # the line breaks Python's own lines end at
     out = []
 
@@ -617,16 +621,19 @@ def _ast_symbols(data):
     try:
         walk(tree, "", False)
     except RecursionError:
-        return []
+        return None
     return sorted(out, key=lambda s: (s["start"], -s["end"], s["qualname"]))
 
 
 def _ast_starts(text):
-    """{qualified name: def line} from the file's own AST: the reference a graph's spans are checked against."""
+    """{qualified name: def line} from the file's own AST: the reference a graph's spans are checked against. None when
+    the text does not parse or its tree is too deep to walk (VERIFY-K2-RS F5: a 200,000-deep unary chain raised
+    MemoryError in the parse, and a 1,000-deep one, which parses, RecursionError in the walk, which enters
+    expressions; either ended the whole build)."""
     import ast
     try:
         tree = ast.parse(text)
-    except (SyntaxError, ValueError):
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
         return None
     out = {}
 
@@ -637,7 +644,10 @@ def _ast_starts(text):
                 walk(n, prefix + n.name + ".")
             else:
                 walk(n, prefix)
-    walk(tree, "")
+    try:
+        walk(tree, "")
+    except RecursionError:
+        return None
     return out
 
 
@@ -742,6 +752,8 @@ def build_one(root, rel, gn, env, commit):
     graft_sec, graft_syms = _graft(root, rel, sha, env)
     timing["graft_ms"] = round((time.monotonic() - t) * 1000)
     syms = _ast_symbols(data) if lang == "python" else []       # D-117 (a): the committed blob's own ast, no graph
+    parsed = syms is not None if lang == "python" else None     # F6: the readers say why a pack names no symbol
+    syms = syms or []
     starts = _ast_starts(text) if lang == "python" else None
     if starts and graft_syms:
         _moved(graft_sec, {s["qualname"]: s["start"] for s in _nest(graft_syms)}, starts, "graft")
@@ -765,7 +777,7 @@ def build_one(root, rel, gn, env, commit):
     timing["total_ms"] = round((time.monotonic() - t0) * 1000)
     pack = {"schema": SCHEMA, "path": rel, "language": lang, "blob": blob_sha(data), "sha256": sha,
             "lines": text.count("\n") + (0 if text.endswith("\n") or not text else 1), "bytes": len(data),
-            "commit": commit, "symbols_from": "ast", "caller_files": caller_files,
+            "commit": commit, "symbols_from": "ast", "parsed": parsed, "caller_files": caller_files,
             "instruments": {"graft": graft_sec, "gitnexus": gn_sec, "code-review-graph": crg_sec, "ap_screen": reg_sec},
             "symbols": syms, "tests": tests, "registry": registry,
             "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "timing": timing}
@@ -791,7 +803,8 @@ def open_gitnexus(root, env):
 
 def build(root, rels, env=None, gn=None):
     """Build the packs of `rels` (repo-relative) in one pass; one GitNexus session serves every file (`gn`, when the
-    caller holds one open, else one opened and closed here)."""
+    caller holds one open, else one opened and closed here). A file whose build raises costs that file only: its outcome
+    is `failed`, the reason goes to stderr, and the files after it are built (VERIFY-K2-RS F5)."""
     root = Path(root)
     env = dict(os.environ if env is None else env)
     commit = _head(root)
@@ -802,7 +815,11 @@ def build(root, rels, env=None, gn=None):
     results = []
     try:
         for rel in rels:
-            results.append((rel,) + build_one(root, rel, gn, env, commit))
+            try:
+                results.append((rel,) + build_one(root, rel, gn, env, commit))
+            except Exception as e:              # one bad file never ends the build (F5)
+                print("codemap: %s failed: %s: %s" % (rel, type(e).__name__, str(e)[:160]), file=sys.stderr)
+                results.append((rel, "failed", None))
     finally:
         if own and isinstance(gn, GitNexus):
             gn.close()
@@ -866,11 +883,23 @@ def _cap(text, cap=TEXT_CAP):
     return raw[:cap - len(tail.encode("utf-8"))].decode("utf-8", "ignore") + tail
 
 
+def _no_symbols(pack):
+    """Why a pack names no symbol (VERIFY-K2-RS F6: "0 symbols" read as a fact about the file): another language, a
+    committed blob that does not parse, or one that defines none; a pack built before `parsed` was recorded says only
+    that it has none."""
+    if pack.get("language") != "python":
+        return "no symbols for %s" % pack.get("language")
+    return {False: "no symbols: the committed blob does not parse",
+            True: "no symbols: the committed blob defines no function or class"}.get(pack.get("parsed"), "no symbols")
+
+
 def _entry_text(pack, rel, line, end_line, stale, sym, where_rows):
     span = "%d" % line if end_line == line else "%d-%d" % (line, end_line)
     head = "codemap %s:%s — " % (rel, span)
     lines = []
-    if sym is None:
+    if sym is None and not pack["symbols"]:
+        head += "module level (%s)" % _no_symbols(pack)
+    elif sym is None:
         head += "module level (no enclosing symbol; %d symbols in the file)" % len(pack["symbols"])
     else:
         head += "%s %s L%d-%d" % (sym.get("kind", "symbol"), sym["qualname"], sym.get("from", sym["start"]), sym["end"])
@@ -1011,13 +1040,15 @@ def file_entry(path, line=None, end_line=None, root=None, pack=None):
     rows = pack.get("registry") or []
     if line is None:
         shown = [s for s in syms if "." not in s["qualname"]]
-        head = "codemap %s — %d symbols, %d at top level" % (rel, len(syms), len(shown))
+        head = "codemap %s — %s" % (rel, "%d symbols, %d at top level" % (len(syms), len(shown)) if syms
+                                    else _no_symbols(pack))
     else:
         if line < 1 or end_line < line:
             return dict(res, status="miss", text="codemap: %d-%d is not a line range" % (line, end_line))
         shown = [s for s in syms if s.get("from", s["start"]) <= end_line and s["end"] >= line]
         rows = [h for h in rows if line <= h["line"] <= end_line]
-        head = "codemap %s:%d-%d — %d of the file's %d symbols in range" % (rel, line, end_line, len(shown), len(syms))
+        head = "codemap %s:%d-%d — %s" % (rel, line, end_line, "%d of the file's %d symbols in range" % (
+            len(shown), len(syms)) if syms else _no_symbols(pack))
     lines = [head + "  [pack %s]" % res["pack"]]
     if stale:
         lines.append("STALE: the file changed since this pack was built (blob %s); lines may have moved" %
@@ -1030,6 +1061,68 @@ def file_entry(path, line=None, end_line=None, root=None, pack=None):
         lines.append("registry rows %s%d: " % ("" if line is None else "in range ", len(rows)) + ", ".join(
             "%s :%d" % (h["row"], h["line"]) for h in rows[:8]) + (" …" if len(rows) > 8 else ""))
     return dict(res, status="file" if line is None else "range", text=_cap("\n".join(lines)))
+
+
+_FP = None
+HEAD_CHECKS = {"tree": "no file-pack build of HEAD's tree",
+               "blob": "the pack is not of the file's blob at the file-pack build",
+               "symbols": "the pack's symbols are not its blob's own ast",
+               "unchecked": "scripts/filepacks.py, which holds the checks, is absent"}
+SHOWN = ("hit", "module", "past-end")         # a lookup's statuses whose text a pack gave
+
+
+def _filepacks():
+    """scripts/filepacks.py beside this file (the file-pack hook), imported once per process for its own checks; it
+    shares this process's System-1 import. None when it is absent."""
+    global _FP
+    if _FP is None:
+        import importlib.util
+        path = Path(__file__).resolve().parent / "filepacks.py"
+        if not path.is_file():
+            return None
+        spec = importlib.util.spec_from_file_location("codemap_filepacks", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod._S1 = _system1()
+        _FP = mod
+    return _FP
+
+
+def head_check(root, rel, pack, state):
+    """The first check the file-pack hook runs before it shows a code part (scripts/filepacks.py `entry` and
+    `_code_part`, run here through its own Packs) that `pack` fails: `tree` (the file-pack build is not of HEAD's tree,
+    or there is none), `blob` (the pack is not of the file's blob at that build) or `symbols` (its symbols are not that
+    blob's own ast); `unchecked` when scripts/filepacks.py is absent; None when it passes them all. The dev CLIs label
+    their text with it (VERIFY-K2-RS F3: after a reset they showed an undone commit's symbols, unmarked)."""
+    fp = _filepacks()
+    if fp is None:
+        return "unchecked"
+    packs = fp.Packs(root, state)
+    if not packs.current():
+        return "tree"
+    if pack.get("blob") != packs.blob(rel):
+        return "blob"
+    if pack.get("symbols_from") != "ast":
+        return "symbols"
+    return None
+
+
+def _cli_pack(root, path):
+    """(rel, pack) for lookup and demo: the pack read once, then shown and checked (None: no pack to read)."""
+    rel = rel_path(root, path)
+    return rel, (_load_pack(root, rel)[0] if in_scope(rel) and language(root, rel) else None)
+
+
+def _label(root, rel, pack, res, state):
+    """The first line of lookup's and demo's output when their text came from a pack the file-pack hook would not show:
+    it says the text is not HEAD's committed code and names the check (F3), or that it could not be checked. A label,
+    not a gate: the rest prints."""
+    if pack is not None and res.get("status") in SHOWN:
+        why = head_check(root, rel, pack, state)
+        if why == "unchecked":
+            print("codemap: NOT CHECKED against HEAD's committed code: %s" % HEAD_CHECKS[why])
+        elif why:
+            print("codemap: NOT HEAD's committed code (%s): %s" % (why, HEAD_CHECKS[why]))
 
 
 # ---------- the CLI ----------
@@ -1116,8 +1209,11 @@ def main(argv=None):
         return 0
     if ns.cmd == "refresh":
         return _refresh(ns)
+    state = Path(os.environ.get("AF_FILEPACKS_STATE") or root / ".jev")     # the file-pack state, as filepacks.py
     if ns.cmd == "lookup":
-        res = lookup(ns.path, ns.line, ns.end_line, root=root)
+        rel, pack = _cli_pack(root, ns.path)
+        res = lookup(ns.path, ns.line, ns.end_line, root=root, pack=pack)
+        _label(root, rel, pack, res, state)
         print(json.dumps(res, indent=1) if ns.json else res["text"])
         return 0
     raw = sys.stdin.read() if ns.payload == "-" else Path(ns.payload).read_text(encoding="utf-8")
@@ -1126,7 +1222,10 @@ def main(argv=None):
     if not isinstance(ti, dict) or "file_path" not in ti or "old_string" not in ti:
         print("codemap demo: the payload needs file_path and old_string (an Edit's tool_input)", file=sys.stderr)
         return 2
-    res = edit_context(ti["file_path"], ti["old_string"], root=root, replace_all=ti.get("replace_all") is True)
+    rel, pack = _cli_pack(root, ti["file_path"])
+    res = edit_context(ti["file_path"], ti["old_string"], root=root, replace_all=ti.get("replace_all") is True,
+                       pack=pack)
+    _label(root, rel, pack, res, state)
     if ns.json:
         print(json.dumps(res, indent=1))
     else:
