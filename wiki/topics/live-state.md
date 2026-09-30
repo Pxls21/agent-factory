@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-30 19:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 19:2xZ): 9708d95; the T408 landing, the records, tasks #418 and #419 (landed), the env-tool-quirks retro and the K2 follow-up brief ride the next push.**
+- **RUNNING (as of 19:2xZ):** JEV IS LIVE AGAIN. The relay (pid 6662) serves 127.0.0.1:47430 on the landed task #418 code, so a new `.pc-bridge.env` needs no restart; `scripts/jev_relay_up.sh` started it at 18:19:15Z, and `scripts/setup.sh` now runs that starter at every session start (off switch `.jev/relay-off`). A 15,000-line output at 19:02Z made 12 requests: 11 relayed, 1 refused by the value gate (task #423 will name what it refuses). No lane runs. Next: the push, then the K2 follow-up lane (task #420, `tasks/briefs/jev-trim/K2-FU-brief.md`), the verifier's narrow re-check, and the owner's yes to register K2.
+- **Known red:** `tests/test_search_intercept.py::test_an_answer_searches_what_the_raw_call_searches` while the main tree's `.git` is cold after a restart (task #422).
+
 **2026-09-30 18:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 18:0xZ): 9708d95; the T408 landing, the D-119 and D-120 records, tasks #418 and #419 ride the next push.**
 - **RUNNING (as of 18:0xZ):** nothing yet. The relay was found down at 18:02Z (a container restart); the owner turned auto mode off again (D-120), so the held relay work lands now and the starter (task #419) brings the relay back; then the K2 follow-up lane (task #420). The scrubber is parked (D-118).
