@@ -45,6 +45,11 @@ node .gitnexus/run.cjs status                                      # index fresh
 - Quirk: stdio needs stdin kept OPEN across the async call — gn_mcp.py handles it;
   naive subprocess.run silently gets nothing.
 - Stale index silently breaks impact on NEW symbols — `analyze` after adding modules.
+- `detect-changes` reads a hunk's NEW-side line range against the index's lines, so a symbol below an added hunk
+  reads as changed (the K2 round-4 landing, 2026-09-30: `WIDEN_CAP` and `Q_CALLEES`, lines 755-756, fell inside the
+  new-side range 669-763 of `@@ -659,0 +669,95 @@` and were listed, while `git diff` never touched them; the risk read
+  HIGH, 47 symbols). Before reporting a HIGH, check the listed symbols against `git diff -U0`, and tell the owner
+  what the diff really touches beside the rating.
 - A stale record can pass as fresh (L2a, 2026-09-25, GitNexus 1.6.10): an incremental `analyze` updated `meta.json`'s
   sha256 for `proofs/S0-08/check_containment.py` without re-parsing it, so its 18 symbols kept the start lines of the
   previous version (3 lines off; 1 of 105 files). Check a GitNexus line number against the file before you trust it;
