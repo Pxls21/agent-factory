@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-30 22:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 22:0xZ): e9c0c4d3. The retro bake (an env-tool-quirks line; tasks #426 and #427 registered, backlog) is pushed as 8fb30643 and its CI run is under way; run #1195 passed on the K2-FU landing (d2e69c6).**
+- **RUNNING (as of 22:0xZ):** VERIFY-K2 round 6 (task #353), the narrow re-check of the K2 follow-ups at PIN d2e69c6; and the Jev relay (pid 6662, 127.0.0.1:47430). Next: harvest the verifier, then the owner's yes to register K2 (item 13 of `tasks/briefs/jev-trim/VERIFY-K2-RS-report.md`).
+
 **2026-09-30 21:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 21:4xZ): 47443f9; CI run #1195 passed on d2e69c6, the K2-FU landing (task #420). The repack record (D-121) and the verifier's dispatch ride the next push.**
 - **RUNNING (as of 21:4xZ):** VERIFY-K2 round 6 (task #353: the resumed adversarial-verifier on Opus 5.5, in its own worktree at PIN d2e69c6), the narrow re-check of the K2 follow-ups; and the Jev relay (pid 6662, 127.0.0.1:47430). The repack is done (D-121): `.git` 615M to 69M, the hook's cold grep walk 83.25 s to 1.39 s; `gc.auto` stays 0, and task #422 holds the durable choice. Next: harvest the verifier, then the owner's yes to register K2 (item 13 of `tasks/briefs/jev-trim/VERIFY-K2-RS-report.md`).
