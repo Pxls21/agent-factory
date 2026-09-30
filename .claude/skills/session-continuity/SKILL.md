@@ -340,6 +340,8 @@ reads; a commit of only Markdown, `wiki/`, `todo/`, `transcripts/` or `tasks/` r
 
 **A live-state edit targets the newest block only (2026-09-29):** older blocks repeat the same status lines (`- **BRIEFED, WAITING FOR A SLOT:** …` stood in two blocks), so a scripted edit anchors on the newest block's heading and asserts each line once inside that block, never across the file; an exactly-once assertion over the whole file stopped such an edit before it wrote, which was the right outcome.
 
+**The live-state block is written before the increment's gate starts (2026-09-30, the D-121 records commit):** a test reads a file when it runs, so a block written while the gate runs is covered by chance. The block for that commit was written after its 19-file gate had started; the gate was stopped by its process group and run again over the final tree, 11 minutes. Fix the commit's whole file set, the block included, and only then start the gate.
+
 ## The task list before the view (superseded by D-102 on 2026-09-28)
 
 Since D-102 went live, the Stop and SessionStart hooks write the task list from the ledger (`scripts/task_sync.py`;
