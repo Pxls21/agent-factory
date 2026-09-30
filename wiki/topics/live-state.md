@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-30 19:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 19:3xZ): 526628b (the relay landings, the retro and the K2 follow-up brief are pushed; CI runs on bb8f93b).**
+- **RUNNING (as of 19:3xZ):** the K2-FU lane (task #420, a sandbox code-implementer on Opus 5.5, in its own worktree; its deliverable is `tasks/briefs/jev-trim/K2-FU.patch`), and the Jev relay (pid 6662, 127.0.0.1:47430, started by `scripts/jev_relay_up.sh`). Next: harvest the lane, land its patch, resume the K2 verifier for a narrow re-check, then the owner's yes to register K2.
+
 **2026-09-30 19:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 19:2xZ): 9708d95; the T408 landing, the records, tasks #418 and #419 (landed), the env-tool-quirks retro and the K2 follow-up brief ride the next push.**
 - **RUNNING (as of 19:2xZ):** JEV IS LIVE AGAIN. The relay (pid 6662) serves 127.0.0.1:47430 on the landed task #418 code, so a new `.pc-bridge.env` needs no restart; `scripts/jev_relay_up.sh` started it at 18:19:15Z, and `scripts/setup.sh` now runs that starter at every session start (off switch `.jev/relay-off`). A 15,000-line output at 19:02Z made 12 requests: 11 relayed, 1 refused by the value gate (task #423 will name what it refuses). No lane runs. Next: the push, then the K2 follow-up lane (task #420, `tasks/briefs/jev-trim/K2-FU-brief.md`), the verifier's narrow re-check, and the owner's yes to register K2.
