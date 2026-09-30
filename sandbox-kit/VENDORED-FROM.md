@@ -56,5 +56,5 @@ flash-loan/MEV authorization context, GPU tenancy, keep-alive Routines (owner-op
 
 **Added 2026-09-25 (not in the kit snapshot):** `vendor/jev-pruner/` — tamaratran/jev-pruner at commit
 `47d017c34eab7690b95f075ce6f4839247c5dc0a` (MIT), copied from the commit object of the owner's local checkout for the P1
-replay (task #231, D-087); `dist/` built from the pinned `src/` with TypeScript 5.9.3; one local change, the
-`minTokensFloor` option. Details: `vendor/jev-pruner/PROVENANCE.md`; pin: `upstream.lock.yaml` `advisory_tooling.jev-pruner`.
+replay (task #231, D-087); `dist/` built from the pinned `src/` with TypeScript 5.9.3; local changes: the
+`minTokensFloor` option (the library; the hook too since task #408, 2026-09-30) and the plugin manifests, renamed so the copy installs as its own plugin. Details: `vendor/jev-pruner/PROVENANCE.md`; pin: `upstream.lock.yaml` `advisory_tooling.jev-pruner`.

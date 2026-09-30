@@ -53,6 +53,7 @@ export type HookConfig = {
   maxStateTokens: number;
   maxScoringRequests?: number;
   minTokens: number;
+  minTokensFloor: number;
   persistedOutputs: boolean;
   persistedMaxChars: number;
   model: string;
@@ -69,11 +70,16 @@ function optionString(options: PluginOptions, key: string): string | undefined {
 }
 
 export function resolveHookConfig(options: PluginOptions): HookConfig {
+  // agent-factory local change (vendor/jev-pruner/PROVENANCE.md): the floor under minTokens is an option. A value that
+  // is not a finite number of at least 0 falls back to MIN_OUTPUT_TOKENS, so a bad value never lowers the floor.
+  const floor = optionNumber(options, 'minTokensFloor', MIN_OUTPUT_TOKENS);
+  const minTokensFloor = floor >= 0 ? floor : MIN_OUTPUT_TOKENS;
   const config: HookConfig = {
     chunkLines: optionNumber(options, 'chunkLines', DEFAULTS.chunkLines),
     keepThreshold: optionNumber(options, 'keepThreshold', DEFAULTS.keepThreshold),
     maxStateTokens: optionNumber(options, 'maxStateTokens', DEFAULTS.maxStateTokens),
-    minTokens: Math.max(MIN_OUTPUT_TOKENS, optionNumber(options, 'minTokens', DEFAULTS.minTokens)),
+    minTokens: Math.max(minTokensFloor, optionNumber(options, 'minTokens', DEFAULTS.minTokens)),
+    minTokensFloor,
     persistedOutputs:
       typeof options.persistedOutputs === 'boolean' ? options.persistedOutputs : true,
     persistedMaxChars: optionNumber(options, 'persistedMaxChars', DEFAULTS.persistedMaxChars),
@@ -175,7 +181,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
       sourceChars = output.length;
       if (configured.diagnostics) sourceEstimatedTokens = estimateTokens(output);
       decision = 'below_threshold';
-      if (!exceedsOutputThreshold(output, configured.minTokens)) return answer;
+      if (!exceedsOutputThreshold(output, configured.minTokens, configured.minTokensFloor)) return answer;
       decision = 'binary';
       if (looksBinary(output)) return answer;
       informationCategory = classifyInformation(output);
@@ -238,6 +244,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
         ),
         {
           minTokens: configured.minTokens,
+          minTokensFloor: configured.minTokensFloor,
           maxChars: Number.isFinite(maxChars) ? maxChars : 0,
           compactMarkers: true,
           chunkLines: configured.chunkLines,

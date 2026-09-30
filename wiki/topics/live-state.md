@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-30 16:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 16:3xZ): 9708d95 (transcript digests); CI run #1191 on 59ad820 passed. The T408 landing rides the commit that carries this block.**
+- **RUNNING (as of 16:3xZ):** one sandbox lane, no PC lane: VERIFY-K2-RS (task #353, GATED-PENDING-VERIFY). T408 LANDED (task #408): our pruner copy with a settable floor, installable as `fast-jev-output-floor@agent-factory-vendor`, NOT installed. THE OWNER'S DECISIONS NEEDED: the classifier refused the Jev relay (15:31Z) and the coordinator's read of the installed plugin's baseUrl patch (16:3xZ), so the switch-on (task #406), VERIFY-JEV-RELAY and the base-URL option (task #415) wait. The scrubber is parked (D-118).
+
 **2026-09-30 15:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 15:5xZ): b06a4c2 (transcript digests) after 63f7884 (the two briefs), f0c1757 (D-118) and 721d473 (the retro); the CI run for 63f7884 was in progress at writing.**
 - **RUNNING (as of 15:5xZ):** two sandbox lanes, no PC lane: VERIFY-K2-RS (the round-4 verifier resumed; task #353, GATED-PENDING-VERIFY) and T408 (task #408, the pruner's lower floor; build and test only). THE OWNER'S DECISION NEEDED: the auto-mode classifier refused the Jev relay at 15:31Z, so the switch-on (task #406) and VERIFY-JEV-RELAY wait. The scrubber is parked (D-118).

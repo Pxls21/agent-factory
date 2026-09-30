@@ -553,7 +553,7 @@ def test_decision_log_is_0600_and_holds_no_session_text(fixture_transcript, tmp_
         assert fragment not in text
 
 
-# ---------------------------------------------------------------- the vendored pruner and its one local change
+# ---------------------------------------------------------------- the vendored pruner and its local change 1 (the library's floor)
 
 NODE_FLOOR_CHECK = r"""
 import { register } from 'node:module';
@@ -584,7 +584,7 @@ console.log(JSON.stringify(out));
 
 @pytest.mark.parametrize("module", ["dist/output.js", pytest.param("src/output.ts", marks=needs_strip)])
 def test_floor_option_default_unchanged_and_lowered_only_when_passed(module):
-    """Run on the built dist/ AND on the TypeScript source (type-stripped), so both carry the one local change."""
+    """Run on the built dist/ AND on the TypeScript source (type-stripped), so both carry local change 1 (the library's floor option)."""
     proc = subprocess.run(["node", "--input-type=module", "-e", NODE_FLOOR_CHECK % {"module": VENDOR / module}],
                           capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0, proc.stderr
