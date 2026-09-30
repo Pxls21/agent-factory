@@ -6,8 +6,9 @@
 # live lane's untracked file under a vendored root would shift the manifest in the shared tree (AF-AP-188; done by hand twice
 # on 2026-09-24). It prints the paths to commit and commits nothing; commit them with SKIP_MANIFEST_CHECK=1.
 #   usage: scripts/skill_bake_finish.sh <skill> [<skill>...]
-#   exit: 0 ready · 1 nothing changed · 64 usage/refused · 65 a pattern reader is red (a line CTX1 moved from CLAUDE.md
-#   is gone, a System-1 entry over its budget, a SKILL.md frontmatter) · 66 disk
+#   exit: 0 ready · 1 nothing changed · 64 usage/refused · 65 a hand-ported skill's port is missing (task #393), or a
+#   pattern reader is red (a line CTX1 moved from CLAUDE.md is gone, a System-1 entry over its budget, a SKILL.md
+#   frontmatter) · 66 disk
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 [ $# -ge 1 ] || { echo "usage: skill_bake_finish.sh <skill> [<skill>...]" >&2; exit 64; }
@@ -33,6 +34,22 @@ only_named() {                          # another lane's skill edit must never r
 SKILLS=("$@")
 mapfile -t before < <(changed_now)
 only_named "${before[@]}"
+# Task #393: sync-skills never writes a hand-ported skill's .agents copy, and its --record below marks the .claude edit as
+# ported: D-115's bake recorded contract-gate and orchestration while their .agents copies lacked the edit (2026-09-30).
+# So a named hand-ported skill whose .claude SKILL.md changed while its .agents SKILL.md did not is refused BEFORE any
+# sync. BAKE_UNPORTED_OK="<skill> ..." passes a change that needs no port, and says so.
+in_before() { local f; for f in "${before[@]}"; do [ "$f" = "$1" ] && return 0; done; return 1; }
+for s in "${SKILLS[@]}"; do
+  grep -qx -- "$s" harness-ports/hand-ported.txt || continue
+  in_before ".claude/skills/$s/SKILL.md" || continue
+  in_before ".agents/skills/$s/SKILL.md" && continue
+  case " ${BAKE_UNPORTED_OK:-} " in
+    *" $s "*) echo "skill_bake_finish: BAKE_UNPORTED_OK names $s: its .agents copy stays as it is" >&2; continue;;
+  esac
+  echo "skill_bake_finish: $s is hand-ported, and .claude/skills/$s/SKILL.md changed while .agents/skills/$s/SKILL.md" \
+    "did not: port the change by hand first (BAKE_UNPORTED_OK=\"$s\" when it needs no port)" >&2
+  exit 65
+done
 # Order matters (task #369): the plain run mirrors a skill that is not hand-ported into .agents/skills (a hand-ported one is
 # never overwritten), and the lane copies are filled FROM .agents/skills, so they come second; --record only hashes.
 bash harness-ports/bin/sync-skills.sh >/dev/null
