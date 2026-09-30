@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-30 23:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 23:4xZ): 47507288. The round-6 records commit and a retro record (task #429 registered, backlog) ride the next push.**
+- **HOME (as of 23:4xZ):** VERIFY-K2 round 6 (task #353): MERGE-READY-WITH-FOLLOWUPS for registering K2 at d2e69c6 with its two patches, blockers none; report of record `tasks/briefs/jev-trim/VERIFY-K2-R6-report.md`, follow-ups task #428 (backlog). **RUNNING:** the Jev relay (pid 722 since the 23:22:40Z restart, 127.0.0.1:47430). Next: the owner's yes to register K2.
+
 **2026-09-30 23:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 23:2xZ): 47507288; CI run #1198 passed on fe98d04. The container restarted twice, at 22:40:03Z and at 23:22:40Z; the verifier was resumed after the first and finished.**
 - **HOME (as of 23:2xZ):** VERIFY-K2 round 6 (task #353): MERGE-READY-WITH-FOLLOWUPS for registering K2 at d2e69c6 with its two patches, blockers none. The report of record is `tasks/briefs/jev-trim/VERIFY-K2-R6-report.md`; its follow-ups are task #428 (backlog). **RUNNING:** the Jev relay (pid 722 since the second restart, 127.0.0.1:47430; its counters restart with it). Next: the owner's yes to register K2 (section 6 of the R6 report: both patches, the manifest's `.claude/` row regenerated, the two builds at HEAD, a smoke).
