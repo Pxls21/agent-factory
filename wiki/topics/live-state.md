@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-30 23:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 23:2xZ): 47507288; CI run #1198 passed on fe98d04. The container restarted twice, at 22:40:03Z and at 23:22:40Z; the verifier was resumed after the first and finished.**
+- **HOME (as of 23:2xZ):** VERIFY-K2 round 6 (task #353): MERGE-READY-WITH-FOLLOWUPS for registering K2 at d2e69c6 with its two patches, blockers none. The report of record is `tasks/briefs/jev-trim/VERIFY-K2-R6-report.md`; its follow-ups are task #428 (backlog). **RUNNING:** the Jev relay (pid 722 since the second restart, 127.0.0.1:47430; its counters restart with it). Next: the owner's yes to register K2 (section 6 of the R6 report: both patches, the manifest's `.claude/` row regenerated, the two builds at HEAD, a smoke).
+
 **2026-09-30 22:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 22:0xZ): e9c0c4d3. The retro bake (an env-tool-quirks line; tasks #426 and #427 registered, backlog) is pushed as 8fb30643 and its CI run is under way; run #1195 passed on the K2-FU landing (d2e69c6).**
 - **RUNNING (as of 22:0xZ):** VERIFY-K2 round 6 (task #353), the narrow re-check of the K2 follow-ups at PIN d2e69c6; and the Jev relay (pid 6662, 127.0.0.1:47430). Next: harvest the verifier, then the owner's yes to register K2 (item 13 of `tasks/briefs/jev-trim/VERIFY-K2-RS-report.md`).
