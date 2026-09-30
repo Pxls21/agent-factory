@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -435,10 +436,134 @@ def check_file_entry(repo, base):
     assert cm.file_entry("scripts/beta.py", root=repo)["status"] == "miss"       # no pack was built for beta.py
 
 
+def check_provenance(repo, base):
+    """K2 round 4 (D-115, provenance by blob), the builder's side: a caller or a test name enters the pack only when the
+    graph that named it indexed exactly its file's blob in the build's commit. GitNexus and code-review-graph are
+    re-indexed over an untracked caller file, an uncommitted caller in the tracked beta.py and an uncommitted test in
+    the tracked tests/test_alpha.py, a canary each: none enters the pack, the total that counted them is left out, and
+    the provenance record says which blob each named file has and which one each graph indexed (the oracle: git's own
+    blob ids); the committed callers stay (the controls)."""
+    env = _env(base["home"])
+    unt, unc, unct = ("%s%s" % (k, os.urandom(5).hex()) for k in ("unt", "unc", "unct"))
+    (repo / "scripts" / "unt.py").write_text("from alpha import helper\n\n\ndef %s():\n    return helper(5)\n" % unt)
+    (repo / "scripts" / "beta.py").write_text(BETA + "\n\ndef %s():\n    return helper(6)\n" % unc)
+    (repo / "tests" / "test_alpha.py").write_text(TEST_ALPHA + "\n\ndef test_%s():\n    assert helper(2) == 3\n" % unct)
+    _index(repo, env, graphs=("gitnexus", "code-review-graph"))
+    build(repo, base, "scripts/alpha.py")
+    p = pack(repo, "scripts/alpha.py")
+    text = json.dumps(p)
+    assert unt not in text, "a name from an untracked file entered the pack"
+    assert unc not in text, "a name from an uncommitted edit of a tracked file entered the pack"
+    assert unct not in text, "a test from an uncommitted edit of a tracked test file entered the pack"
+    by = {s["qualname"]: s["gitnexus"]["callers"] for s in p["symbols"] if (s.get("gitnexus") or {}).get("callers")}
+    assert (by["helper"]["count"], by["helper"]["tests"]) == (None, None), \
+        "a callers total that counted a name the pack does not hold stood"
+    assert [(c["name"], c["file"]) for c in by["helper"]["sample"]] == [("__init__", "scripts/alpha.py")], \
+        "the control: a committed caller was left out: %s" % by["helper"]
+    assert (by["cached"]["count"], [(c["name"], c["file"]) for c in by["cached"]["sample"]]) == (
+        2, [("fetch", "scripts/user.py"), ("main", "scripts/alpha.py")]), \
+        "the control: a total whose callers are all committed was changed: %s" % by["cached"]
+    head = _git(repo, env, "rev-parse", "HEAD").strip()
+
+    def blob(rel):
+        return _git(repo, env, "rev-parse", "HEAD:" + rel).strip()
+    kept = {r: {"blob": blob(r), "indexed": blob(r)} for r in ("scripts/alpha.py", "scripts/user.py")}
+    read_other = {r: {"blob": blob(r), "indexed": None} for r in ("scripts/beta.py", "tests/test_alpha.py")}
+    assert p["provenance"] == {"commit": head, "gitnexus": dict(kept, **read_other, **{
+        "scripts/unt.py": {"blob": None, "indexed": None}}), "code-review-graph": {
+        "tests/test_alpha.py": read_other["tests/test_alpha.py"]}}, \
+        "the provenance record is not each file's blob and the blob each graph indexed: %s" % p["provenance"]
+    assert p["tests"] == [], "a test from a file its graph did not index as committed stayed: %s" % p["tests"]
+
+
+def check_provenance_same_file(repo, base):
+    """A same-file name needs its graph fresh as well as the file's blob: GitNexus indexes an alpha.py whose `cached`
+    starts a line higher while every caller keeps its committed line; the file goes back to its committed bytes and
+    GitNexus's record is set to them. The record vouches for the blob and each name is on its line in it, so only the
+    graph's staleness (the lie _moved flags) keeps the same-file callers out; the callers in other files stay."""
+    env = _env(base["home"])
+    f = repo / "scripts" / "alpha.py"
+    moved = ALPHA.replace("        return self.v\n\n\n@functools", "        return self.v\n\n@functools").replace(
+        "hexdigest()\n\n\ndef main", "hexdigest()\n\n\n\ndef main")
+    assert moved != ALPHA and moved.count("\n") == ALPHA.count("\n")
+    f.write_text(moved)
+    _index(repo, env, graphs=("gitnexus",))
+    f.write_text(ALPHA)
+    meta = json.loads((repo / ".gitnexus" / "meta.json").read_text())
+    meta["fileHashes"]["scripts/alpha.py"] = hashlib.sha256(ALPHA.encode("utf-8")).hexdigest()
+    (repo / ".gitnexus" / "meta.json").write_text(json.dumps(meta))
+    build(repo, base, "scripts/alpha.py")
+    p = pack(repo, "scripts/alpha.py")
+    blob = _git(repo, env, "rev-parse", "HEAD:scripts/alpha.py").strip()
+    assert p["instruments"]["gitnexus"]["graph"] == "stale" and p["provenance"]["gitnexus"]["scripts/alpha.py"] == {
+        "blob": blob, "indexed": blob}, "not the case: the record and the names do not vouch for the blob, or " \
+        "_moved saw nothing: %s" % p["provenance"]
+    same = [(s["qualname"], c["name"]) for s in p["symbols"]
+            for c in (((s.get("gitnexus") or {}).get("callers") or {}).get("sample") or [])
+            if c["file"] == "scripts/alpha.py"]
+    assert same == [], "a same-file caller from a stale GitNexus graph entered the pack: %s" % same
+    helper = {s["qualname"]: s for s in p["symbols"]}["helper"]["gitnexus"]["callers"]
+    assert [(c["name"], c["file"]) for c in helper["sample"]] == [("use", "scripts/beta.py"), (
+        "test_helper_adds_one", "tests/test_alpha.py")], "the control: a committed caller was left out: %s" % helper
+
+
+def check_provenance_record_lies(repo, base):
+    """The blob tie reads each graph's own record, and a record can be newer than the graph's nodes (the GitNexus lie
+    _moved flags for the file itself) or be read after a re-index; so each name must also sit on its line in the
+    committed blob (why the builder reads the blob). GitNexus and code-review-graph index a canary caller in beta.py and
+    a canary test in tests/test_alpha.py; both files go back to their committed bytes and both graphs' records are set
+    to those bytes. user.py keeps an uncommitted comment, its one name on its committed line. No canary enters the pack;
+    none of the three files keeps a name (user.py: its graph read other bytes), and each total that counted one is left
+    out; the file's own callers stay (the control)."""
+    env = _env(base["home"])
+    gn, ct = ("%s%s" % (k, os.urandom(5).hex()) for k in ("gnlie", "crglie"))
+    lies = {"scripts/beta.py": BETA, "tests/test_alpha.py": TEST_ALPHA}
+    (repo / "scripts" / "beta.py").write_text(BETA + "\n\ndef %s():\n    return helper(6)\n" % gn)
+    (repo / "tests" / "test_alpha.py").write_text(TEST_ALPHA + "\n\ndef test_%s():\n    assert helper(2) == 3\n" % ct)
+    (repo / "scripts" / "user.py").write_text(USER + "\n# an uncommitted comment\n")
+    _index(repo, env, graphs=("gitnexus", "code-review-graph"))
+    meta = json.loads((repo / ".gitnexus" / "meta.json").read_text())
+    for rel, text in lies.items():
+        (repo / rel).write_text(text)
+        meta["fileHashes"][rel] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    (repo / ".gitnexus" / "meta.json").write_text(json.dumps(meta))
+    con = sqlite3.connect(repo / ".code-review-graph" / "graph.db")
+    try:
+        with con:
+            n = con.execute("UPDATE nodes SET file_hash = ? WHERE kind = 'File' AND file_path = ?",
+                            (hashlib.sha256(TEST_ALPHA.encode("utf-8")).hexdigest(),
+                             os.path.realpath(repo / "tests" / "test_alpha.py"))).rowcount
+    finally:
+        con.close()
+    assert n == 1, "the fixture: code-review-graph holds no File row for tests/test_alpha.py"
+    build(repo, base, "scripts/alpha.py")
+    p = pack(repo, "scripts/alpha.py")
+    text = json.dumps(p)
+    assert gn not in text, "a caller from bytes its graph's record does not describe entered the pack"
+    assert ct not in text, "a test from bytes its graph's record does not describe entered the pack"
+
+    def blob(rel):
+        return _git(repo, env, "rev-parse", "HEAD:" + rel).strip()
+    other = ("scripts/beta.py", "tests/test_alpha.py", "scripts/user.py")
+    prov = p["provenance"]
+    assert {r: prov["gitnexus"].get(r) for r in other} == {r: {"blob": blob(r), "indexed": None} for r in other} \
+        and prov["code-review-graph"] == {"tests/test_alpha.py": {"blob": blob("tests/test_alpha.py"),
+                                                                  "indexed": None}}, \
+        "a file whose graph read other bytes was vouched for: %s" % prov
+    by = {s["qualname"]: s["gitnexus"]["callers"] for s in p["symbols"] if (s.get("gitnexus") or {}).get("callers")}
+    assert [(k, by[k]["count"], [(c["name"], c["file"]) for c in by[k]["sample"]]) for k in ("helper", "cached")] == [
+        ("helper", None, [("__init__", "scripts/alpha.py")]), ("cached", None, [("main", "scripts/alpha.py")])], \
+        "not the case: each lying file's names dropped with the total, the file's own callers kept: %s" % by
+    assert p["tests"] == [], "a test from a file whose graph read other bytes stayed: %s" % p["tests"]
+
+
 LOOKUP_CHECKS = {"pack-fields": check_pack_fields, "record-that-lies": check_record_that_lies, "lookup-positions": check_lookup_positions, "stale": check_stale,
                  "miss": check_miss, "byte-cap": check_byte_cap, "absent": check_absent,
-                 "identical": check_identical, "edit-context": check_edit_context, "file-entry": check_file_entry}
+                 "identical": check_identical, "edit-context": check_edit_context, "file-entry": check_file_entry,
+                 "provenance": check_provenance, "provenance-same-file": check_provenance_same_file,
+                 "provenance-record-lies": check_provenance_record_lies}
 # one mutation per property: (the check it must fail, old text, new text, the failure it must fail with)
+OK_LINE = '            ok = blob is not None and indexed == sha and _named_here(data, f, files[f])\n'
 MUTANTS = {
     "blob-without-header": ("pack-fields", 'hashlib.sha1(b"blob %d\\0" % len(data) + data)', "hashlib.sha1(data)",
                             "blob is not git's blob id"),
@@ -474,6 +599,35 @@ MUTANTS = {
     "file-entry-never-stale": ("file-entry", 'stale = pack["blob"] != blob_sha(sys1.read_regular(str(root / rel), True))',
                                "stale = False",
                                "an edited file's entry does not say STALE"),
+    # K2 round 4 (D-115): a named mutant per clause of the blob tie, the builder's side
+    "builder-path-not-blob": ("provenance", OK_LINE, "            ok = blob is not None\n",
+                              "a name from an uncommitted edit of a tracked file entered the pack"),
+    "builder-working-bytes": ("provenance", "            blob, sha, data = committed.get(f, (None, None, None))\n",
+                              "            blob, data = committed.get(f, (None,))[0], (Path(root) / f).read_bytes()\n"
+                              "            sha = hashlib.sha256(data).hexdigest()\n",
+                              "a name from an uncommitted edit of a tracked file entered the pack"),
+    "builder-indexed-hash-skipped": ("provenance-record-lies", OK_LINE,
+                                     "            ok = blob is not None and _named_here(data, f, files[f])\n",
+                                     "a file whose graph read other bytes was vouched for"),
+    "builder-names-unchecked": ("provenance-record-lies", OK_LINE,
+                                "            ok = blob is not None and indexed == sha\n",
+                                "a caller from bytes its graph's record does not describe entered the pack"),
+    "builder-missing-blob-accepted": ("provenance", 'rec.get("blob") is not None and rec.get("indexed") == rec["blob"]',
+                                      'rec.get("indexed") == rec.get("blob")',
+                                      "a name from an untracked file entered the pack"),
+    "builder-total-kept-on-drop": ("provenance", '        if len(kept) < c["count"]:\n', "        if False:\n",
+                                   "a callers total that counted a name the pack does not hold stood"),
+    "builder-callers-unfiltered": ("provenance", '        kept = [x for x in c.pop("all") if vouched(x["file"], '
+                                   '"gitnexus", gn_sec)]\n',
+                                   '        kept = c.pop("all")\n', "a name from an untracked file entered the pack"),
+    "builder-tests-unfiltered": ("provenance",
+                                 '    tests = [x for x in tests if vouched(x["file"], "code-review-graph", crg_sec)]\n',
+                                 "    tests = list(tests)\n",
+                                 "a test from an uncommitted edit of a tracked test file entered the pack"),
+    "builder-same-file-fresh-ignored": ("provenance-same-file",
+                                        '        return _proven(prov, graph, f) and (f != rel or sec.get("graph") == '
+                                        '"fresh")\n', "        return _proven(prov, graph, f)\n",
+                                        "a same-file caller from a stale GitNexus graph entered the pack"),
 }
 
 

@@ -24,13 +24,23 @@ verifier's seventeen F14 checks are here under their names, and the parser's F3,
 nested scripts, the remote commands, a 3,000-pair command's time). `run` kills a stalled hook and fails as a stall.
 
 Round 3 (VERIFY-K2 round 2): B1, a caller or test in an untracked file named in a tracked file's code part, runs on
-planted packs (untracked-callers, same-file-stale, caller-path-newline) and through the REAL patched post-commit hook
-with graft, GitNexus and code-review-graph (the verifier's probe_callers2.py; skipped loudly without them). B2, a pack
-whose symbols come from a graph that had not indexed its bytes, runs on planted packs (stale-symbol-graph,
-sourceless-symbols) and through the REAL refresh in both of the verifier's shapes (an untracked file, a reverted edit).
+planted packs (untracked-callers, same-file-stale, caller-path-newline); its real-hook test became round 4's class
+test. B2, a pack whose symbols come from a graph that had not indexed its bytes, runs on planted packs
+(stale-symbol-graph, sourceless-symbols) and through the REAL refresh in both of the verifier's shapes (an untracked
+file, a reverted edit).
 B3: `hook_dir` applies the post-commit patch only to a hook that does not carry it, and the negative control's hook
 comes from UNPATCHED_AT, so this file passes before the patch lands and after. The verifier's seven checks that killed
 mutants the round-2 checks missed are here under their names.
+
+Round 4 (VERIFY-K2 round 3, R3-1; D-115, provenance by blob): the planted packs carry the provenance codemap.py's
+builder records (`provenance`), and the reader's clauses run on them (blob-tie: a record of other bytes, of another
+blob, of a file untracked at the build, a total beside a dropped name, a pack with no provenance), with the verifier's
+four n4 checks re-stated for the blob tie (tail-path-caller, tests-graph, not-indexed, caller-files-missing) and a
+wrong UNPATCHED_AT refused. The class test (class_scenario) plants a canary in each shape of the class, through the REAL
+patched post-commit hook and the real graphs: untracked files outside and inside the refresh paths, the untracked era
+of files later committed with other text (R3-1's late-outside, and late-track with the refresh held behind its lock),
+an uncommitted edit of a tracked caller and test (NOT done 1) and a caller file untracked while the file-pack build is
+held (NOT done 9); its leak control turns the blob comparison off at the builder and the reader, and each canary shows.
 """
 import ast
 import fcntl
@@ -157,8 +167,34 @@ def ast_symbols(text):
     return sorted(out, key=lambda s: (s[1], -s[2], s[0]))
 
 
+def committed_blob(repo, commit_id, rel):
+    """`rel`'s blob id in `commit_id`'s tree, or None when that tree holds no blob there or there is no such commit
+    (git's own answer)."""
+    r = subprocess.run(["git", "ls-tree", "-z", commit_id, "--", rel], cwd=repo, capture_output=True, text=True,
+                       timeout=60)
+    head, _, path = r.stdout.rstrip("\0").partition("\t")
+    return head.split()[2] if r.returncode == 0 and path == rel and head.split()[1:2] == ["blob"] else None
+
+
+def provenance(repo, commit_id, named, override=None):
+    """A code-map pack's `provenance` as codemap.py's builder records it (K2 round 4), for graphs that indexed the
+    working copy: per graph in `named` ({graph: files}), each file's blob in `commit_id` and, when the working bytes are
+    that blob, the same blob as `indexed` (else None). `override` ({graph: {file: record}}) replaces records."""
+    out = {"commit": commit_id}
+    for g, files in named.items():
+        out[g] = {}
+        for f in files:
+            blob = committed_blob(repo, commit_id, f) if "\n" not in f else None
+            work = git(repo, "hash-object", "--", f).strip() if blob and (repo / f).is_file() else None
+            out[g][f] = {"blob": blob, "indexed": blob if blob and work == blob else None}
+    for g, recs in (override or {}).items():
+        out.setdefault(g, {}).update(recs)
+    return out
+
+
 def plant_code_pack(repo, rel, commit_id):
-    """A code-map pack of `rel` in codemap.py's format (schema 1), its symbols from the file's AST, fresh."""
+    """A code-map pack of `rel` in codemap.py's format (schema 1), its symbols from the file's AST, fresh, and its
+    provenance as the builder records it at `commit_id`."""
     data = (repo / rel).read_bytes()
     sha = hashlib.sha256(data).hexdigest()
     syms = []
@@ -173,6 +209,8 @@ def plant_code_pack(repo, rel, commit_id):
     pack = {"schema": 1, "path": rel, "language": "python", "blob": git(repo, "hash-object", "--", rel).strip(),
             "sha256": sha, "lines": data.count(b"\n"), "bytes": len(data), "commit": commit_id,
             "symbols_from": "graft", "caller_files": [],
+            "provenance": provenance(repo, commit_id, {"gitnexus": [rel],
+                                                       "code-review-graph": ["tests/test_alpha.py"]}),
             "instruments": {"graft": dict(fresh), "gitnexus": dict(fresh, indexed_commit=commit_id, symbols=len(syms),
                                                                    unmatched=[]),
                             "code-review-graph": dict(fresh, tests_found=1),
@@ -1001,13 +1039,19 @@ def alter_pack(repo, change):
     p.write_text(json.dumps(pk, indent=1, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def plant_callers(repo, callers, tests, caller_files, count=5, graphs=None):
-    """alpha's code pack with helper's callers sample, the file's tests and its caller files as given, and the graph
-    marks in `graphs` ({graph: fresh|stale}); everything else as plant_code_pack wrote it."""
+def plant_callers(repo, callers, tests, caller_files, count=5, graphs=None, override=None):
+    """alpha's code pack with helper's callers sample, the file's tests and its caller files as given, the graph marks
+    in `graphs` ({graph: fresh|stale}) and the provenance the builder records at HEAD for every file they name
+    (`override` replaces records, see provenance); everything else as plant_code_pack wrote it."""
+    head = git(repo, "rev-parse", "HEAD").strip()
+    named = {"gitnexus": sorted({"scripts/alpha.py", *caller_files, *(c["file"] for c in callers)}),
+             "code-review-graph": sorted({t["file"] for t in tests})}
+    prov = provenance(repo, head, named, override)
+
     def change(pk):
         helper = next(s for s in pk["symbols"] if s["qualname"] == "helper")
         helper["gitnexus"]["callers"] = {"count": count, "tests": 1, "sample": callers}
-        pk["tests"], pk["caller_files"] = tests, caller_files
+        pk["tests"], pk["caller_files"], pk["provenance"] = tests, caller_files, prov
         for g, v in (graphs or {}).items():
             pk["instruments"][g]["graph"] = v
     alter_pack(repo, change)
@@ -1019,8 +1063,9 @@ def helper_edit(repo, sid):
 
 def check_untracked_callers(repo, st, ids, tmp):
     """VERIFY-K2 R2 B1: GitNexus (and code-review-graph) index untracked files too. The code part names only the
-    callers and tests in files TRACKED.txt lists, and a callers total that counted any other caller (a sampled one, or
-    one past the sample that caller_files names) is left out; a clean pack's total stands (the control)."""
+    callers and tests whose files the pack's provenance ties to their blob at the build (an untracked file has none,
+    K2 round 4), and a callers total that counted any other caller (a sampled one, or one past the sample that
+    caller_files names) is left out; a clean pack's total stands (the control)."""
     commit(repo, {"tests/test_trk.py": "def test_trk():\n    pass\n"}, "a tracked test", 9)
     build(repo, st)
     uc, ut, trk = ("%s%s" % (k, secrets.token_hex(5)) for k in ("uc", "ut", "trk"))
@@ -1075,15 +1120,20 @@ def check_same_file_stale(repo, st, ids, tmp):
 
 
 def check_caller_path_newline(repo, st, ids, tmp):
-    """TRACKED.txt's match is a whole line: a caller path holding a newline, whose two halves are tracked lines one
-    after the other, is not a tracked file."""
+    """BLOBS.txt's match is one whole `path TAB blob` line (K2 round 4): a caller path holding a newline, which with
+    the blob of the line before it spans two lines one after the other (alpha's, then beta's), never takes the second
+    line's blob, even with a record that claims it."""
     build(repo, st)
-    assert "\nscripts/beta.py\nscripts/gamma.py\n" in (st / "filepacks" / "TRACKED.txt").read_text(), "not the case"
+    alpha, beta = (committed_blob(repo, "HEAD", r) for r in ("scripts/alpha.py", "scripts/beta.py"))
+    assert "\nscripts/alpha.py\t%s\nscripts/beta.py\t%s\n" % (alpha, beta) in (
+        st / "filepacks" / "BLOBS.txt").read_text(), "not the case"
     cn = "cn" + secrets.token_hex(5)
-    plant_callers(repo, [{"name": cn, "file": "scripts/beta.py\nscripts/gamma.py", "line": 1}], [], ["scripts/beta.py"])
+    f = "scripts/alpha.py\t%s\nscripts/beta.py" % alpha
+    plant_callers(repo, [{"name": cn, "file": f, "line": 1}], [], ["scripts/beta.py"],
+                  override={"gitnexus": {f: {"blob": beta, "indexed": beta}}})
     ctx = context(run(repo, st, helper_edit(repo, "pn")))
     assert ctx.startswith("codemap scripts/alpha.py:6 — function helper"), "the control: no code part: %r" % ctx[:80]
-    assert cn not in ctx, "a caller path holding a newline was taken as tracked"
+    assert cn not in ctx, "a caller path holding a newline took another file's blob"
 
 
 def check_stale_symbol_graph(repo, st, ids, tmp):
@@ -1121,6 +1171,110 @@ def check_sourceless_symbols(repo, st, ids, tmp):
     alter_pack(repo, lambda pk: pk.update(symbols=[]))
     ctx = context(run(repo, st, read(repo, "scripts/alpha.py", sid="ns1")))
     assert ctx.startswith("codemap scripts/alpha.py — 0 symbols"), "the control: no file entry: %r" % ctx[:80]
+
+
+# Round 4 (D-115, provenance by blob): item 1's clauses, and the verifier's four n4 checks (VERIFY-K2 R3 item 6)
+# re-stated for the blob tie.
+
+LEFT_OUT = "callers in tracked files (the total is left out): "
+
+
+def check_blob_tie(repo, st, ids, tmp):
+    """K2 round 4, item 1's clauses on planted packs, a canary each: a name stays only when the pack's provenance says
+    its graph indexed exactly its file's blob and that blob is the file's blob in BLOBS.txt, and a dropped name drops
+    the total. A record whose graph read other bytes (indexed None: NOT done 1), a record of a blob that is not
+    BLOBS.txt's (the file committed since with other text), a file untracked at the build, a sampled file beside
+    caller_files that are all tied, and a pack with no provenance (built before this round) each show no such name and
+    no total; a record tied to BLOBS.txt's blob shows its name and the total (the control)."""
+    old_beta, gamma = (committed_blob(repo, "HEAD", r) for r in ("scripts/beta.py", "scripts/gamma.py"))
+    commit(repo, {"scripts/beta.py": "def beta():\n    return 22\n"}, "beta rewritten", 9)
+    git(repo, "rm", "-q", "--cached", "scripts/gamma.py", k=10)
+    git(repo, "commit", "-q", "-m", "gamma untracked", k=10)
+    build(repo, st)
+    beta = committed_blob(repo, "HEAD", "scripts/beta.py")
+    ok, ni, ob, un, zz, lg = ("%s%s" % (k, secrets.token_hex(5)) for k in ("ok", "ni", "ob", "un", "zz", "lg"))
+
+    def lines(sid, name, file="scripts/beta.py", extra=(), **kw):
+        plant_callers(repo, [{"name": name, "file": file, "line": 1}, *extra], [], [file], **kw)
+        return context(run(repo, st, helper_edit(repo, sid))).split("\n")
+    got = lines("bt0", ok)
+    assert "callers 5 (1 in tests): %s scripts/beta.py:1 · +4 more" % ok in got, \
+        "the control: a caller tied to its blob, or its total, was left out: %s" % got[:4]
+    got = lines("bt1", ni, override={"gitnexus": {"scripts/beta.py": {"blob": beta, "indexed": None}}})
+    assert LEFT_OUT + "none shown" in got, \
+        "a name from bytes its graph read that are not its file's blob reached the model: %s" % got[:4]
+    got = lines("bt2", ob, override={"gitnexus": {"scripts/beta.py": {"blob": old_beta, "indexed": old_beta}}})
+    assert LEFT_OUT + "none shown" in got, \
+        "a name from a blob that is not its file's blob at the build reached the model: %s" % got[:4]
+    got = lines("bt3", un, file="scripts/gamma.py",
+                override={"gitnexus": {"scripts/gamma.py": {"blob": gamma, "indexed": gamma}}})
+    assert LEFT_OUT + "none shown" in got, "a name from a file untracked at the build reached the model: %s" % got[:4]
+    got = lines("bt4", ok, extra=[{"name": zz, "file": "scripts/zeta.py", "line": 1}])
+    assert LEFT_OUT + "%s scripts/beta.py:1" % ok in got, "a callers total stood beside a dropped name: %s" % got[:4]
+    plant_callers(repo, [{"name": lg, "file": "scripts/beta.py", "line": 1}], [], ["scripts/beta.py"])
+    alter_pack(repo, lambda pk: pk.pop("provenance"))
+    got = context(run(repo, st, helper_edit(repo, "bt5"))).split("\n")
+    assert LEFT_OUT + "none shown" in got, "a pack with no provenance showed a caller: %s" % got[:4]
+
+
+def check_tail_path_caller(repo, st, ids, tmp):
+    """The verifier's n4_listed_substring under the blob tie: a caller in an untracked `beta.py`, whose path is the tail
+    of the tracked scripts/beta.py, is not shown even beside a record claiming beta's blob (BLOBS.txt's match is the
+    whole path); a same-file caller of a fresh graph is (the control)."""
+    build(repo, st)
+    beta = committed_blob(repo, "HEAD", "scripts/beta.py")
+    sub = "sb" + secrets.token_hex(5)
+    plant_callers(repo, [{"name": sub, "file": "beta.py", "line": 2},
+                         {"name": "main", "file": "scripts/alpha.py", "line": 18}], [], ["beta.py"],
+                  override={"gitnexus": {"beta.py": {"blob": beta, "indexed": beta}}})
+    ctx = context(run(repo, st, helper_edit(repo, "n4s")))
+    assert "main scripts/alpha.py:18" in ctx, "the control: a same-file caller of a fresh graph was left out: %r" % (
+        ctx[:300])
+    assert sub not in ctx, "a caller in an untracked file whose path is the tail of a tracked path was shown"
+
+
+def check_tests_graph(repo, st, ids, tmp):
+    """The verifier's n4_tests_graph: a same-file test is judged by code-review-graph's freshness, a same-file caller by
+    GitNexus's, each graph on its own."""
+    build(repo, st)
+    ct, cc = ("%s%s" % (k, secrets.token_hex(5)) for k in ("ct", "cc"))
+    tests = [{"file": "scripts/alpha.py", "line": 31, "name": ct, "indirect": False}]
+    callers = [{"name": cc, "file": "scripts/alpha.py", "line": 30}]
+    plant_callers(repo, callers, tests, [], count=1, graphs={"gitnexus": "fresh", "code-review-graph": "stale"})
+    ctx = context(run(repo, st, helper_edit(repo, "n4t1")))
+    assert cc in ctx, "the control: a same-file caller of a fresh GitNexus graph was left out: %r" % ctx[:300]
+    assert ct not in ctx, "a same-file test named by a stale code-review-graph was shown (GitNexus fresh)"
+    plant_callers(repo, callers, tests, [], count=1, graphs={"gitnexus": "stale", "code-review-graph": "fresh"})
+    ctx = context(run(repo, st, helper_edit(repo, "n4t2")))
+    assert ct in ctx, "the control: a same-file test of a fresh code-review-graph was left out: %r" % ctx[:300]
+    assert cc not in ctx, "a same-file caller named by a stale GitNexus graph was shown (code-review-graph fresh)"
+
+
+def check_not_indexed(repo, st, ids, tmp):
+    """The verifier's n4_not_indexed: `not-indexed` is not fresh, for a same-file name and for the symbols' graph."""
+    build(repo, st)
+    cc = "ni" + secrets.token_hex(5)
+    plant_callers(repo, [{"name": cc, "file": "scripts/alpha.py", "line": 30}], [], [], count=1,
+                  graphs={"gitnexus": "not-indexed"})
+    ctx = context(run(repo, st, helper_edit(repo, "n4n1")))
+    assert ctx.startswith("codemap scripts/alpha.py:6"), "the control: no code part: %r" % ctx[:80]
+    assert cc not in ctx, "a same-file caller named by a GitNexus graph that had not indexed the file was shown"
+    alter_pack(repo, lambda pk: pk["instruments"]["graft"].update(graph="not-indexed"))
+    ctx = context(run(repo, st, read(repo, "scripts/alpha.py", sid="n4n2")))
+    assert ctx.startswith("filepack scripts/alpha.py @") and "codemap " not in ctx, \
+        "a code part whose symbol graph had not indexed the file was shown: %r" % ctx[:80]
+
+
+def check_caller_files_missing(repo, st, ids, tmp):
+    """The verifier's n4_caller_files_missing: a callers total with no caller_files to vouch for it is left out."""
+    build(repo, st)
+    trk = "cf" + secrets.token_hex(5)
+    plant_callers(repo, [{"name": trk, "file": "scripts/beta.py", "line": 2}], [], ["scripts/beta.py"], count=4)
+    got = context(run(repo, st, helper_edit(repo, "n4c0"))).split("\n")
+    assert any(ln.startswith("callers 4") for ln in got), "the control: a clean pack's total was left out: %s" % got[:4]
+    alter_pack(repo, lambda pk: pk.pop("caller_files"))
+    got = context(run(repo, st, helper_edit(repo, "n4c1"))).split("\n")
+    assert not any(ln.startswith("callers 4") for ln in got), "a total stood with no caller_files to vouch for it"
 
 
 # The verifier's seven (VERIFY-K2 R2 finding 4: each mutant survived the round-2 checks), from its mutdrv3.py killers.
@@ -1200,11 +1354,18 @@ CHECKS = {"edit-once-per-symbol": check_edit_once_per_symbol, "read-range": chec
           "sourceless-symbols": check_sourceless_symbols, "blobs-missing": check_blobs_missing,
           "grep-long-value": check_grep_long_value, "grep-attached": check_grep_attached,
           "script-paren": check_script_paren, "dq-substitution": check_dq_substitution,
-          "grep-double-dash": check_grep_double_dash, "files-max": check_files_max}
+          "grep-double-dash": check_grep_double_dash, "files-max": check_files_max,
+          # round 4 (D-115): item 1's clauses, and the verifier's four n4 checks under the blob tie
+          "blob-tie": check_blob_tie, "tail-path-caller": check_tail_path_caller, "tests-graph": check_tests_graph,
+          "not-indexed": check_not_indexed, "caller-files-missing": check_caller_files_missing}
 # one mutation per property: (the check it must fail, old text, new text, the failure it must fail with)
-ALL_KEPT = '    all_kept = fresh["gitnexus"] and isinstance(files, list) and all(listed(f) for f in files)\n'
+ALL_KEPT = ('    all_kept = fresh["gitnexus"] and isinstance(files, list) and all(proven(f, "gitnexus") for f in '
+            'files + [rel])\n')
 TESTS_KEPT = '    pack["tests"] = [x for x in pack.get("tests") or [] if keep(x, "code-review-graph")]\n'
 STALE_GRAPH = '    if (src is not None or pack.get("symbols")) and (graphs.get(src) or {}).get("graph") != "fresh":\n'
+PROVEN_HEAD = '        return (isinstance(rec, dict) and "\\n" not in f and isinstance(rec.get("blob"), str)\n'
+PROVEN_TAIL = '                and rec.get("indexed") == rec["blob"] and rec["blob"] == packs.blob(f))\n'
+PROV_LINE = '    prov = pack.get("provenance") if isinstance(pack.get("provenance"), dict) else {}\n'
 MUTANTS = {
     "edit-key-per-file": ("edit-once-per-symbol",
                           'key = "sym:%s:%s" % (rel, e["symbol"]) if tool == "Edit" and e["symbol"] else fkey',
@@ -1369,16 +1530,15 @@ MUTANTS = {
     "caller-files-ignored": ("untracked-callers", ALL_KEPT, '    all_kept = fresh["gitnexus"]\n',
                              "a callers total counted an unseen untracked caller"),
     "same-file-names-from-stale-graphs": ("same-file-stale",
-                                          "        return listed(f) and (f != rel or fresh[graph])\n",
-                                          "        return listed(f)\n",
+                                          "        return proven(f, graph) and (f != rel or fresh[graph])\n",
+                                          "        return proven(f, graph)\n",
                                           "a caller named by a stale GitNexus graph of this file reached the model"),
     "stale-gitnexus-total-stands": ("same-file-stale", ALL_KEPT,
-                                    "    all_kept = isinstance(files, list) and all(listed(f) for f in files)\n",
-                                    "a callers total from a stale GitNexus graph stood"),
-    "tracked-newline-unguarded": ("caller-path-newline",
-                                  '        return isinstance(f, str) and "\\n" not in f and "\\0" not in f and packs.tracked(f)\n',
-                                  "        return packs.tracked(f)\n",
-                                  "a caller path holding a newline was taken as tracked"),
+                                    '    all_kept = isinstance(files, list) and all(proven(f, "gitnexus") for f in '
+                                    'files + [rel])\n', "a callers total from a stale GitNexus graph stood"),
+    "blobs-newline-unguarded": ("caller-path-newline", PROVEN_HEAD,
+                                '        return (isinstance(rec, dict) and isinstance(rec.get("blob"), str)\n',
+                                "a caller path holding a newline took another file's blob"),
     # B2: the clause, its source graph, a pack with symbols and no source
     "stale-symbol-graph-shown": ("stale-symbol-graph", STALE_GRAPH, "    if False:\n",
                                  "a code part from a stale symbol graph reached the model"),
@@ -1404,6 +1564,48 @@ MUTANTS = {
     "grep-double-dash-dropped": ("grep-double-dash", "            operands += words[i:]\n            break\n",
                                  "            break\n", "grep -- lost its files or read its pattern"),
     "files-max-off": ("files-max", "FILES_MAX = 64 ", "FILES_MAX = 10 ** 9 ", "not FILES_MAX (64)"),
+    # round 4 (D-115): a named mutant per clause of item 1, the reader's side (the builder's are in test_codemap.py)
+    "blob-tie-by-path": ("blob-tie", PROVEN_TAIL, '                and rec.get("indexed") == rec["blob"] and '
+                         'packs.tracked(f))\n', "a name from a blob that is not its file's blob at the build"),
+    "indexed-hash-skipped": ("blob-tie", PROVEN_TAIL, '                and rec["blob"] == packs.blob(f))\n',
+                             "a name from bytes its graph read that are not its file's blob reached the model"),
+    "missing-blob-accepted": ("blob-tie", PROVEN_TAIL, '                and rec.get("indexed") == rec["blob"] and '
+                              'packs.blob(f) in (None, rec["blob"]))\n',
+                              "a name from a file untracked at the build reached the model"),
+    "total-kept-on-drop": ("blob-tie", "        if not all_kept or len(kept) < len(sample):\n",
+                           "        if not all_kept:\n", "a callers total stood beside a dropped name"),
+    "legacy-pack-trusted": ("blob-tie", PROV_LINE, PROV_LINE + "    if not prov:\n        return\n",
+                            "a pack with no provenance showed a caller"),
+    "committed-filter-uncalled": ("untracked-callers", "    _committed_only(pack, rel, packs, graphs)\n", "",
+                                  "an untracked caller reached the model"),
+    "blob-tie-off": ("blob-tie", PROVEN_HEAD + PROVEN_TAIL, "        return True\n",   # the class test's leak control
+                     "a name from bytes its graph read that are not its file's blob reached the model"),
+    # round 4: the verifier's mutants of round 3's clauses (VERIFY-K2 R3 item 6, mutdrv4.py), re-anchored
+    "blob-key-substring": ("tail-path-caller", 'key = ("\\n%s\\t" % rel).encode("utf-8")',
+                           'key = ("%s\\t" % rel).encode("utf-8")',
+                           "a caller in an untracked file whose path is the tail of a tracked path was shown"),
+    "tests-by-gitnexus": ("tests-graph", TESTS_KEPT,
+                          '    pack["tests"] = [x for x in pack.get("tests") or [] if keep(x, "gitnexus")]\n',
+                          "a same-file test named by a stale code-review-graph was shown (GitNexus fresh)"),
+    "callers-by-crg": ("tests-graph", '        kept = [x for x in sample if keep(x, "gitnexus")]\n',
+                       '        kept = [x for x in sample if keep(x, "code-review-graph")]\n',
+                       "the control: a same-file caller of a fresh GitNexus graph was left out"),
+    "keep-rel-any-graph": ("tests-graph", "        return proven(f, graph) and (f != rel or fresh[graph])\n",
+                           "        return proven(f, graph) and (f != rel or any(fresh.values()))\n",
+                           "a same-file test named by a stale code-review-graph was shown (GitNexus fresh)"),
+    "tests-rel-unfiltered": ("tests-graph", TESTS_KEPT, '    pack["tests"] = [x for x in pack.get("tests") or [] if '
+                             'isinstance(x, dict) and proven(x.get("file"), "code-review-graph")]\n',
+                             "a same-file test named by a stale code-review-graph was shown (GitNexus fresh)"),
+    "fresh-unless-stale": ("not-indexed", '    fresh = {g: (graphs.get(g) or {}).get("graph") == "fresh" for g in '
+                           '("gitnexus", "code-review-graph")}\n', '    fresh = {g: (graphs.get(g) or {}).get("graph") '
+                           '!= "stale" for g in ("gitnexus", "code-review-graph")}\n',
+                           "a same-file caller named by a GitNexus graph that had not indexed the file was shown"),
+    "clause-not-indexed-passes": ("not-indexed", '(graphs.get(src) or {}).get("graph") != "fresh"',
+                                  '(graphs.get(src) or {}).get("graph") not in ("fresh", "not-indexed")',
+                                  "a code part whose symbol graph had not indexed the file was shown"),
+    "files-not-list-ok": ("caller-files-missing", ALL_KEPT, '    all_kept = fresh["gitnexus"] and (not '
+                          'isinstance(files, list) or all(proven(f, "gitnexus") for f in files + [rel]))\n',
+                          "a total stood with no caller_files to vouch for it"),
 }
 
 
@@ -1616,6 +1818,21 @@ def test_hook_dir_knows_whether_the_hook_carries_the_patch(tmp_path):
         "the hook without the patch came from the working copy"
 
 
+def test_a_wrong_unpatched_at_is_refused(tmp_path):
+    """VERIFY-K2 R3 finding 5 (its preimage_killer.py): the hook without the patch must be the blob the patch names as
+    its pre-image, so an UNPATCHED_AT whose hook is another blob (283faf0's is 2efcc7c) is refused, never used as the
+    negative control's hook; the real UNPATCHED_AT passes (the control)."""
+    global UNPATCHED_AT
+    real = UNPATCHED_AT
+    assert (hook_dir(tmp_path, False) / "post-commit").is_file()
+    UNPATCHED_AT = "283faf044fef56b68c09ac46de886f96782a280f"
+    try:
+        with pytest.raises(AssertionError, match=re.escape("the hook at UNPATCHED_AT is not the patch's pre-image")):
+            hook_dir(tmp_path, False)
+    finally:
+        UNPATCHED_AT = real
+
+
 def graft_env(tmp):
     """graft's own environment: a private HOME holding a fresh update-check answer (with none, `graft build` spawns a
     detached registry check that outlives the test), graft's directory and the system's on PATH."""
@@ -1691,14 +1908,15 @@ def fixture_processes(tmp):
 
 
 def wait_post_commit(pct, head, bound=300):
-    """Until the post-commit hook's jobs for `head` are done: the code-map refresh and the file-pack build logged their
-    results, and no job holds its lock any more. Returns a reader of the hook's logs."""
+    """Until the post-commit hook's jobs for `head` are done: the code-map refresh (or the hook's line that none runs)
+    and the file-pack build logged their results, and no job holds its lock any more. Returns a reader of the hook's
+    logs."""
     deadline = time.monotonic() + bound
 
     def text(name):
         p = pct / name
         return p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
-    while not ("%s codemap refresh done" % head[:7] in text("codemap-refresh.log")
+    while not (re.search(r"%s codemap refresh (done|none)" % head[:7], text("codemap-refresh.log"))
                and "filepacks build: %s " % head[:7] in text("filepacks-build.log")):
         assert time.monotonic() < deadline, "the post-commit jobs did not finish in %d s: %s" % (
             bound, text("codemap-refresh.log")[-300:])
@@ -1721,62 +1939,189 @@ def wait_post_commit(pct, head, bound=300):
     return text
 
 
-@pytest.mark.skipif(not (GRAFT and GITNEXUS and CRG), reason="LOUD SKIP: graft, gitnexus or code-review-graph is not "
-                    "installed here (scripts/setup.sh installs them); this test runs the real post-commit re-index")
-@pytest.mark.parametrize("fp", ["real", "untracked-callers-kept"])
-def test_untracked_callers_with_the_post_commit_patch(tmp_path, fp):
-    """VERIFY-K2 R2 B1, the verifier's probe_callers2.py: an untracked scripts/caller_new.py and tests/test_new_u.py call
-    alpha's helper beside tracked ones; a commit of an alpha change goes through the REAL patched post-commit hook
-    (each graph re-indexed, the code map refreshed, the file packs built) and every graph reads fresh. An Edit in
-    helper and a Read show the tracked caller and test (the controls) and neither the untracked name nor its paths;
-    the mutant without the callers filter shows the untracked caller."""
-    repo, ids = fixture(tmp_path, fp_text=None if fp == "real" else mutant(fp))
-    st, pct = tmp_path / "state", tmp_path / "pctmp"
+# ---------- round 4 (D-115): the class test, untracked text through the derived code index, by the real hook ----------
+
+SHAPES = (("a_out", 101), ("b_in", 102), ("c_late_out", 103), ("d_late_in", 104), ("e_trk", 105), ("f_ok", 106),
+          ("g_test", 107))
+CALLER = "from alpha import %s\n\n\ndef %s():\n    return %s(2)\n"
+OUTSIDE = "import sys\nsys.path.insert(0, 'scripts')\nfrom alpha import %s\n\n\ndef %s():\n    return %s(2)\n"
+TEST = "import sys\nsys.path.insert(0, 'scripts')\nfrom alpha import %s\n\n\ndef test_%s():\n    assert %s(1) > 0\n"
+# item 2's canaries: untracked text, in no pack and no context ever; item 4's: an uncommitted edit of a tracked file
+# (NOT done 1) and a file untracked while the file-pack build is stalled (NOT done 9), in no context and not in the
+# callee's pack (a code pack of their own file, built from its working copy, holds them; the reader withholds it)
+UNTRACKED, ITEM4 = ("a", "b", "c1", "d1", "e"), ("u1", "u1t", "u9")
+# where the leak control (the blob comparison off at the builder and at the reader) must show each shape's canary
+LEAKS = {"c1-built": {"a", "b", "c1", "d1", "e", "u1", "u1t"}, "late-outside": {"d1"}, "late-track-window": {"c1"},
+         "nd9-build-stalled": {"u9"}}
+BUILDER_TIE = '    return isinstance(rec, dict) and rec.get("blob") is not None and rec.get("indexed") == rec["blob"]\n'
+
+
+def class_scenario(tmp, off=False):
+    """The class of VERIFY-K2 F1, R2 B1 and R3-1 (D-115: untracked text through the derived code index), through the
+    REAL patched post-commit hook (each graph re-indexed, the code map refreshed, the file packs built) and the real
+    wrapper. scripts/alpha.py gains one callee per shape, so each shape's callers fit one sample. A canary each:
+    (a) `a`, tools/u_out.py, untracked, outside the refresh paths; `b`, scripts/u_in.py, untracked, inside them; `e`,
+    tests/test_u.py, an untracked test; (c) `d1`, tools/late_out.py's untracked era, later committed with other text
+    (R3-1's late-outside: no refresh follows); `c1`, scripts/late_in.py's untracked era, committed with other text
+    while the refresh is held behind its lock (R3-1's late-track window); NOT done 1: `u1` and `u1t`, uncommitted text
+    of a tracked caller and test; NOT done 9: `u9`, a caller file untracked while the file-pack build is held. `off`
+    turns the blob comparison off at the builder and at the reader (the leak control). Returns (seen, ctl): per
+    observation point, the canaries found in any code pack, in alpha's code pack and in any context, and the facts the
+    controls read."""
+    cm_text = None
+    if off:
+        cm_text = mutate_text(ROOT / "scripts" / "codemap.py", BUILDER_TIE, "    return True\n")
+    repo, ids = fixture(tmp, fp_text=mutant("blob-tie-off") if off else None)
+    if cm_text is not None:
+        (repo / "scripts" / "codemap.py").write_text(cm_text, encoding="utf-8")
+    st, pct = tmp / "state", tmp / "pctmp"
     pct.mkdir()
-    env = dict(env_for(repo, st), HOME=graft_env(tmp_path)["HOME"], DO_NOT_TRACK="1", AF_POST_COMMIT_TMP=str(pct))
+    env = dict(env_for(repo, st), HOME=graft_env(tmp)["HOME"], DO_NOT_TRACK="1", AF_POST_COMMIT_TMP=str(pct))
+    hooks = hook_dir(tmp, True)
+    cn = {k: "%s%s" % (k, secrets.token_hex(5)) for k in UNTRACKED + ITEM4 + ("c2", "d2", "ok", "okt", "trk", "trkt")}
+    seen, ctl = {}, {}
+
+    def sh(*argv):
+        r = subprocess.run(list(argv), cwd=repo, env=env, capture_output=True, text=True, timeout=300)
+        assert r.returncode == 0, (argv, r.stdout[-300:], r.stderr[-300:])
+
+    def put(rel, text):
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text, encoding="utf-8")
+
+    def hooked(msg):
+        r = subprocess.run(["git", "-c", "user.email=k2@test", "-c", "user.name=k2", "-c", "commit.gpgsign=false", "-c",
+                            "core.hooksPath=%s" % hooks, "commit", "-q", "-m", msg], cwd=repo, env=env,
+                           capture_output=True, text=True, timeout=120)
+        assert r.returncode == 0, r.stderr
+        return git(repo, "rev-parse", "HEAD").strip()
+
+    def held(name):
+        fd = os.open(pct / name, os.O_RDWR | os.O_CREAT, 0o644)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return fd
+
+    def logged(name, pattern, bound=300):
+        deadline = time.monotonic() + bound
+        while not re.search(pattern, (pct / name).read_text(errors="replace") if (pct / name).exists() else ""):
+            assert time.monotonic() < deadline, "no %r in %s after %d s" % (pattern, name, bound)
+            time.sleep(0.3)
+
+    def observe(point, probes):
+        packs = {p: p.read_text(encoding="utf-8") for p in (repo / ".jev" / "codemap").rglob("*.json")}
+        alpha = packs.get(repo / ".jev" / "codemap" / "scripts" / "alpha.py.json", "")
+        ctxs = {label: context(run(repo, st, p)) for label, p in probes}
+        seen[point] = {"packs": {k for k, v in cn.items() if any(v in t for t in packs.values())},
+                       "alpha": {k for k, v in cn.items() if v in alpha},
+                       "context": {k for k, v in cn.items() if any(v in c for c in ctxs.values())}}
+        return ctxs, json.loads(alpha) if alpha else {}
+
+    def edits(point, *fns):
+        return [("%s %s" % (point, fn), edit(repo, "scripts/alpha.py", "    return x + %d" % k,
+                                             sid="%s-%s" % (point, fn))) for fn, k in SHAPES if fn in fns]
     try:
         for argv in ([GRAFT, "build"], [GITNEXUS, "analyze", "--skip-agents-md"], [CRG, "build"]):
-            r = subprocess.run(argv, cwd=repo, env=env, capture_output=True, text=True, timeout=300)
-            assert r.returncode == 0, (argv, r.stdout[-300:], r.stderr[-300:])
+            sh(*argv)
         build(repo, st)
-        unt, trk = "unt" + secrets.token_hex(5), "trk" + secrets.token_hex(5)
-        body = "from alpha import helper\n\n\ndef %s():\n    return helper(2)\n"
-        tbody = ("import sys\nsys.path.insert(0, 'scripts')\nfrom alpha import helper\n\n\ndef test_%s():\n"
-                 "    assert helper(1) == 2\n")
-        (repo / "tests").mkdir()
-        for rel, text in (("scripts/caller_new.py", body % unt), ("scripts/caller_trk.py", body % trk),
-                          ("tests/test_new_u.py", tbody % unt), ("tests/test_trk_t.py", tbody % trk)):
-            (repo / rel).write_text(text, encoding="utf-8")
-        (repo / "scripts" / "alpha.py").write_text((repo / "scripts" / "alpha.py").read_text(encoding="utf-8")
-                                                   + "# a committed change\n", encoding="utf-8")
-        git(repo, "add", "scripts/alpha.py", "scripts/caller_trk.py", "tests/test_trk_t.py")
-        r = subprocess.run(["git", "-c", "user.email=k2@test", "-c", "user.name=k2", "-c", "commit.gpgsign=false", "-c",
-                            "core.hooksPath=%s" % hook_dir(tmp_path, True), "commit", "-q", "-m", "alpha changed"],
-                           cwd=repo, env=env, capture_output=True, text=True, timeout=120)
-        assert r.returncode == 0, r.stderr
-        head = git(repo, "rev-parse", "HEAD").strip()
-        wait_post_commit(pct, head)
-        assert json.loads((st / "filepacks" / "BUILD.json").read_text())["commit"] == head, "no build at HEAD"
-        pk = json.loads((repo / ".jev" / "codemap" / "scripts" / "alpha.py.json").read_text(encoding="utf-8"))
-        marks = {g: pk["instruments"][g].get("graph") for g in ("graft", "gitnexus", "code-review-graph")}
-        assert pk["blob"] == git(repo, "rev-parse", "HEAD:scripts/alpha.py").strip() and set(marks.values()) == {
-            "fresh"}, "not B1's healthy pipeline: %s" % marks
-        assert unt in json.dumps(pk) and trk in json.dumps(pk), "the graph named no untracked caller: a vacuous test"
-        ctx = context(run(repo, st, helper_edit(repo, "pe")))
-        rctx = context(run(repo, st, read(repo, "scripts/alpha.py", sid="pr")))
-        if fp == "real":
-            for c in (ctx, rctx):
-                assert unt not in c and "caller_new.py" not in c and "test_new_u.py" not in c, \
-                    "an untracked caller's name or path reached the model"
-            assert "%s scripts/caller_trk.py:4" % trk in ctx, "the control: the tracked caller was left out: %r" % ctx
-            assert "tests/test_trk_t.py" in ctx and "tests/test_trk_t.py" in rctx, \
-                "the control: the tracked test was left out"
-        else:
-            assert unt in ctx, "the control: without the filter the untracked caller reaches the model"
-        assert fixture_processes(tmp_path) == [], "a post-commit job outlived its lock"
+        put("tools/u_out.py", OUTSIDE % ("a_out", cn["a"], "a_out"))
+        put("scripts/u_in.py", CALLER % ("b_in", cn["b"], "b_in"))
+        put("tools/late_out.py", OUTSIDE % ("c_late_out", cn["d1"], "c_late_out"))
+        put("scripts/late_in.py", CALLER % ("d_late_in", cn["c1"], "d_late_in"))
+        put("tests/test_u.py", TEST % ("g_test", cn["e"], "g_test"))
+        put("scripts/caller_trk.py", CALLER % ("e_trk", cn["trk"], "e_trk"))
+        put("tests/test_trk.py", TEST % ("e_trk", cn["trkt"], "e_trk"))
+        put("scripts/caller_ok.py", CALLER % ("f_ok", cn["ok"], "f_ok"))
+        put("tests/test_ok.py", TEST % ("f_ok", cn["okt"], "f_ok"))
+        put("scripts/alpha.py", (repo / "scripts" / "alpha.py").read_text(encoding="utf-8") + "".join(
+            "\n\ndef %s(x):\n    return x + %d\n" % s for s in SHAPES))
+        git(repo, "add", "scripts/alpha.py", "scripts/caller_trk.py", "tests/test_trk.py", "scripts/caller_ok.py",
+            "tests/test_ok.py")
+        with open(repo / "scripts" / "caller_trk.py", "a", encoding="utf-8") as f:       # NOT done 1: uncommitted
+            f.write("\n\ndef %s():\n    return e_trk(7)\n" % cn["u1"])
+        with open(repo / "tests" / "test_trk.py", "a", encoding="utf-8") as f:
+            f.write("\n\ndef test_%s():\n    assert e_trk(3) > 0\n" % cn["u1t"])
+        c1 = hooked("c1: callees and tracked callers")
+        wait_post_commit(pct, c1)
+        ctxs, pk = observe("c1-built", edits("c1", *(s for s, _ in SHAPES)) + [
+            ("c1 read caller_trk", read(repo, "scripts/caller_trk.py", sid="c1-rt"))])
+        ctl["callers"] = set(pk.get("caller_files") or ())
+        ctl["ok"] = "%s scripts/caller_ok.py:4" % cn["ok"] in ctxs["c1 f_ok"]
+        ctl["okt"] = "test_" + cn["okt"] in ctxs["c1 f_ok"]
+        put("tools/late_out.py", OUTSIDE % ("c_late_out", cn["d2"], "c_late_out"))      # R3-1 (a): late-outside
+        git(repo, "add", "tools/late_out.py")
+        c2 = hooked("c2: an outside caller tracked")
+        wait_post_commit(pct, c2)
+        observe("late-outside", edits("c2", "c_late_out"))
+        put("scripts/late_in.py", CALLER % ("d_late_in", cn["c2"], "d_late_in"))       # R3-1 (b): late-track
+        git(repo, "add", "scripts/late_in.py")
+        fd = held("codemap-refresh.lock")
+        try:
+            c3 = hooked("c3: an inside caller tracked")
+            logged("filepacks-build.log", r"filepacks build: %s " % c3[:7])
+            observe("late-track-window", edits("c3w", "d_late_in"))
+            ctl["window"] = not re.search(r"%s codemap refresh done" % c3[:7],
+                                          (pct / "codemap-refresh.log").read_text(errors="replace"))
+        finally:
+            os.close(fd)
+        wait_post_commit(pct, c3)
+        ctxs, _ = observe("late-track-refreshed", edits("c3r", "d_late_in"))
+        ctl["c2"] = "%s scripts/late_in.py:4" % cn["c2"] in ctxs["c3r d_late_in"]
+        fd = held("filepacks-build.lock")                                                # NOT done 9: stalled build
+        try:
+            with open(repo / "scripts" / "caller_ok.py", "a", encoding="utf-8") as f:
+                f.write("\n\ndef %s():\n    return f_ok(9)\n" % cn["u9"])
+            git(repo, "rm", "-q", "--cached", "scripts/caller_ok.py")
+            c4 = hooked("c4: a caller untracked")
+            logged("codemap-refresh.log", r"%s codemap refresh done" % c4[:7])
+            observe("nd9-build-stalled", edits("c4", "f_ok") + [
+                ("c4 read caller_ok", read(repo, "scripts/caller_ok.py", sid="c4-ro"))])
+            ctl["stalled"] = "\nscripts/caller_ok.py\n" in (st / "filepacks" / "TRACKED.txt").read_text()
+        finally:
+            os.close(fd)
+        wait_post_commit(pct, c4)
+        observe("nd9-built", edits("c4b", "f_ok"))
+        ctl["leftover"] = fixture_processes(tmp)
     finally:
-        for pid in fixture_processes(tmp_path):
+        for pid in fixture_processes(tmp):
             os.kill(pid, signal.SIGKILL)
+    return seen, ctl
+
+
+def mutate_text(path, old, new):
+    text = Path(path).read_text(encoding="utf-8")
+    assert text.count(old) == 1, "INVALID: the anchor occurs %d times" % text.count(old)
+    out = text.replace(old, new)
+    compile(out, str(path), "exec")
+    return out
+
+
+@pytest.mark.skipif(not (GRAFT and GITNEXUS and CRG), reason="LOUD SKIP: graft, gitnexus or code-review-graph is not "
+                    "installed here (scripts/setup.sh installs them); this test runs the real post-commit re-index")
+@pytest.mark.parametrize("variant", ["real", "blob-tie-off"])
+def test_untracked_text_never_reaches_a_pack_through_the_real_hook(tmp_path, variant):
+    """K2 round 4, items 2 to 4 (class_scenario). real: no untracked canary in any code pack or any context at any
+    point, and no NOT done 1 or 9 canary in alpha's pack or in any context; the controls: the graph named every
+    untracked caller file (alpha's caller_files), a committed caller and test show, the late-track window was real
+    (its refresh had not run) and the refreshed pack shows the committed caller, the build was really stalled.
+    blob-tie-off (the leak control): each shape's canary shows where LEAKS says."""
+    seen, ctl = class_scenario(tmp_path, off=variant != "real")
+    assert ctl["leftover"] == [], "a post-commit job outlived its lock"
+    assert ctl["window"] and ctl["stalled"], \
+        "not the shapes: the refresh had run, or the build had not stalled: %s" % ctl
+    if variant != "real":
+        missed = {p: sorted(k - seen[p]["context"]) for p, k in LEAKS.items() if k - seen[p]["context"]}
+        assert not missed, \
+            "the control: with the blob comparison off these canaries did not reach the model: %s" % missed
+        return
+    leaks = {p: {w: sorted(s[w] & set(want)) for w, want in (("packs", UNTRACKED), ("alpha", UNTRACKED + ITEM4),
+                                                            ("context", UNTRACKED + ITEM4)) if s[w] & set(want)}
+             for p, s in seen.items()}
+    assert not any(leaks.values()), "untracked or uncommitted text reached a pack or the model: %s" % {
+        p: v for p, v in leaks.items() if v}
+    assert {"tools/u_out.py", "scripts/u_in.py", "tools/late_out.py", "scripts/late_in.py", "tests/test_u.py",
+            "scripts/caller_trk.py"} <= ctl["callers"], "the graph named no untracked caller: a vacuous test: %s" % (
+        sorted(ctl["callers"]))
+    assert ctl["ok"] and ctl["okt"] and ctl["c2"], "the control: a committed caller or test was left out: %s" % ctl
 
 
 # ---------- the registration, the code pack's fields, the speed ----------

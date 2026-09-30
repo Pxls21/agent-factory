@@ -17,6 +17,16 @@ code-review-graph each keep the sha256 of every file they indexed. A missing ins
 no-index, n/a, error), never filled in (the NO STUBS rule). GitNexus risk UNKNOWN means it resolved no caller: the pack
 keeps it as unresolved, never as "no callers".
 
+Provenance by blob (task #353, K2 round 4, D-115): a caller or a test name is kept only when the graph that named it
+indexed exactly its file's blob in the build's commit. `provenance` records, per graph, for the file itself and each
+file its callers are in (GitNexus) and each test file (code-review-graph): `blob`, the file's blob in that commit (None
+when the commit has none: an untracked file), and `indexed`, the same blob when the graph's own record of the file is
+that blob's sha256 and each name the graph gave in the file is on its line in that blob, else None (the graph read
+other bytes: an untracked file, a working edit, nodes older than the record). A name from a file that is not so vouched
+for never enters the pack, and a callers total that counted one is left out (None); a name in the file itself also
+needs its graph fresh. The file-pack reader checks each kept name's blob against the file's blob at its own build
+(scripts/filepacks.py).
+
 Usage:
   codemap.py build [--all] [PATH...]        build the packs now, from the graphs as they are
   codemap.py refresh --commit SHA --lock-dir DIR [--graphs "graft gitnexus ..."] [--wait S] [--grace S] -- PATH...
@@ -483,10 +493,9 @@ def _gitnexus(gn, root, rel, sha):
 
         def rank(c, rel=rel):
             return (_is_test(c[1]), c[1] == rel, c[1], c[2] if c[2] is not None else 0, c[0])
-        ordered = sorted(cs, key=rank)
-        rec["callers"] = {"count": len(cs), "tests": sum(_is_test(c[1]) for c in cs),
-                          "sample": [{"name": n, "file": f, "line": ln} for n, f, ln in ordered[:SAMPLE]],
-                          "files": sorted({c[1] for c in cs})}
+        ordered = [{"name": n, "file": f, "line": ln} for n, f, ln in sorted(cs, key=rank)]
+        rec["callers"] = {"count": len(cs), "tests": sum(_is_test(c[1]) for c in cs), "sample": ordered[:SAMPLE],
+                          "all": ordered, "files": sorted({c[1] for c in cs})}
         out.append(rec)
     return sec, out
 
@@ -657,6 +666,101 @@ def _head(root):
     return r.stdout.strip() if not isinstance(r, str) and r.returncode == 0 else None
 
 
+def _committed(root, commit, files):
+    """{path: (blob id, sha256 of the blob's bytes, the bytes)} for each of `files` that is a blob in `commit`'s tree,
+    from one `git cat-file --batch`. A path with a newline cannot be asked on a batch line, so it is never here;
+    nothing is when there is no commit, or git fails or answers short."""
+    import subprocess
+    want = sorted({f for f in files if isinstance(f, str) and f and "\n" not in f})
+    if not commit or not want:
+        return {}
+    try:
+        r = subprocess.run(["git", "cat-file", "--batch"], cwd=root, capture_output=True, timeout=60,
+                           input="".join("%s:%s\n" % (commit, f) for f in want).encode("utf-8"))
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if r.returncode != 0:
+        return {}
+    out, buf, i = {}, r.stdout, 0
+    for f in want:
+        j = buf.find(b"\n", i)
+        if j < 0:
+            return {}
+        m = re.fullmatch(rb"([0-9a-f]{40}|[0-9a-f]{64}) ([a-z]+) (\d+)", buf[i:j])    # else "<name> missing": no body
+        i = j + 1
+        if m:
+            n = int(m.group(3))
+            if m.group(2) == b"blob":
+                out[f] = (m.group(1).decode("ascii"), hashlib.sha256(buf[i:i + n]).hexdigest(), buf[i:i + n])
+            i += n + 1
+    return out
+
+
+def _named_here(data, rel, names):
+    """True when each (name, line) a graph gave in `rel` names a definition on that line of `data`, the file's
+    committed bytes: in Python a def or class of that bare name that starts there (the bytes' own AST), in another
+    language the name as a word on that line. A module-level caller ("<module>") names no text of the file.
+
+    Why the builder reads the blob as well as the record: the record is the graph's own word, and it can be newer than
+    the graph's nodes (the lie `_moved` flags for the file itself, measured on GitNexus), and a graph can re-index
+    between its answer and the record's read. A name that is not on its line in the blob came from other bytes."""
+    text = data.decode("utf-8", "replace")
+    lines = text.split("\n")
+    defs = None
+    if LANG.get(_ext(rel)) == "python":
+        import ast
+        try:
+            defs = {(n.name, n.lineno) for n in ast.walk(ast.parse(text))
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+        except (SyntaxError, ValueError):
+            return False
+    for name, line in names:
+        if name == "<module>":
+            continue
+        if not isinstance(name, str) or type(line) is not int or not 1 <= line <= len(lines):
+            return False
+        base = name.rsplit(".", 1)[-1]
+        if (defs is not None and (base, line) not in defs) or (defs is None and not re.search(
+                r"(?<![\w$])%s(?![\w$])" % re.escape(base), lines[line - 1])):
+            return False
+    return True
+
+
+def _provenance(root, rel, commit, gn_sec, gn_recs, crg_sec, tests):
+    """{"commit", graph: {file: {"blob", "indexed"}}} for the file itself and every file GitNexus names a caller in,
+    and every file code-review-graph names a test in (see the module doc): `indexed` is the blob only when the graph's
+    own record of the file (the sha256 `_fresh` reads for the file itself) is that blob's sha256 and every name the
+    graph gave in the file is on its line in the blob (`_named_here`)."""
+    named = {}
+    if gn_sec.get("status") == "ok":
+        named["gitnexus"] = {rel: set()}
+        for g in gn_recs:
+            for c in g["callers"]["all"]:
+                named["gitnexus"].setdefault(c["file"], set()).add((c["name"], c["line"]))
+    if crg_sec.get("status") == "ok":
+        named["code-review-graph"] = {}
+        for x in tests:
+            named["code-review-graph"].setdefault(x["file"], set()).add((x["name"], x["line"]))
+    committed = _committed(root, commit, {f for files in named.values() for f in files})
+    hashes = (_gitnexus_meta(root) or {}).get("fileHashes") if "gitnexus" in named else None
+    hashes = hashes if isinstance(hashes, dict) else {}
+    out = {"commit": commit}
+    for g, files in named.items():
+        out[g] = {}
+        for f in sorted(x for x in files if isinstance(x, str)):
+            blob, sha, data = committed.get(f, (None, None, None))
+            indexed = hashes.get(f) if g == "gitnexus" else stamp(g, root, f)
+            ok = blob is not None and indexed == sha and _named_here(data, f, files[f])
+            out[g][f] = {"blob": blob, "indexed": blob if ok else None}
+    return out
+
+
+def _proven(prov, graph, f):
+    """True when `graph` indexed exactly the blob `f` has in the build's commit (a name from it may enter the pack)."""
+    rec = (prov.get(graph) or {}).get(f)
+    return isinstance(rec, dict) and rec.get("blob") is not None and rec.get("indexed") == rec["blob"]
+
+
 def build_one(root, rel, gn, env, commit):
     """Build and write one pack; returns (outcome, pack or None)."""
     import time
@@ -696,6 +800,17 @@ def build_one(root, rel, gn, env, commit):
     if gn_recs:
         _moved(gn_sec, {g["qualname"]: g["start"] for g in _nest(gn_recs)},
                starts or {s["qualname"]: s["start"] for s in syms}, "GitNexus")
+    prov = _provenance(root, rel, commit, gn_sec, gn_recs, crg_sec, tests)       # K2 round 4 (D-115): by blob
+
+    def vouched(f, graph, sec):
+        return _proven(prov, graph, f) and (f != rel or sec.get("graph") == "fresh")
+    tests = [x for x in tests if vouched(x["file"], "code-review-graph", crg_sec)]
+    for g in gn_recs:
+        c = g["callers"]
+        kept = [x for x in c.pop("all") if vouched(x["file"], "gitnexus", gn_sec)]
+        if len(kept) < c["count"]:
+            c["count"] = c["tests"] = None                  # it counted a caller the pack does not name
+        c["sample"] = kept[:SAMPLE]
     _join(syms, gn_recs, gn_sec.get("graph") == "fresh")
     caller_files = sorted({f for g in gn_recs for f in g["callers"].get("files", ())} - {rel})
     if gn_sec.get("status") == "ok":
@@ -707,7 +822,7 @@ def build_one(root, rel, gn, env, commit):
     timing["total_ms"] = round((time.monotonic() - t0) * 1000)
     pack = {"schema": SCHEMA, "path": rel, "language": lang, "blob": blob_sha(data), "sha256": sha,
             "lines": text.count("\n") + (0 if text.endswith("\n") or not text else 1), "bytes": len(data),
-            "commit": commit, "symbols_from": source, "caller_files": caller_files,
+            "commit": commit, "symbols_from": source, "caller_files": caller_files, "provenance": prov,
             "instruments": {"graft": graft_sec, "gitnexus": gn_sec, "code-review-graph": crg_sec, "ap_screen": reg_sec},
             "symbols": syms, "tests": tests, "registry": registry,
             "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "timing": timing}
