@@ -11,6 +11,14 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-30 18:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 18:0xZ): 9708d95; the T408 landing, the D-119 and D-120 records, tasks #418 and #419 ride the next push.**
+- **RUNNING (as of 18:0xZ):** nothing yet. The relay was found down at 18:02Z (a container restart); the owner turned auto mode off again (D-120), so the held relay work lands now and the starter (task #419) brings the relay back; then the K2 follow-up lane (task #420). The scrubber is parked (D-118).
+
+**2026-09-30 16:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 16:5xZ): 9708d95; the T408 landing and the D-119 records ride the next push.**
+- **RUNNING (as of 16:5xZ):** JEV IS LIVE (D-119, task #406): the pruner `fast-jev-output@fast-jev-output` posts to the relay on 127.0.0.1:47430 (started by the coordinator with setsid; a container restart stops it until task #419 lands), which scrubs, gates and forwards to api.codiv.ai; the data log is `.jev/relay/<UTC day>.jsonl` (gitignored). Health: `curl --noproxy '*' -s http://127.0.0.1:47430/health`. The relay's value gate knows only the secrets present at its start: a rewrite of `.pc-bridge.env` needs a relay restart (task #418). HELD on the owner: the classifier (auto mode on again) refused relay work at 17:0xZ; the #418 fix (tested) and the #419 starter (untested) sit uncommitted in the tree. No lane is running: VERIFY-K2-RS came home at 17:2xZ, MERGE-READY-WITH-FOLLOWUPS (task #353; registration waits for task #420 and the owner's yes). The scrubber is parked (D-118).
+
 **2026-09-30 16:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 16:3xZ): 9708d95 (transcript digests); CI run #1191 on 59ad820 passed. The T408 landing rides the commit that carries this block.**
 - **RUNNING (as of 16:3xZ):** one sandbox lane, no PC lane: VERIFY-K2-RS (task #353, GATED-PENDING-VERIFY). T408 LANDED (task #408): our pruner copy with a settable floor, installable as `fast-jev-output-floor@agent-factory-vendor`, NOT installed. THE OWNER'S DECISIONS NEEDED: the classifier refused the Jev relay (15:31Z) and the coordinator's read of the installed plugin's baseUrl patch (16:3xZ), so the switch-on (task #406), VERIFY-JEV-RELAY and the base-URL option (task #415) wait. The scrubber is parked (D-118).
