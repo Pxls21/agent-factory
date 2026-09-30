@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-30 15:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 15:5xZ): b06a4c2 (transcript digests) after 63f7884 (the two briefs), f0c1757 (D-118) and 721d473 (the retro); the CI run for 63f7884 was in progress at writing.**
+- **RUNNING (as of 15:5xZ):** two sandbox lanes, no PC lane: VERIFY-K2-RS (the round-4 verifier resumed; task #353, GATED-PENDING-VERIFY) and T408 (task #408, the pruner's lower floor; build and test only). THE OWNER'S DECISION NEEDED: the auto-mode classifier refused the Jev relay at 15:31Z, so the switch-on (task #406) and VERIFY-JEV-RELAY wait. The scrubber is parked (D-118).
+
 **2026-09-30 15:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 15:3xZ): d649df0 (transcript digests) after 2df97aa (the K2 RE-SCOPE landing, task #353, GATED-PENDING-VERIFY; CI run #1189 passed). The commits of this block's writing follow.**
 - **RUNNING (as of 15:3xZ):** no PC lane: the scrubber's option A lane was stopped at 15:29:40Z (D-118, task #321 parked). THE OWNER'S DECISION NEEDED: the harness's auto-mode classifier refused the relay's first command as Data Exfiltration (15:31:14Z), so the switch-on (task #406, the pruner on OpenJev through the relay) and VERIFY-JEV-RELAY wait. NEXT: VERIFY-K2-RS (the round-4 verifier resumed, agent a5f4b238ed9d44435) and the pruner's lower floor (task #408, a sandbox build lane), once this block's commits are on origin.
