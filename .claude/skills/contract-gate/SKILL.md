@@ -76,6 +76,23 @@ brief/seed ─► 1. NEGOTIATE contract ─► recorded in the task/breakdown (p
    a repair round, because a process-only commit does not move the budget key (owner mandate
    2026-09-02 — RP-30b I3 ran SEVEN verify rounds under the old resettable cap; that reset was
    the bug).
+   **The deadlock break (owner D-115, 2026-09-30: "if too many rounds happen, we change strategy ... go back to the
+   drawing board ... to break the dead lock").** Budget exhaustion is the LATEST point to stop repairing, not the only
+   one. Before writing ANY repair brief, build the component's ROUND TABLE from its verify reports: one row per round,
+   with its blockers, each blocker's class and the fix that round tried. Stop repairing and run the deadlock review when
+   any of these holds: (1) the budget is spent and the reverify is still NOT-READY; (2) a blocker falls in a class an
+   earlier round fixed (the fix moved the defect instead of removing it); (3) the blocker count did not fall between two
+   rounds, or a repair created a blocker in the code it changed; (4) the owner asks. The review runs in the main loop
+   (an evidence-gatherer when the options need reading or measuring, a small council when they need judgment; never a
+   builder): (a) name the design assumption the recurring blockers keep hitting; (b) write two or three approaches that
+   drop it (another mechanism, a construction that makes the class impossible, a narrower scope, an existing tool, or
+   parking the feature), each with its cost, what it gives up and the test that would show it converges; (c) recommend
+   one and put ONE choice to the owner: REDESIGN (the named approach, a contract amendment with a new budget), RE-SCOPE
+   (land the part that converges, with its residuals), ONE MORE ROUND (only with a written reason why this round
+   converges where the last did not, naming the blocker it closes) or PARK. The owner is never asked "another round?"
+   alone. First use, K2 (2026-09-30): F1, B1 and R3-1 were one class three rounds running (untracked text reached the
+   model through the derived code index, and each round filtered by path after the fact), so round 4 became a
+   redesign: provenance by blob, not by path.
    **Round mechanics that stop the churn:**
    (a) **Verifier output = RED TESTS, not prose.** Every finding the verifier wants fixed
    ships as a committed failing test (or a mutant in the lane's `scripts/mutants/<lane>.py`

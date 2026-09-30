@@ -76,6 +76,12 @@ brief/seed ─► 1. NEGOTIATE contract ─► recorded in the task/breakdown (p
    material production change or a recorded contract amendment. Budget exhaustion → an HONEST
    BLOCKED decision for human prioritization, never a round-one restart, never a stub or a
    softened assertion. A FOLLOW-UP is filed and does not open a round.
+   **The deadlock break (owner D-115, 2026-09-30).** Before any repair brief, the coordinator builds the component's
+   round table (each round's blockers, their class, the fix tried). A spent budget, a blocker in a class an earlier round
+   fixed, a blocker count that does not fall, or the owner's word stops the repairs: a deadlock review names the failing
+   assumption and puts REDESIGN, RE-SCOPE, ONE MORE ROUND (with a written reason it converges) or PARK to the owner,
+   never "another round?" alone. A repair lane whose own finding repeats a class its brief's round table lists says so
+   first in its report.
 5. **Coordinator verdict.** The main loop re-runs the deterministic gates itself before commit
    (never self-accept applies to delegates too — an evaluator PASS is evidence, not authority).
 

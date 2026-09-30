@@ -74,12 +74,13 @@ It runs the same way every time, its output is capped, and each run is logged. T
 - No shell. Each `argv` element is one argument. A box never carries a command or a script (D-111).
 - A label's output is evidence, never a verdict. The reader still judges.
 
-## Ideas the owner named that need a ruling first (NOT built)
+## Ideas the owner ruled in (D-115, 2026-09-30), NOT built yet
 
-- **Jev-powered steps.** The owner (D-114): "even jev powered scripts". Today KC-J1 forbids a model call in any stack.
-  A model-backed label needs an owner ruling that makes a separate class of ADVISORY stacks: marked as model-backed in
-  the registry and the catalog, never used as a gate, and measured against the plain order before it replaces one
-  (D-077: in the A3 benchmark, Jev did not beat the plain order).
-- **Per-agent label sets.** The owner (D-114): "each agent will have their own set of labels". Not built. One possible
-  shape: a per-stack list of the agent types that may use it, and a catalog printed per agent type. It needs a design
-  pass and a change to `scripts/stack.py`.
+- **Jev-powered steps (task #391).** The owner (D-114): "even jev powered scripts"; D-115: "yes, have jev powered
+  labels". They form a separate ADVISORY class of stacks: marked as model-backed in the registry and the catalog, never
+  used as a gate (KC-J1 still holds for `gate`, `review`, `ci` and every proof), and measured against the plain order
+  before one replaces a plain label (D-077: in the A3 benchmark, Jev did not beat the plain order). Until task #391
+  builds the class, `scripts/stack.py` still refuses a model call in any stack.
+- **Per-agent label sets (task #392).** The owner (D-114): "each agent will have their own set of labels"; D-115: "yes".
+  One possible shape: a per-stack list of the agent types that may use it, and a catalog printed per agent type. It
+  needs a design pass and a change to `scripts/stack.py`, after task #391.

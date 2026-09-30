@@ -96,6 +96,12 @@ subordinate to, the Anthropic docs.
    ~2 PC-hours on done work. A lane must never be the first place stale coordinator state is found.
    **0e′ — a lane's PLANNED INPUTS written only in prose are grepped at authoring (2026-09-23, AF-AP-155).** A ledger or PROVENANCE note that names a future lane and what it must carry never reaches that lane's brief by itself: the brief is written later, from a verify report and an issue. At authoring, grep the ledger and every PROVENANCE file for the lane's name — `grep -n "<LANE>'s inputs\|in <LANE>\b\|<LANE> option\|takes this value in <LANE>" todo/BUILD-TASKLIST.md $(git ls-files 'proofs/*PROVENANCE.md')` — and carry each hit into the brief, or state in the brief why it is out of scope. The 2026-09-22 fixture-identities note said "B9's inputs: `revoked.json` signer → `owner2` …, `neg-unauthorized.json` `expected_pubkey` → the nonmember pub"; neither B9 brief carried them, and the gap surfaced only while the S0-02 live capture was being prepared (2026-09-23 13:1xZ).
 
+0e″. **A repair brief starts from the ROUND TABLE (owner D-115, 2026-09-30; skill `contract-gate` §4, the deadlock
+   break).** Before writing it, list the component's rounds from their verify reports: each round's blockers, their class
+   and the fix tried. A spent budget, a blocker in a class an earlier round fixed, a blocker count that did not fall, or
+   the owner's word means no repair brief is written: the deadlock review runs instead, and the owner gets REDESIGN,
+   RE-SCOPE, ONE MORE ROUND (with a written reason it converges) or PARK, never "another round?" alone. The table goes
+   into the brief it allows, so the lane sees which approaches already failed.
 0f. **Coordinator re-execution of a builder's gate is NOT independent verification (audit
    2026-09-21, A5P-06).** Re-running the lane's own gate — even on the PC, even with the patch sha
    pinned — is a second execution of the SAME oracle: it proves reproducibility, not the

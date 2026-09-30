@@ -148,6 +148,11 @@ errors when left to build-and-fix alone; a builder executes reliably once pointe
   Omission is a routing bug. Route by STAGE: explore/verify → `opus` (the agent types with `model: "opus"`; D-065),
   build → `code-implementer`, scouts/sweeps → `haiku`.
 
+**THE DEADLOCK BREAK (owner D-115):** before any repair brief, build the component's round table from its verify
+reports. A spent budget, a blocker class that recurs, a blocker count that does not fall, or the owner's word stops the
+repairs: the deadlock review names the failing assumption and puts REDESIGN, RE-SCOPE, ONE MORE ROUND (with a written
+reason it converges) or PARK to the owner, never "another round?" alone (skill `contract-gate` §4).
+
 **Brief-writing, Claude-5 delegate tuning, SUCCESSION (no-Fable operation), parallel-agent
 liveness, coordinator token economy, and the full ORCHESTRATOR protocol (worktree SHA pins ·
 brief-as-file · push-reviewed-SHA-never-HEAD · vocabulary lock tests): skill `orchestration` —
