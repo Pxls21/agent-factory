@@ -14,10 +14,12 @@ skill holds the details.
 
 - The labels run today as a tool call: `python3 scripts/stack.py <label> key=value ...`. `python3 scripts/stack.py
   explain <label> ...` prints the plan and runs nothing. The SessionStart hook prints the catalog.
-- The box is BUILT (LS-B11, task #380) and VERIFIED (VERIFY-LS-B11: MERGE-READY-WITH-FOLLOWUPS, 2026-09-30; its
-  follow-ups are issue #87), and NOT ON. Its hooks (LS-B10's Stop and prompt hooks,
-  `tasks/briefs/labeling/LS-B10-registration.patch`) are not registered. Until they are, a box in the chat does
-  nothing, and no nonce line is injected.
+- The box is ON since 2026-09-30 (LS-B11, task #380; VERIFY-LS-B11: MERGE-READY-WITH-FOLLOWUPS, its follow-ups are
+  issue #87). LS-B10's hooks are registered (D-113): in `.claude/settings.json` for a session rooted in the repo, and
+  by `scripts/install_session_hooks.py` for one rooted above it (`scripts/setup.sh` runs it at every SessionStart).
+  The prompt hook mints the turn's nonce and injects one line that carries it; the Stop hook answers each box and REQ
+  line with a receipt. Issue #84 holds LS-B10's residuals, accepted at the registration; the first live runs count
+  three of them (R2-F1, and #87's F-4 and F-5).
 - A box's body runs only when it is one line of at most 500 characters (LS-B11 D4: the runner's text type refuses a
   newline). A longer body gets a plain refusal, never a run.
 

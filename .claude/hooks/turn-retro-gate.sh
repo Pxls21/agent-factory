@@ -55,6 +55,15 @@ if [ -f "$SENT" ]; then
     exit 0
   fi
 fi
+# The chat form (LS-B10, task #364; PM P6): a Stop that answers request lines blocks with their receipts, and the retro
+# beside them would split the coordinator's next step. While this Stop's texts carry a current nonce the gate defers:
+# exit 0 with the sentinel NOT written, so it fires at the chain's end. defer-check reads the hook payload on stdin
+# (never a terminal) and exits 1 on any doubt, so a failure, a missing python3 or a timeout never defers the retro.
+if [ -f "$REPO_ROOT/scripts/ls_req.py" ] && [ ! -t 0 ]; then
+  if [ "$(timeout 20 python3 "$REPO_ROOT/scripts/ls_req.py" defer-check 2>/dev/null)" = "defer" ]; then
+    exit 0
+  fi
+fi
 echo "$HEAD_SHA" > "$SENT"
 
 WIKI_LINE="wiki: FRESH"

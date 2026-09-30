@@ -371,7 +371,7 @@ test gate, the pyflakes delta, the AP screen) · `gate` (every test that names a
 commit) · `harvest` (a finished lane's models, refusals, hand-back, report) · `ci` (the stage0-ci verdict). Task #385
 adds five, each listed here when built: codebase-memory, GitNexus detect-changes, `why.sh`, `jev_locate`, `jev_echo`
 (plain order; no stack calls a model, KC-J1). Load `box-and-labels` before writing a box or choosing a label, and
-`label-authoring` before adding one; the box is built (LS-B11) and not on until its hooks are registered.
+`label-authoring` before adding one; the box is on since 2026-09-30 (LS-B11; the off switch is the file `.jev/req-off`).
 
 **Pipeline order is load-bearing: interview → SEED → task-breakdown → build.** To-dos come FROM
 the seed.

@@ -1,9 +1,11 @@
 """scripts/hook_context.py and scripts/install_session_hooks.py (task #214, AF-AP-172).
 
 hook_context turns a hook's plain stdout into additionalContext (the only PreToolUse/PostToolUse output the model reads,
-measured live 2026-09-24); install_session_hooks registers the eight project hooks for a session rooted above the repo
+measured live 2026-09-24); install_session_hooks registers 13 project hooks for a session rooted above the repo
 (task_sync.py, LS-B7, on Stop and SessionStart with a 30-second timeout; its own behavior is tests/test_task_sync.py's;
-the stack catalog, LS-B9 round 4, on SessionStart for start, resume and compact; its text is tests/test_stack.py's).
+the stack catalog, LS-B9 round 4, on SessionStart for start, resume and compact; its text is tests/test_stack.py's;
+the chat form, LS-B10, scripts/ls_req.py on UserPromptSubmit, Stop and SessionStart, last in each list; its behavior is
+tests/test_ls_req.py's).
 The end-to-end tests run the INSTALLED command strings through a shell, so a quoting or path defect fails here.
 Since S1-RATE (task #295) the wrapper stamps what it hands the model: a first line `[S1 <id> <source>]` and a last line
 that asks for the score. `unstamp` checks both against literals (tests/test_s1_rate.py holds the stamp's own tests), and
@@ -25,6 +27,7 @@ INSTALL = ROOT / "scripts" / "install_session_hooks.py"
 MARKER = f"{ROOT}/.claude/hooks/"
 SYNC = f"{ROOT}/scripts/task_sync.py"
 CATALOG = f"{ROOT}/scripts/stack.py catalog"
+REQ = f"{ROOT}/scripts/ls_req.py"
 STAMP = re.compile(r"\[S1 (s1-[0-9a-f]{8}) ([A-Za-z0-9_.-]+)\]")
 REQUEST = ('Begin your next text with "S1-RATE {id} rel=R use=U" (+ a note <=120 chars: why, if a 0), one line per '
            'unscored injection. rel 0 unrelated,1 same area not this step,2 relevant to this step,3 governs it; '
@@ -114,16 +117,27 @@ def test_real_edit_snapshot_screen_reaches_the_model_form():
 
 # ---- install_session_hooks.py ----
 
-def test_fresh_install_registers_the_eight_hooks(tmp_path):
+def test_fresh_install_registers_and_prints_13_hooks(tmp_path):
+    """13 hooks since LS-B10, and the installer says so: its install line prints the count and --help states it, both
+    counted from what it registers, never a literal, and the help names no other count (VERIFY-LS-B10 F10). Mutants:
+    the old literal 8 in either line; a count of the events (5) in place of the hooks; a count written into the
+    docstring's first line ("eight", or a 13 that the next hook would make stale)."""
     target = tmp_path / ".claude" / "settings.json"
     r = install(target)
-    assert r.returncode == 0 and "installed 8" in r.stdout
+    assert r.returncode == 0 and "installed 13 in" in r.stdout
     hooks = json.loads(target.read_text())["hooks"]
     assert sorted(hooks) == ["PostToolUse", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"]
     cmds = {ev: [h["command"] for e in v for h in e["hooks"]] for ev, v in hooks.items()}
-    assert {ev: len(c) for ev, c in cmds.items()} == {"PostToolUse": 1, "PreToolUse": 2, "SessionStart": 3, "Stop": 2,
-                                                      "UserPromptSubmit": 2}
-    assert all(MARKER in c or SYNC in c or CATALOG in c for cs in cmds.values() for c in cs)
+    assert {ev: len(c) for ev, c in cmds.items()} == {"PostToolUse": 1, "PreToolUse": 2, "SessionStart": 4, "Stop": 3,
+                                                      "UserPromptSubmit": 3}
+    assert f"installed {sum(map(len, cmds.values()))} in" in r.stdout     # the count printed is the count written
+    h = install(tmp_path / "help.json", "--help")
+    assert h.returncode == 0 and "It registers 13 hooks." in " ".join(h.stdout.split()), h.stdout
+    assert not (tmp_path / "help.json").exists()
+    said = re.findall(r"\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|"
+                      r"fifteen)\b", " ".join(h.stdout.split()).lower())
+    assert said == ["13"], said                    # no written count beside the counted one (F10: it said eight)
+    assert all(MARKER in c or SYNC in c or CATALOG in c or REQ in c for cs in cmds.values() for c in cs)
     assert cmds["SessionStart"][1].endswith(f"python3 {SYNC} --hook session-start")       # LS-B7: after the others
     assert CATALOG in cmds["SessionStart"][2]                                              # LS-B9 round 4: after it
     assert cmds["Stop"][1].endswith(f"python3 {SYNC} --hook stop")
@@ -227,7 +241,7 @@ def _sh(cmd, stdin="{}", cwd="/", env=None):
 
 def test_every_installed_command_fails_open_when_the_repo_is_absent(tmp_path):
     cmds = _all_commands(tmp_path / "no-such-repo")
-    assert len(cmds) == 10
+    assert len(cmds) == 13
     for ev, cmd in cmds:
         r = _sh(cmd)
         assert (r.returncode, r.stdout) == (0, ""), (ev, r.returncode, r.stdout, r.stderr)
@@ -290,7 +304,7 @@ def test_a_repo_path_that_needs_quoting_stays_idempotent_and_removable(tmp_path)
     foreign = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo other"}]}]}}
     once = ish.merged(foreign, root, remove=False)
     assert ish.merged(once, root, remove=False) == once
-    assert sum(len(v) for v in once["hooks"].values()) == 11
+    assert sum(len(v) for v in once["hooks"].values()) == 14
     assert ish.merged(once, root, remove=True) == foreign
 
 
@@ -364,7 +378,8 @@ def test_the_task_sync_hooks_are_installed_with_a_30_second_timeout(tmp_path):
         assert h[0]["command"] == (f"[ -f {ROOT}/scripts/task_sync.py ] || exit 0; cd {ROOT} || exit 0; "
                                    f"python3 {SYNC} --hook {arg}")
     others = [h for v in hooks.values() for g in v for h in g["hooks"]
-              if "task_sync.py" not in h["command"] and "stack.py catalog" not in h["command"]]
+              if "task_sync.py" not in h["command"] and "stack.py catalog" not in h["command"]
+              and "ls_req.py" not in h["command"]]
     assert len(others) == 7 and all("timeout" not in h for h in others)
 
 
@@ -488,3 +503,175 @@ def test_an_older_catalog_spelling_is_replaced_on_install(tmp_path):
     cmds = [h["command"] for g in json.loads(target.read_text())["hooks"]["SessionStart"] for h in g["hooks"]]
     assert sum("stack.py catalog" in c for c in cmds) == 1 and old["command"] not in cmds
     assert install(target, "--check").returncode == 0
+
+
+# ---- LS-B10 (task #364, D-108 item 6): the chat form, scripts/ls_req.py, last on the prompt, Stop and start ----
+
+REQ_GROUPS = (("UserPromptSubmit", "prompt", 30), ("Stop", "stop", 300), ("SessionStart", "session-start", 30))
+REQ_SCRIPTS = ("ls_req.py", "stack.py", "stacks.toml", "handback_extract.py")
+GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+           "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+
+
+def _req_constants():
+    """The chat form's round budget, kill grace and catch-up wait, read from scripts/ls_req.py itself."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("ls_req_consts", ROOT / "scripts" / "ls_req.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.ROUND_BUDGET_S, mod.KILL_GRACE_S, mod.CATCHUP_S
+
+
+def _git_repo(repo, *names):
+    """A temp git repository holding copies of the named repo files (one commit): the hooks keep their state in ITS
+    .jev/, never the main tree's."""
+    for name in names:
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / name, repo / name)
+    env = dict(os.environ, **GIT_ENV)
+    for args in (["init", "-q", "-b", "main"], ["add", "."], ["commit", "-q", "--no-verify", "-m", "one"]):
+        r = subprocess.run(["git", "-C", str(repo), *args], env=env, capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr
+    return repo
+
+
+def _text_record(tx, text, n):
+    with open(tx, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"type": "assistant", "uuid": "a%d" % n, "message": {
+            "id": "m%d" % n, "role": "assistant", "content": [{"type": "text", "text": text}]}},
+            separators=(",", ":")) + "\n")
+
+
+def test_the_chat_form_hooks_are_installed_last_with_their_timeouts(tmp_path):
+    """One group each on UserPromptSubmit (`prompt`, 30 s), Stop (`stop`, 300 s) and SessionStart (`session-start`,
+    30 s, every source: no matcher), each LAST in its list, the commands pinned, on no other event; the Stop timeout
+    covers the hook's round budget, kill grace and catch-up wait (read from ls_req.py); a second install changes
+    nothing. Mutants: a group not last; a missing timeout; the Stop timeout at 60 s (under the round budget); a matcher
+    on SessionStart (a compaction or a resume missed)."""
+    target = tmp_path / "settings.json"
+    assert install(target).returncode == 0
+    hooks = json.loads(target.read_text())["hooks"]
+    for ev, arg, timeout in REQ_GROUPS:
+        ours = [g for g in hooks[ev] if REQ in g["hooks"][0]["command"]]
+        assert len(ours) == 1 and hooks[ev][-1] == ours[0] and "matcher" not in ours[0], (ev, hooks[ev])
+        [h] = ours[0]["hooks"]
+        assert (h["command"], type(h.get("timeout")), h.get("timeout")) == (
+            f"[ -f {REQ} ] || exit 0; cd {ROOT} || exit 0; python3 {REQ} {arg}", int, timeout)
+    assert sorted(ev for ev, v in hooks.items() for g in v for h in g["hooks"] if REQ in h["command"]) == sorted(
+        ev for ev, _a, _t in REQ_GROUPS)
+    budget, grace, catchup = _req_constants()
+    assert budget + grace + catchup + 30 <= 300
+    before = target.read_bytes()
+    r = install(target)
+    assert r.returncode == 0 and "unchanged" in r.stdout and target.read_bytes() == before
+
+
+def test_an_older_chat_form_spelling_is_replaced_on_install(tmp_path):
+    """The merge rule names `<repo>/scripts/ls_req.py` as ours, so a changed command replaces the old one instead of
+    answering every request twice. Mutant: the marker left out of the merge rule (two chat-form Stop hooks)."""
+    target = tmp_path / "settings.json"
+    old = {"type": "command", "command": f"python3 {REQ} stop --an-older-spelling"}
+    target.write_text(json.dumps({"hooks": {"Stop": [{"hooks": [old]}]}}))
+    assert install(target).returncode == 0
+    cmds = [h["command"] for g in json.loads(target.read_text())["hooks"]["Stop"] for h in g["hooks"]]
+    assert sum("ls_req.py" in c for c in cmds) == 1 and old["command"] not in cmds
+    assert install(target, "--check").returncode == 0
+
+
+def test_the_repo_settings_register_the_chat_form_hooks_last():
+    """The repo's own .claude/settings.json (its commands spell $CLAUDE_PROJECT_DIR): the same three groups, last in
+    their lists, with the same timeouts. Mutant: an entry missing or not last; a timeout left out."""
+    hooks = json.loads((ROOT / ".claude" / "settings.json").read_text())["hooks"]
+    for ev, arg, timeout in REQ_GROUPS:
+        assert sum("ls_req.py" in h["command"] for g in hooks[ev] for h in g["hooks"]) == 1, ev
+        last = hooks[ev][-1]
+        assert "matcher" not in last and len(last["hooks"]) == 1, ev
+        h = last["hooks"][0]
+        assert (h["command"], type(h.get("timeout")), h.get("timeout")) == (
+            f"[ -f $CLAUDE_PROJECT_DIR/scripts/ls_req.py ] || exit 0; python3 $CLAUDE_PROJECT_DIR/scripts/ls_req.py "
+            f"{arg}", int, timeout)
+    assert not any("ls_req.py" in h["command"] for ev in ("PreToolUse", "PostToolUse") for g in hooks[ev]
+                   for h in g["hooks"])
+
+
+def test_the_installed_chat_form_commands_run_against_a_temp_repo(tmp_path):
+    """The installed commands through a shell from another cwd, against a temp git repository holding the chat form's
+    scripts: the prompt injects ONE nonce line; a Stop with no request line stays silent; a request line with the nonce
+    runs through the temp repo's stack runner and comes back as exit 2 with its receipt; a compaction's SessionStart
+    re-injects the nonce; with .jev/req-off every command is silent. Mutants: the event names swapped between the
+    commands; the chat form registered through hook_context.py (its JSON would be stamped as text)."""
+    repo = _git_repo(tmp_path / "repo", *("scripts/" + n for n in REQ_SCRIPTS))
+    cmds = {ev: h["command"] for ev, groups in ish.our_hooks(repo).items() for g in groups for h in g["hooks"]
+            if "ls_req.py" in h["command"]}
+    assert sorted(cmds) == ["SessionStart", "Stop", "UserPromptSubmit"]
+    env = {k: v for k, v in os.environ.items() if k not in ("AF_REQ_STATE", "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP")}
+    tx = tmp_path / "transcript.jsonl"
+    tx.write_text("")
+    base = {"session_id": "s9", "transcript_path": str(tx), "cwd": str(repo)}
+    r = _sh(cmds["UserPromptSubmit"], stdin=json.dumps(dict(base, prompt="go")), env=env)
+    out = json.loads(r.stdout)["hookSpecificOutput"]
+    assert (r.returncode, r.stderr, out["hookEventName"]) == (0, "", "UserPromptSubmit")
+    m = re.fullmatch(r"Chat form \(LS-B10\) nonce ([0-9a-f]{12}): [^\n]*", out["additionalContext"])
+    assert m, out["additionalContext"][:200]
+    nonce = m.group(1)
+    assert (repo / ".jev" / "req" / "sessions" / "s9.json").is_file()
+    _text_record(tx, "No request here.", 1)
+    r = _sh(cmds["Stop"], stdin=json.dumps(dict(base, stop_hook_active=False)), env=env)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+    _text_record(tx, "REQ %s r1 premise files=scripts/ls_req.py" % nonce, 2)
+    r = _sh(cmds["Stop"], stdin=json.dumps(dict(base, stop_hook_active=False)), env=env)
+    assert r.returncode == 2 and re.search(r"^RES %s r1 ran rc=0 run=s-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}$" % nonce,
+                                           r.stderr, re.M), r.stderr[:500]
+    assert (repo / ".jev" / "stacks" / "runs.jsonl").is_file()          # the temp repo's runner log, never the main's
+    r = _sh(cmds["SessionStart"], stdin=json.dumps(dict(base, source="compact")), env=env)
+    out = json.loads(r.stdout)["hookSpecificOutput"]
+    assert (r.returncode, out["hookEventName"]) == (0, "SessionStart")
+    assert out["additionalContext"].startswith("Chat form (LS-B10) nonce %s: " % nonce)
+    (repo / ".jev" / "req-off").write_text("off\n")
+    for ev, cmd in cmds.items():
+        r = _sh(cmd, stdin=json.dumps(dict(base, prompt="go", source="compact")), env=env)
+        assert (r.returncode, r.stdout, r.stderr) == (0, "", ""), ev
+
+
+def test_the_retro_gate_defers_while_this_stop_answers_chat_form_requests(tmp_path):
+    """PM P6 (LS-B10 item 7): while this Stop's texts carry a current nonce the gate exits 0 WITHOUT writing its
+    sentinel, so the retro fires at the chain's end; with no request in this Stop it fires (exit 2, the checklist, the
+    sentinel written); a payload that is not JSON never defers; without scripts/ls_req.py the gate is unchanged.
+    Mutants: the deferral writes the sentinel (the retro lost for this HEAD); defer on any payload; a deferral while
+    scripts/ls_req.py is absent. (The guard itself is not observable: without it python cannot open the file, prints
+    nothing, and the gate fires, the same outcome.)"""
+    repo = _git_repo(tmp_path / "gate", ".claude/hooks/turn-retro-gate.sh", *("scripts/" + n for n in REQ_SCRIPTS))
+    gate, sent = repo / ".claude" / "hooks" / "turn-retro-gate.sh", repo / ".git" / "turn-retro-acked"
+    head = subprocess.run(["git", "-C", str(repo), "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
+                          timeout=60).stdout.strip()
+    env = dict({k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP"},
+               AF_REQ_STATE=str(tmp_path / "req-state"))
+    tx = tmp_path / "transcript.jsonl"
+    tx.write_text("")
+    base = {"session_id": "s7", "transcript_path": str(tx)}
+
+    def run_gate(stdin):
+        return subprocess.run(["bash", str(gate)], input=stdin, capture_output=True, text=True, env=env, timeout=60,
+                              cwd=str(repo))
+
+    r = subprocess.run([sys.executable, str(repo / "scripts" / "ls_req.py"), "prompt"],
+                       input=json.dumps(dict(base, prompt="go")), capture_output=True, text=True, env=env, timeout=60)
+    ctx = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+    nonce = re.search(r"nonce ([0-9a-f]{12}):", ctx).group(1)
+    _text_record(tx, "Asking.\nREQ %s r1 premise files=scripts/ls_req.py" % nonce, 1)
+    r = run_gate(json.dumps(base))
+    assert (r.returncode, r.stdout, r.stderr, sent.exists()) == (0, "", "", False)
+    r = run_gate("{not json")
+    assert r.returncode == 2 and "TURN-END RETRO" in r.stderr and sent.read_text().strip() == head
+    sent.unlink()
+    with open(tx, "a", encoding="utf-8") as fh:                         # the Stop that answered r1, then plain text
+        fh.write(json.dumps({"type": "system", "subtype": "stop_hook_summary", "uuid": "s1", "hookErrors": ["x"]},
+                            separators=(",", ":")) + "\n")
+    _text_record(tx, "Done.", 2)
+    r = run_gate(json.dumps(base))
+    assert r.returncode == 2 and "TURN-END RETRO" in r.stderr and sent.read_text().strip() == head
+    sent.unlink()
+    (repo / "scripts" / "ls_req.py").unlink()
+    _text_record(tx, "REQ %s r2 premise files=scripts/stack.py" % nonce, 3)
+    r = run_gate(json.dumps(base))
+    assert r.returncode == 2 and "TURN-END RETRO" in r.stderr and sent.read_text().strip() == head
