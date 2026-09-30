@@ -375,3 +375,48 @@ def test_a_gap_that_is_not_a_finite_non_negative_number_is_refused(tmp_path, gap
     p = subprocess.run([sys.executable, str(RELAY), "serve", "--port", str(free_port()), "--env-file", str(env),
                         "--min-gap", gap, "--no-default-sources"], capture_output=True, text=True, timeout=30)
     assert p.returncode == 64 and "bad --port or --min-gap" in p.stderr, (gap, p.returncode, p.stderr)
+
+
+def test_a_value_source_rewritten_after_start_joins_the_gate_before_the_next_send(tmp_path, env_file, upstream):
+    """Task #418: the relay loads its known values at start, and a source written later (the owner's next bridge banner
+    in .pc-bridge.env) must reach the gate before the next send; a value known before the rewrite stays known."""
+    old, new = fake(30, string.ascii_lowercase), fake(30, string.ascii_lowercase)
+    text = "the banner said %s near the end"
+    assert te.scrub_payload(text % new) == text % new          # no shape rule takes it: only the value gate can
+    extra = tmp_path / "extra.env"
+    extra.write_text("PC_BRIDGE_TOKEN=%s\n" % old)
+    r = Relay(tmp_path, env_file, "--value-file", str(extra))
+    try:
+        status, _ = r.post(body_with({"chunks": [{"id": "q1", "text": text % new}]}))
+        assert status == 200 and len(upstream.seen) == 1       # before the rewrite the new value is unknown, so it went
+        extra.write_text("PC_BRIDGE_TOKEN=%s\n" % new)           # rewritten in place: same inode, same size
+        status, reply = r.post(body_with({"chunks": [{"id": "q1", "text": text % new}]}))
+        assert status == 422 and b"value gate" in reply, reply
+        assert new.encode() not in reply and len(upstream.seen) == 1
+        status, reply = r.post(body_with({"chunks": [{"id": "q1", "text": text % old}]}))
+        assert status == 422, reply                              # the reload adds values, it never forgets one
+        status, _ = r.post(body_with({"chunks": [{"id": "q1", "text": "the banner said nothing"}]}))
+        assert status == 200 and len(upstream.seen) == 2         # the control: a clean body still passes
+        assert r.health()["counts"]["reloads"] == 1
+    finally:
+        r.stop()
+
+
+def test_a_value_source_that_turns_unreadable_after_start_fails_closed(tmp_path, env_file, upstream):
+    """A changed source the gate cannot read (here a FIFO, which a plain read would block on) refuses every request with
+    503 until it reads again: the gate never falls back to the values it had."""
+    extra = tmp_path / "extra.env"
+    extra.write_text("PC_BRIDGE_TOKEN=%s\n" % fake(30, string.ascii_lowercase))
+    r = Relay(tmp_path, env_file, "--value-file", str(extra))
+    try:
+        extra.unlink()
+        os.mkfifo(extra)
+        status, reply = r.post(body_with("plain text"))
+        assert status == 503 and b"value gate" in reply, reply
+        assert upstream.seen == []
+        extra.unlink()
+        extra.write_text("PC_BRIDGE_TOKEN=%s\n" % fake(30, string.ascii_lowercase))
+        status, _ = r.post(body_with("plain text"))
+        assert status == 200 and len(upstream.seen) == 1          # readable again: the relay sends again
+    finally:
+        r.stop()

@@ -11,7 +11,10 @@ takes these steps, and a refusal at any step sends nothing upstream:
      rules, the opaque-run rule); an object KEY the scrub would change refuses the request (a question id or a state key
      cannot be rewritten without breaking the answer's mapping);
   3. the value gate: the scrubbed body is checked for the values of the known secrets (transcript_export's
-     KNOWN_VALUE_SOURCES, with the key file below among them), whole and by 8-byte windows; a hit refuses;
+     KNOWN_VALUE_SOURCES, with the key file below among them), whole and by 8-byte windows; a hit refuses. A file
+     source that changed since the last load (inode, size, mtime or ctime) is read again before the check, and its
+     values join the ones already known (task #418: a bridge token written after the start); a changed source that
+     cannot be read refuses every request with 503 until it reads again;
   4. the model must be one of MODELS;
   5. the body goes to the ONE upstream, `TYPESAFE_BASE_URL` + `/v1/systemone` from the key file, with the key read from
      that file at start (never from argv, never printed). The caller's Authorization header is dropped: the plugin holds
@@ -136,15 +139,17 @@ def parse_request(raw):
 
 
 class Relay:
-    def __init__(self, key, base, values, state_dir, min_gap, data):
+    def __init__(self, key, base, values, state_dir, min_gap, data, sources=()):
         self.key, self.url = key, base + "/v1/systemone"
         self.key_bytes = key.encode()
         self.values = values
+        self.sources = tuple(sources)
+        self.source_sig = self.sources_sig()
         self.state_dir = Path(state_dir) if data else None
         self.min_gap = min_gap
         self.lock = threading.Lock()
         self.last_send = 0.0
-        self.counts = {"requests": 0, "relayed": 0, "refused": 0, "upstream_error": 0}
+        self.counts = {"requests": 0, "relayed": 0, "refused": 0, "upstream_error": 0, "reloads": 0}
         self.scrub_sha = sha256_file(Path(te.__file__))
         self.relay_sha = sha256_file(__file__)
         no_proxy = urllib.parse.urlsplit(base).hostname in ("127.0.0.1", "localhost")
@@ -154,6 +159,38 @@ class Relay:
     def count(self, name):
         with self.lock:
             self.counts[name] += 1
+
+    def sources_sig(self):
+        """What identifies each file source's bytes without reading them: (inode, size, mtime, ctime, type), or the
+        error's name. An env source is left out: a running process's environment does not change."""
+        sig = []
+        for kind, where, _ in self.sources:
+            if kind == "env":
+                continue
+            try:
+                st = os.stat(where)
+                sig.append((where, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_mode >> 12))
+            except OSError as e:
+                sig.append((where, type(e).__name__))
+        return tuple(sig)
+
+    def current_values(self):
+        """The gate's values: when a file source changed since the last load, it is read again and its values join the
+        known ones (a value is never dropped). A changed source that cannot be read raises Refused(503): no fallback."""
+        sig = self.sources_sig()
+        with self.lock:
+            if sig == self.source_sig:
+                return self.values
+        try:
+            fresh = te.known_values(self.sources)
+        except te.KnownValueRefusal:
+            raise Refused(503, "the value gate cannot read a changed secret source; nothing was sent")
+        with self.lock:
+            known = {v[2] for v in self.values}
+            self.values = self.values + [v for v in fresh if v[2] not in known]
+            self.source_sig = sig
+            self.counts["reloads"] += 1
+            return self.values
 
     def health(self):
         with self.lock:
@@ -180,7 +217,7 @@ class Relay:
         try:
             body = parse_request(raw)
             sent = json.dumps(body, ensure_ascii=False, sort_keys=True).encode()
-            hits = te.value_hits([sent], self.values)
+            hits = te.value_hits([sent], self.current_values())
             if hits:
                 raise Refused(422, "the value gate found %d known secret form(s) in the scrubbed body" % len(hits))
         except Refused as e:
@@ -287,7 +324,7 @@ def serve(args):
     except te.KnownValueRefusal as e:
         print("jev_relay: " + "; ".join(e.args[0]), file=sys.stderr)
         return 2
-    relay = Relay(key, base, values, args.state_dir or main_tree_state_dir(), args.min_gap, not args.no_data)
+    relay = Relay(key, base, values, args.state_dir or main_tree_state_dir(), args.min_gap, not args.no_data, sources)
     try:
         server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(relay))
     except OSError as e:
