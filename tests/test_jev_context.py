@@ -12,7 +12,9 @@ import importlib.util
 import json
 import pathlib
 import random
+import shutil
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -723,3 +725,123 @@ def test_absent_records_are_unmapped(tmp_path):
     ctx = jc.Context(str(tmp_path), {})
     assert jc.inst_registry("q", [], ctx) == ([], ["unmapped — registry unavailable (docs/INCIDENT-LOG.md absent)"], False)
     assert jc.inst_quirks("q", [], ctx) == ([], ["unmapped — quirks unavailable (CLAUDE.md absent)"], False)
+
+
+# ---------- LS-B12-R1 item 4 (VERIFY-LS-B12 F-3, D-111's class): no search text reaches a tool as an option ----------
+# search_text() gives graft ask, gitnexus query and codebase-memory the question when it is short, else its distinctive
+# tokens: a question that starts with a space and a dash, or a long one whose first token is a dash-led quoted string,
+# gives a dash-led text. Each call now ends the tool's options before the text: graft and gitnexus (both commander.js)
+# take `--`, codebase-memory takes the text in its `--query=` form (and the project in its `--project=` form). Measured
+# by hand 2026-09-30 (the R1 report): `graft ask -- --help` searches `--help` (rc 0) where `graft ask --help` prints the
+# command's help; `gitnexus query --repo . -- --help` answers JSON where `query --help --repo .` prints its usage;
+# codebase-memory's `--query=--label=Route` searches that text where `--query --label=Route` lists the routes.
+
+DASH_QUESTIONS = {   # case: (the question, the search text it gives)
+    "space-dash-help": (" --help", "--help"),
+    "space-dash-dir": (" --dir=/tmp/ls-b12-r1", "--dir=/tmp/ls-b12-r1"),
+    "long-quoted-basetemp": ('why does "--basetemp" ' + "the run past its timeout keep writing after the kill " * 7,
+                             "--basetemp"),
+}
+PLAIN_QUESTIONS = {   # the question: its search text at the PIN (74285a5), byte for byte
+    "who calls merged in install_session_hooks": "who calls merged in install_session_hooks",
+    "a step past its timeout": "a step past its timeout",
+    "Traceback: " + "stack.py line 930 in execute unmapped_if substring over both streams " * 6: "unmapped_if stack.py",
+}
+CBM_EMPTY = "total: 0\nsearch_mode: bm25\nresults: 0  (cols: qn label file lines rank)\nhas_more: false\n"
+
+
+def recorder(tmp_path, name, answer):
+    """A tiny program that appends its argv (one JSON line) to <itself>.argv and prints `answer`: what a tool gets."""
+    path = tmp_path / name
+    path.write_text("#!%s\nimport json, sys\nwith open(__file__ + '.argv', 'a') as fh:\n"
+                    "    fh.write(json.dumps(sys.argv[1:]) + '\\n')\nsys.stdout.write(%r)\n" % (sys.executable, answer))
+    path.chmod(0o755)
+    return path
+
+
+def recorded(path):
+    return [json.loads(ln) for ln in pathlib.Path(str(path) + ".argv").read_text().splitlines()]
+
+
+def search_ctx(tmp_path, scope=None):
+    """A root with the markers graft and gitnexus look for, and a recorder in place of each searching tool."""
+    touch(tmp_path, "graft/INDEX.md", ".gitnexus/run.cjs")
+    tools = {"graft": [str(recorder(tmp_path, "graft-rec", ""))],
+             "node": [str(recorder(tmp_path, "node-rec", json.dumps({"processes": [], "definitions": []})))],
+             "cbm": [str(recorder(tmp_path, "cbm-rec", CBM_EMPTY))]}
+    return jc.Context(str(tmp_path), tools, scope=scope)
+
+
+@pytest.mark.parametrize("case", sorted(DASH_QUESTIONS))
+def test_graft_gets_a_dash_led_search_text_after_its_end_of_options(tmp_path, case):
+    """RED at the PIN: graft got `ask --help`, its command's own option. Mutant: the `--` dropped."""
+    question, text = DASH_QUESTIONS[case]
+    toks = jc.tokens(question)
+    assert jc.search_text(question, toks) == text and text.startswith("-")        # the premise: a dash-led text
+    ctx = search_ctx(tmp_path)
+    assert jc.inst_graft(question, toks, ctx) == ([], [], True)
+    assert recorded(ctx.tools["graft"][0]) == [["ask", "--", text]]
+
+
+def test_graft_gets_its_scope_before_the_end_of_options(tmp_path):
+    """--in stays an option, before the `--`; graft reads a dash-led --in value as the value (measured: `--in -probe`
+    answers `nothing indexed under "-probe/"`), and locate's scope parameter is a path, which refuses a leading '-'."""
+    question, text = DASH_QUESTIONS["space-dash-help"]
+    ctx = search_ctx(tmp_path, scope="scripts")
+    assert jc.inst_graft(question, jc.tokens(question), ctx) == ([], [], True)
+    assert recorded(ctx.tools["graft"][0]) == [["ask", "--in", "scripts", "--", text]]
+
+
+@pytest.mark.parametrize("case", sorted(DASH_QUESTIONS))
+def test_gitnexus_query_gets_a_dash_led_search_text_after_its_end_of_options(tmp_path, case):
+    """RED at the PIN: `query --help --repo .`. Mutant: the `--` dropped. None of these questions names an
+    identifier, so the query is the only call (a context call takes an identifier, which never starts with '-')."""
+    question, text = DASH_QUESTIONS[case]
+    ctx = search_ctx(tmp_path)
+    assert jc.inst_gitnexus(question, jc.tokens(question), ctx) == ([], [], True)
+    assert recorded(ctx.tools["node"][0]) == [[".gitnexus/run.cjs", "query", "--repo", ".", "--", text]]
+
+
+@pytest.mark.parametrize("case", sorted(DASH_QUESTIONS))
+def test_cbm_gets_a_dash_led_search_text_in_its_equals_form(tmp_path, case):
+    """RED at the PIN: `--query --help`, which codebase-memory reads as a flag. Mutant: the `=` form reverted."""
+    question, text = DASH_QUESTIONS[case]
+    ctx = search_ctx(tmp_path)
+    assert jc.inst_cbm(question, jc.tokens(question), ctx) == ([], [], True)
+    assert recorded(ctx.tools["cbm"][0]) == [["cli", "search_graph", "--project=" + ctx.slug, "--query=" + text]]
+
+
+def test_a_plain_question_reaches_each_tool_with_its_search_text_unchanged(tmp_path):
+    """The regression control: a plain question's search text is byte-identical to the PIN's, and each tool gets it
+    whole in its safe position (after `--`, or after `--query=`)."""
+    for i, (question, text) in enumerate(PLAIN_QUESTIONS.items()):
+        toks = jc.tokens(question)
+        assert jc.search_text(question, toks) == text
+        ctx = search_ctx(tmp_path / str(i))
+        assert jc.inst_graft(question, toks, ctx)[1:] == ([], True)
+        assert jc.inst_cbm(question, toks, ctx)[1:] == ([], True)
+        assert recorded(ctx.tools["graft"][0]) == [["ask", "--", text]]
+        assert recorded(ctx.tools["cbm"][0]) == [["cli", "search_graph", "--project=" + ctx.slug, "--query=" + text]]
+        jc.inst_gitnexus(question, toks, ctx)
+        assert recorded(ctx.tools["node"][0])[0] == [".gitnexus/run.cjs", "query", "--repo", ".", "--", text]
+
+
+@pytest.mark.skipif(shutil.which("gitnexus") is None or shutil.which("node") is None,
+                    reason="gitnexus is not installed (CI has none): the test indexes a tree with it")
+def test_a_real_gitnexus_query_searches_a_dash_led_text(tmp_path, monkeypatch):
+    """The real inst_gitnexus on a tree the real `gitnexus analyze` indexed (offline: a private HOME and no extension
+    install; full-text search off): the question ` --help` reaches gitnexus as its search text and it answers JSON.
+    RED at the PIN: gitnexus printed the query command's usage, `unmapped — gitnexus query unavailable (non-JSON
+    output)`. Mutant: the `--` dropped."""
+    tree, home = tmp_path / "gn", tmp_path / "gnhome"
+    touch(tree, "tool.py")
+    for args in (["init", "-q"], ["add", "."], ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit",
+                                                "-q", "--no-verify", "-m", "one"]):
+        subprocess.run(["git", "-C", str(tree)] + args, check=True, capture_output=True, timeout=60)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GITNEXUS_LBUG_EXTENSION_INSTALL", "never")
+    r = subprocess.run(["gitnexus", "analyze", "--skip-agents-md"], cwd=str(tree), capture_output=True, text=True,
+                       timeout=300)
+    assert r.returncode == 0, r.stdout + r.stderr
+    hits, notes, ok = jc.inst_gitnexus(" --help", jc.tokens(" --help"), jc.Context(str(tree), {"node": ["node"]}))
+    assert (notes, ok) == ([], True), notes

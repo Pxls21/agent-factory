@@ -628,6 +628,50 @@ def test_echo_with_no_removed_code_line_has_nothing_to_echo(tmp_path):
     assert "nothing to echo: the diff removes no code line" in out
 
 
+NO_ANSWER = '"ranking": "no instrument answered'   # stacks.toml's fix-echo reads unmapped on this (LS-B12-R1 item 1)
+
+
+def heavy_patch(path):
+    """The heaviest no-answer pack this test could build: removed and added lines of quotes and backslashes (JSON
+    doubles each), string-literal tokens of 40 quotes (each an unmapped rg-token note), two shapes, twenty fixed sites
+    (the site line past its 400-character cut), and a patch path of quotes."""
+    hunks = []
+    for i in range(20):
+        name = "scripts/m%02d.py" % i
+        rem = "    value_%d = store.fetch_rows_%d('%s', \"%s\")" % (i, i, '"' * 38 + "%02d" % i, "\\\\" * 30)
+        add = "    value_%d = store.fetch_rows_%d('%s')" % (i, i, '"' * 60)
+        hunks.append("--- a/%s\n+++ b/%s\n@@ -1,1 +1,1 @@\n-%s\n+%s\n" % (name, name, rem, add))
+    path.write_text("".join(hunks))
+    return path
+
+
+def test_a_no_answer_pack_keeps_its_ranking_at_the_default_budget_and_in_the_skeleton(tmp_path):
+    """LS-B12-R1 item 1, the skeleton question: can a missing-tools pack reach render()'s JSON skeleton at the default
+    budget (6,000)? No. Each field it grows is cut before JSON doubles its quotes (the three head values at 300, the
+    fixed-site line at 400, each rg-token note's token at 40); the rest is this tool's own text, so the pack stays under
+    about 4,100 characters. Measured 2026-09-30: the pack built here, with every instrument missing (PATH empty;
+    graft/INDEX.md present, so graft is tried too), is 3,060 characters: it prints whole at 6,000, its structural
+    ranking in it. At BUDGET_MIN (1,000) the same pack takes the skeleton, which keeps the ranking (cleaned, cut at
+    200) and so the marker. Mutants: the skeleton without its ranking; the no-answer ranking reworded."""
+    root, home, nobin = tmp_path / "root", tmp_path / "home", tmp_path / "no-bin"
+    write(root, {"graft/INDEX.md": "x", "scripts/a.py": "x = 1\n"})
+    home.mkdir()
+    nobin.mkdir()
+    env = {"PATH": str(nobin), "HOME": str(home)}
+    patch = heavy_patch(tmp_path / ('q"' * 60 + ".patch"))
+    packs = {}
+    for budget in ("9000", "6000", "1000"):
+        rc, out, err = run(ECHO, "--diff", str(patch), "--root", str(root), "--json", "--budget", budget,
+                           "--no-jev-log", env=env)
+        assert rc == 0, err
+        packs[budget] = out
+    full = json.loads(packs["9000"])
+    assert full["answered"] == [] and len(full["notes"]) == 9 and full["ranking"].startswith("no instrument answered")
+    assert len(packs["9000"]) < 6000 and packs["6000"] == packs["9000"] and NO_ANSWER in packs["6000"]
+    small = json.loads(packs["1000"])
+    assert small["truncated"] is True and small["ranking"] == full["ranking"] and NO_ANSWER in packs["1000"]
+
+
 @pytest.mark.parametrize("args", [["--diff", "no-such-ref-xyz"], ["--diff", "-x"], [], ["--diff", "HEAD", "--top", "0"],
                                   ["--diff", "HEAD", "--instruments", "rg"]])
 def test_echo_usage_errors_exit_64(args, tmp_path):

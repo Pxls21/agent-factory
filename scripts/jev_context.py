@@ -453,9 +453,9 @@ def _unmapped(name, reason):
 def inst_graft(question, toks, ctx):
     if not os.path.isfile(os.path.join(ctx.root, "graft", "INDEX.md")):
         return [], [_unmapped("graft", "graft/INDEX.md absent")], False
-    argv = ctx.tools["graft"] + ["ask", search_text(question, toks)]
-    if ctx.scope:
-        argv += ["--in", ctx.scope]
+    # `--` ends graft's options: a search text that starts with '-' (a question ` --help`) is a text, never an option
+    argv = (ctx.tools["graft"] + ["ask"] + (["--in", ctx.scope] if ctx.scope else [])
+            + ["--", search_text(question, toks)])
     rc, out, reason = run_tool(argv, ctx.root, ctx.timeout)
     if reason:
         return [], [_unmapped("graft", reason)], False
@@ -466,8 +466,8 @@ def inst_gitnexus(question, toks, ctx):
     if not os.path.isfile(os.path.join(ctx.root, ".gitnexus", "run.cjs")):
         return [], [_unmapped("gitnexus", ".gitnexus/run.cjs absent")], False
     budget, hits, notes, answered = _Budget(ctx.timeout), [], [], False
-    rc, out, reason = run_tool(ctx.tools["node"] + [".gitnexus/run.cjs", "query", search_text(question, toks),
-                                                    "--repo", "."], ctx.root, budget.left())
+    rc, out, reason = run_tool(ctx.tools["node"] + [".gitnexus/run.cjs", "query", "--repo", ".", "--",   # as graft
+                                                    search_text(question, toks)], ctx.root, budget.left())
     got = None if reason else parse_gitnexus_query(out, ctx.root)
     if got is None:
         notes.append(_unmapped("gitnexus query", reason or "non-JSON output"))
@@ -491,7 +491,8 @@ def inst_gitnexus(question, toks, ctx):
 
 
 def inst_cbm(question, toks, ctx):
-    argv = ctx.tools["cbm"] + ["cli", "search_graph", "--project", ctx.slug, "--query", search_text(question, toks)]
+    # the `=` forms: codebase-memory reads a separate dash-led value as a flag (`--query --label=Route` lists routes)
+    argv = ctx.tools["cbm"] + ["cli", "search_graph", "--project=" + ctx.slug, "--query=" + search_text(question, toks)]
     rc, out, reason = run_tool(argv, ctx.root, ctx.timeout)
     if reason:
         return [], [_unmapped("codebase-memory", reason)], False

@@ -40,6 +40,11 @@ SIDE_CHARS = (jc.JEV_QUERY_CHARS - len(LABEL % ("", ""))) // 2
 INSTRUCTIONS = "Does this code show the same defect as the one fixed?"
 NOTE = ("note: a score is a lead, not a verdict: the BUG/WATCH/OK call on each site stays with the model "
         "(KC-J1b; a Jev score is never the only evidence).")
+# The ranking when the diff removes code lines and no instrument answered. stacks.toml's fix-echo step runs this
+# script with --json and reads unmapped on this ranking's opening words as the JSON pack writes them (key and value):
+# JSON escapes every quote inside a string, so no removed line or site shown in the pack can write that (LS-B12-R1).
+NO_ANSWER = ("no instrument answered: each one is unmapped or had nothing to search (see the notes), so no site is "
+             "listed (Jev not asked)")
 NONCODE = (".md", ".txt", ".json", ".jsonl", ".yaml", ".yml", ".toml", ".sha256", ".lock", ".csv", ".tsv", ".log",
            ".html", ".css", ".svg", ".png", ".ini", ".cfg", ".xml")
 
@@ -320,9 +325,13 @@ def main(argv=None):
     extra += [budget_note] if budget_note else []
     mode, scores, chunks, notes, answered = (jc.JEV_BASE if a.order == "jev" else a.order), None, [], [], []
     if not removed:
-        rank = "nothing to echo: the diff removes no code line, so it names no anti-pattern (Jev not asked)"
+        why = "the diff removes no code line" if files else "the input holds no unified diff (no file header)"
+        rank = "nothing to echo: %s, so it names no anti-pattern (Jev not asked)" % why
     else:
         hits, notes, answered = candidates(ctx, removed, added, touched, instruments)
+    if removed and not answered:
+        rank = NO_ANSWER             # and no hit: only an instrument that answered adds one
+    elif removed:
         chunks = jc.merge(hits, jc.words("\n".join(removed)))
         query = echo_query(removed, added)
         mode, scores, rank = rank_chunks(a.order, query, chunks, a.top, a, instructions=INSTRUCTIONS,

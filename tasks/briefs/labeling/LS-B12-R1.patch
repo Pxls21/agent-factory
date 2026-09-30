@@ -1,0 +1,864 @@
+diff --git a/.claude/skills/box-and-labels/SKILL.md b/.claude/skills/box-and-labels/SKILL.md
+index 5b8198f..d4b6015 100644
+--- a/.claude/skills/box-and-labels/SKILL.md
++++ b/.claude/skills/box-and-labels/SKILL.md
+@@ -43,11 +43,13 @@ skill holds the details.
+ | `fix-echo` | `scripts/jev_echo.py` (plain order): the sites that look like the lines a fix removed (rg and graft) | `diff` (a commit or a patch file) | none | yes |
+ 
+ Task #385 (LS-B12) added the last five. `locate` and `fix-echo` run the Jev tools in their plain order (`--order
+-lexical --no-jev-log`: no stack calls a model, KC-J1, D-077). `changes` runs one step per scope, so `base` reaches
+-`compare` only; a `PARTIAL RESULT` (its exit is 1) or `LISTING CAPPED` line in its header is not a clean check, and
++lexical --no-jev-log`: no stack calls a model, KC-J1, D-077). `changes` runs a probe (the runner's `--version`,
++unmapped where GitNexus cannot launch), then one step per scope, so `base` reaches `compare` only; a
++`PARTIAL RESULT` (its exit is 1) or `LISTING CAPPED` line in its header is not a clean check, and
+ `No changes detected.` covers only the symbols the index holds. `cbm`'s CLI starts a temporary codebase-memory daemon
+ in its own session, which outlives the step by about half a second (about 12 s after a timeout), out of the runner's
+-reach. `fix-echo` reads unmapped when no instrument answered, a diff that removes no code line included.
++reach. `fix-echo` prints its pack as JSON and reads unmapped only when no instrument answered (rg and graft
++missing); a diff with nothing to echo reads ok, and its ranking says why.
+ 
+ ## The box (LS-B11; the full grammar is the THE BOX section of `scripts/ls_req.py`'s docstring)
+ 
+diff --git a/scripts/jev_context.py b/scripts/jev_context.py
+index 94e5c35..ba223f7 100644
+--- a/scripts/jev_context.py
++++ b/scripts/jev_context.py
+@@ -453,9 +453,9 @@ def _unmapped(name, reason):
+ def inst_graft(question, toks, ctx):
+     if not os.path.isfile(os.path.join(ctx.root, "graft", "INDEX.md")):
+         return [], [_unmapped("graft", "graft/INDEX.md absent")], False
+-    argv = ctx.tools["graft"] + ["ask", search_text(question, toks)]
+-    if ctx.scope:
+-        argv += ["--in", ctx.scope]
++    # `--` ends graft's options: a search text that starts with '-' (a question ` --help`) is a text, never an option
++    argv = (ctx.tools["graft"] + ["ask"] + (["--in", ctx.scope] if ctx.scope else [])
++            + ["--", search_text(question, toks)])
+     rc, out, reason = run_tool(argv, ctx.root, ctx.timeout)
+     if reason:
+         return [], [_unmapped("graft", reason)], False
+@@ -466,8 +466,8 @@ def inst_gitnexus(question, toks, ctx):
+     if not os.path.isfile(os.path.join(ctx.root, ".gitnexus", "run.cjs")):
+         return [], [_unmapped("gitnexus", ".gitnexus/run.cjs absent")], False
+     budget, hits, notes, answered = _Budget(ctx.timeout), [], [], False
+-    rc, out, reason = run_tool(ctx.tools["node"] + [".gitnexus/run.cjs", "query", search_text(question, toks),
+-                                                    "--repo", "."], ctx.root, budget.left())
++    rc, out, reason = run_tool(ctx.tools["node"] + [".gitnexus/run.cjs", "query", "--repo", ".", "--",   # as graft
++                                                    search_text(question, toks)], ctx.root, budget.left())
+     got = None if reason else parse_gitnexus_query(out, ctx.root)
+     if got is None:
+         notes.append(_unmapped("gitnexus query", reason or "non-JSON output"))
+@@ -491,7 +491,8 @@ def inst_gitnexus(question, toks, ctx):
+ 
+ 
+ def inst_cbm(question, toks, ctx):
+-    argv = ctx.tools["cbm"] + ["cli", "search_graph", "--project", ctx.slug, "--query", search_text(question, toks)]
++    # the `=` forms: codebase-memory reads a separate dash-led value as a flag (`--query --label=Route` lists routes)
++    argv = ctx.tools["cbm"] + ["cli", "search_graph", "--project=" + ctx.slug, "--query=" + search_text(question, toks)]
+     rc, out, reason = run_tool(argv, ctx.root, ctx.timeout)
+     if reason:
+         return [], [_unmapped("codebase-memory", reason)], False
+diff --git a/scripts/jev_echo.py b/scripts/jev_echo.py
+index a8aceba..eae7be5 100644
+--- a/scripts/jev_echo.py
++++ b/scripts/jev_echo.py
+@@ -40,6 +40,11 @@ SIDE_CHARS = (jc.JEV_QUERY_CHARS - len(LABEL % ("", ""))) // 2
+ INSTRUCTIONS = "Does this code show the same defect as the one fixed?"
+ NOTE = ("note: a score is a lead, not a verdict: the BUG/WATCH/OK call on each site stays with the model "
+         "(KC-J1b; a Jev score is never the only evidence).")
++# The ranking when the diff removes code lines and no instrument answered. stacks.toml's fix-echo step runs this
++# script with --json and reads unmapped on this ranking's opening words as the JSON pack writes them (key and value):
++# JSON escapes every quote inside a string, so no removed line or site shown in the pack can write that (LS-B12-R1).
++NO_ANSWER = ("no instrument answered: each one is unmapped or had nothing to search (see the notes), so no site is "
++             "listed (Jev not asked)")
+ NONCODE = (".md", ".txt", ".json", ".jsonl", ".yaml", ".yml", ".toml", ".sha256", ".lock", ".csv", ".tsv", ".log",
+            ".html", ".css", ".svg", ".png", ".ini", ".cfg", ".xml")
+ 
+@@ -320,9 +325,13 @@ def main(argv=None):
+     extra += [budget_note] if budget_note else []
+     mode, scores, chunks, notes, answered = (jc.JEV_BASE if a.order == "jev" else a.order), None, [], [], []
+     if not removed:
+-        rank = "nothing to echo: the diff removes no code line, so it names no anti-pattern (Jev not asked)"
++        why = "the diff removes no code line" if files else "the input holds no unified diff (no file header)"
++        rank = "nothing to echo: %s, so it names no anti-pattern (Jev not asked)" % why
+     else:
+         hits, notes, answered = candidates(ctx, removed, added, touched, instruments)
++    if removed and not answered:
++        rank = NO_ANSWER             # and no hit: only an instrument that answered adds one
++    elif removed:
+         chunks = jc.merge(hits, jc.words("\n".join(removed)))
+         query = echo_query(removed, added)
+         mode, scores, rank = rank_chunks(a.order, query, chunks, a.top, a, instructions=INSTRUCTIONS,
+diff --git a/scripts/stacks.toml b/scripts/stacks.toml
+index f9d80f0..3a6d031 100644
+--- a/scripts/stacks.toml
++++ b/scripts/stacks.toml
+@@ -541,7 +541,10 @@ ok_rc = [0, 75]
+ # {"error":"project not found or not indexed",...} on stderr where the project has no index (a fresh HOME, or a clone
+ # at another path, whose slug differs), which reads unmapped. The CLI starts a temporary daemon in its own session: it
+ # outlived the CLI by 0.44 to 0.48 s, and by 11.6 to 13.4 s when the CLI's process group was killed (a step's timeout),
+-# out of the runner's reach (it kills the step's own group).
++# out of the runner's reach (it kills the step's own group). LS-B12-R1: a row can quote repo text, a Route node's
++# string literal verbatim with its spaces (measured on a tiny tree: `@app.route("/project not found or not indexed")`),
++# so the bare message read unmapped on an answer. The step reads unmapped on the JSON error's opening instead: a row
++# cannot hold `{"error":"`, since a name or path with a space is printed quoted, its quotes escaped (measured).
+ [stacks.cbm]
+ summary = "codebase-memory's graph search (project home-user-agent-factory): ranked symbols with their file and lines"
+ replaces = "a hand codebase-memory-mcp cli search_graph call"
+@@ -559,7 +562,7 @@ argv = ["codebase-memory-mcp", "cli", "search_graph", "--project", "home-user-ag
+ group = 1
+ timeout = 120
+ cap_lines = 60
+-unmapped_if = "project not found or not indexed"
++unmapped_if = '{"error":"project not found'
+ tool = "codebase-memory"
+ 
+ # ---------------------------------------------------------------------------------------------------------------- changes
+@@ -569,8 +572,11 @@ tool = "codebase-memory"
+ # listing capped, the CLI's FIRST line says so (`PARTIAL RESULT: ...`, `LISTING CAPPED: ...`), and it exits 1 on
+ # partial, 0 on capped (output() in its dist/cli/tool.js): headline puts that first line in the print's header, where
+ # the print cap never cuts it. compare without base: rc 1 `Error: base_ref is required for "compare" scope`. No runner
+-# (no global gitnexus, npx, pnpm or bunx): rc 1 `gitnexus runner: could not launch ...`, which reads unmapped; a tree
+-# with no .gitnexus/run.cjs reads unmapped too (the runner's script check).
++# (no global gitnexus, npx, pnpm or bunx): rc 1 `gitnexus runner: could not launch ...`; a tree with no
++# .gitnexus/run.cjs reads unmapped (the runner's script check). LS-B12-R1: detect-changes prints a changed markdown
++# section's heading verbatim (`Section <heading> → <file>`), so a scope step that read unmapped on the runner's text
++# read unmapped on a heading that holds it. The probe asks the same runner for gitnexus's version, which holds no repo
++# text, and reads unmapped on that text; each scope's step needs it and reads its own output for no marker.
+ [stacks.changes]
+ summary = "GitNexus detect-changes: the changed symbols and the flows they touch, for all, staged or unstaged changes or since a base"
+ replaces = "the hand detect-changes call before a commit: node .gitnexus/run.cjs detect-changes --scope all --repo ."
+@@ -588,44 +594,49 @@ default = "all"
+ [stacks.changes.params.base]
+ type = "text"
+ 
++[[stacks.changes.steps]]
++id = "probe"
++argv = ["node", ".gitnexus/run.cjs", "--version"]
++group = 1
++timeout = 60
++cap_lines = 5
++unmapped_if = "gitnexus runner: could not launch"
++tool = "gitnexus"
++
+ [[stacks.changes.steps]]
+ id = "all"
+ argv = ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "all", "--repo", "."]
+-group = 1
++group = 2
++needs = ["probe"]
+ timeout = 120
+ headline = true
+-unmapped_if = "gitnexus runner: could not launch"
+-tool = "gitnexus"
+ when = { scope = "all" }
+ 
+ [[stacks.changes.steps]]
+ id = "staged"
+ argv = ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "staged", "--repo", "."]
+-group = 1
++group = 2
++needs = ["probe"]
+ timeout = 120
+ headline = true
+-unmapped_if = "gitnexus runner: could not launch"
+-tool = "gitnexus"
+ when = { scope = "staged" }
+ 
+ [[stacks.changes.steps]]
+ id = "unstaged"
+ argv = ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "unstaged", "--repo", "."]
+-group = 1
++group = 2
++needs = ["probe"]
+ timeout = 120
+ headline = true
+-unmapped_if = "gitnexus runner: could not launch"
+-tool = "gitnexus"
+ when = { scope = "unstaged" }
+ 
+ [[stacks.changes.steps]]
+ id = "compare"
+ argv = ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "compare", "{base?:--base-ref}", "--repo", "."]
+-group = 1
++group = 2
++needs = ["probe"]
+ timeout = 120
+ headline = true
+-unmapped_if = "gitnexus runner: could not launch"
+-tool = "gitnexus"
+ when = { scope = "compare" }
+ 
+ # -------------------------------------------------------------------------------------------------------------------- why
+@@ -697,15 +708,17 @@ timeout = 120
+ # task #385: scripts/jev_echo.py in its plain order, after a fix: the lines the diff's code hunks remove are the
+ # defect, and rg (their tokens and shapes) and graft find other sites that look like them, the fixed site excluded.
+ # --order lexical and --no-jev-log as for locate (KC-J1; D-077). Measured 2026-09-30: rc 0 and a pack of about 20
+-# lines; a diff that is neither a readable patch file nor a commit git can show exits 64. With rg and graft both
+-# unavailable it exits 0 with `answered: none` and no site, so that line reads unmapped; so does a diff that removes no
+-# code line (`nothing to echo`), where no instrument runs.
++# lines; a diff that is neither a readable patch file nor a commit git can show exits 64. LS-B12-R1: the pack shows the
++# removed lines and the sites' code, so a text in the print is repo text; --json makes it one JSON line, where every
++# quote inside a string is escaped, and the step reads unmapped on the structural `"ranking": "no instrument answered`,
++# which jev_echo.py writes only when the diff removes code lines and no instrument answered (rg and graft missing). A
++# diff with nothing to echo (no removed code line, or no diff at all) is an answer: ok, its ranking says why.
+ [stacks.fix-echo]
+ summary = "after a fix: other sites like the lines it removed, from jev_echo.py (rg and graft) in the plain lexical order"
+ replaces = "the bug-echo lookup of a fix's removed lines by hand: rg for their tokens and shapes, graft ask"
+ outward = false
+ rated = true
+-notes = ["`fix-echo` reads unmapped when no instrument answered: rg and graft missing, or a diff that removes no code line."]
++notes = ["`fix-echo` prints JSON; it reads unmapped when no instrument answered (rg and graft missing); a diff with nothing to echo reads ok, its ranking says why."]
+ 
+ # path, not text or word: a commit id (0de29b2, HEAD~1, origin/main) passes the path checks as a name inside the tree,
+ # and a patch file must lie inside the tree and off the deny list (text would let a patch path name any file on the
+@@ -716,8 +729,8 @@ required = true
+ 
+ [[stacks.fix-echo.steps]]
+ id = "sites"
+-argv = ["python3", "scripts/jev_echo.py", "--diff", "{diff}", "--order", "lexical", "--no-jev-log"]
++argv = ["python3", "scripts/jev_echo.py", "--diff", "{diff}", "--order", "lexical", "--no-jev-log", "--json"]
+ group = 1
+ timeout = 120
+-unmapped_if = "answered: none"
++unmapped_if = '"ranking": "no instrument answered'
+ tool = "rg-and-graft"
+diff --git a/tests/test_jev_context.py b/tests/test_jev_context.py
+index 8f005a4..8e29643 100644
+--- a/tests/test_jev_context.py
++++ b/tests/test_jev_context.py
+@@ -12,7 +12,9 @@ import importlib.util
+ import json
+ import pathlib
+ import random
++import shutil
+ import socket
++import subprocess
+ import sys
+ import threading
+ import time
+@@ -723,3 +725,123 @@ def test_absent_records_are_unmapped(tmp_path):
+     ctx = jc.Context(str(tmp_path), {})
+     assert jc.inst_registry("q", [], ctx) == ([], ["unmapped — registry unavailable (docs/INCIDENT-LOG.md absent)"], False)
+     assert jc.inst_quirks("q", [], ctx) == ([], ["unmapped — quirks unavailable (CLAUDE.md absent)"], False)
++
++
++# ---------- LS-B12-R1 item 4 (VERIFY-LS-B12 F-3, D-111's class): no search text reaches a tool as an option ----------
++# search_text() gives graft ask, gitnexus query and codebase-memory the question when it is short, else its distinctive
++# tokens: a question that starts with a space and a dash, or a long one whose first token is a dash-led quoted string,
++# gives a dash-led text. Each call now ends the tool's options before the text: graft and gitnexus (both commander.js)
++# take `--`, codebase-memory takes the text in its `--query=` form (and the project in its `--project=` form). Measured
++# by hand 2026-09-30 (the R1 report): `graft ask -- --help` searches `--help` (rc 0) where `graft ask --help` prints the
++# command's help; `gitnexus query --repo . -- --help` answers JSON where `query --help --repo .` prints its usage;
++# codebase-memory's `--query=--label=Route` searches that text where `--query --label=Route` lists the routes.
++
++DASH_QUESTIONS = {   # case: (the question, the search text it gives)
++    "space-dash-help": (" --help", "--help"),
++    "space-dash-dir": (" --dir=/tmp/ls-b12-r1", "--dir=/tmp/ls-b12-r1"),
++    "long-quoted-basetemp": ('why does "--basetemp" ' + "the run past its timeout keep writing after the kill " * 7,
++                             "--basetemp"),
++}
++PLAIN_QUESTIONS = {   # the question: its search text at the PIN (74285a5), byte for byte
++    "who calls merged in install_session_hooks": "who calls merged in install_session_hooks",
++    "a step past its timeout": "a step past its timeout",
++    "Traceback: " + "stack.py line 930 in execute unmapped_if substring over both streams " * 6: "unmapped_if stack.py",
++}
++CBM_EMPTY = "total: 0\nsearch_mode: bm25\nresults: 0  (cols: qn label file lines rank)\nhas_more: false\n"
++
++
++def recorder(tmp_path, name, answer):
++    """A tiny program that appends its argv (one JSON line) to <itself>.argv and prints `answer`: what a tool gets."""
++    path = tmp_path / name
++    path.write_text("#!%s\nimport json, sys\nwith open(__file__ + '.argv', 'a') as fh:\n"
++                    "    fh.write(json.dumps(sys.argv[1:]) + '\\n')\nsys.stdout.write(%r)\n" % (sys.executable, answer))
++    path.chmod(0o755)
++    return path
++
++
++def recorded(path):
++    return [json.loads(ln) for ln in pathlib.Path(str(path) + ".argv").read_text().splitlines()]
++
++
++def search_ctx(tmp_path, scope=None):
++    """A root with the markers graft and gitnexus look for, and a recorder in place of each searching tool."""
++    touch(tmp_path, "graft/INDEX.md", ".gitnexus/run.cjs")
++    tools = {"graft": [str(recorder(tmp_path, "graft-rec", ""))],
++             "node": [str(recorder(tmp_path, "node-rec", json.dumps({"processes": [], "definitions": []})))],
++             "cbm": [str(recorder(tmp_path, "cbm-rec", CBM_EMPTY))]}
++    return jc.Context(str(tmp_path), tools, scope=scope)
++
++
++@pytest.mark.parametrize("case", sorted(DASH_QUESTIONS))
++def test_graft_gets_a_dash_led_search_text_after_its_end_of_options(tmp_path, case):
++    """RED at the PIN: graft got `ask --help`, its command's own option. Mutant: the `--` dropped."""
++    question, text = DASH_QUESTIONS[case]
++    toks = jc.tokens(question)
++    assert jc.search_text(question, toks) == text and text.startswith("-")        # the premise: a dash-led text
++    ctx = search_ctx(tmp_path)
++    assert jc.inst_graft(question, toks, ctx) == ([], [], True)
++    assert recorded(ctx.tools["graft"][0]) == [["ask", "--", text]]
++
++
++def test_graft_gets_its_scope_before_the_end_of_options(tmp_path):
++    """--in stays an option, before the `--`; graft reads a dash-led --in value as the value (measured: `--in -probe`
++    answers `nothing indexed under "-probe/"`), and locate's scope parameter is a path, which refuses a leading '-'."""
++    question, text = DASH_QUESTIONS["space-dash-help"]
++    ctx = search_ctx(tmp_path, scope="scripts")
++    assert jc.inst_graft(question, jc.tokens(question), ctx) == ([], [], True)
++    assert recorded(ctx.tools["graft"][0]) == [["ask", "--in", "scripts", "--", text]]
++
++
++@pytest.mark.parametrize("case", sorted(DASH_QUESTIONS))
++def test_gitnexus_query_gets_a_dash_led_search_text_after_its_end_of_options(tmp_path, case):
++    """RED at the PIN: `query --help --repo .`. Mutant: the `--` dropped. None of these questions names an
++    identifier, so the query is the only call (a context call takes an identifier, which never starts with '-')."""
++    question, text = DASH_QUESTIONS[case]
++    ctx = search_ctx(tmp_path)
++    assert jc.inst_gitnexus(question, jc.tokens(question), ctx) == ([], [], True)
++    assert recorded(ctx.tools["node"][0]) == [[".gitnexus/run.cjs", "query", "--repo", ".", "--", text]]
++
++
++@pytest.mark.parametrize("case", sorted(DASH_QUESTIONS))
++def test_cbm_gets_a_dash_led_search_text_in_its_equals_form(tmp_path, case):
++    """RED at the PIN: `--query --help`, which codebase-memory reads as a flag. Mutant: the `=` form reverted."""
++    question, text = DASH_QUESTIONS[case]
++    ctx = search_ctx(tmp_path)
++    assert jc.inst_cbm(question, jc.tokens(question), ctx) == ([], [], True)
++    assert recorded(ctx.tools["cbm"][0]) == [["cli", "search_graph", "--project=" + ctx.slug, "--query=" + text]]
++
++
++def test_a_plain_question_reaches_each_tool_with_its_search_text_unchanged(tmp_path):
++    """The regression control: a plain question's search text is byte-identical to the PIN's, and each tool gets it
++    whole in its safe position (after `--`, or after `--query=`)."""
++    for i, (question, text) in enumerate(PLAIN_QUESTIONS.items()):
++        toks = jc.tokens(question)
++        assert jc.search_text(question, toks) == text
++        ctx = search_ctx(tmp_path / str(i))
++        assert jc.inst_graft(question, toks, ctx)[1:] == ([], True)
++        assert jc.inst_cbm(question, toks, ctx)[1:] == ([], True)
++        assert recorded(ctx.tools["graft"][0]) == [["ask", "--", text]]
++        assert recorded(ctx.tools["cbm"][0]) == [["cli", "search_graph", "--project=" + ctx.slug, "--query=" + text]]
++        jc.inst_gitnexus(question, toks, ctx)
++        assert recorded(ctx.tools["node"][0])[0] == [".gitnexus/run.cjs", "query", "--repo", ".", "--", text]
++
++
++@pytest.mark.skipif(shutil.which("gitnexus") is None or shutil.which("node") is None,
++                    reason="gitnexus is not installed (CI has none): the test indexes a tree with it")
++def test_a_real_gitnexus_query_searches_a_dash_led_text(tmp_path, monkeypatch):
++    """The real inst_gitnexus on a tree the real `gitnexus analyze` indexed (offline: a private HOME and no extension
++    install; full-text search off): the question ` --help` reaches gitnexus as its search text and it answers JSON.
++    RED at the PIN: gitnexus printed the query command's usage, `unmapped — gitnexus query unavailable (non-JSON
++    output)`. Mutant: the `--` dropped."""
++    tree, home = tmp_path / "gn", tmp_path / "gnhome"
++    touch(tree, "tool.py")
++    for args in (["init", "-q"], ["add", "."], ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit",
++                                                "-q", "--no-verify", "-m", "one"]):
++        subprocess.run(["git", "-C", str(tree)] + args, check=True, capture_output=True, timeout=60)
++    monkeypatch.setenv("HOME", str(home))
++    monkeypatch.setenv("GITNEXUS_LBUG_EXTENSION_INSTALL", "never")
++    r = subprocess.run(["gitnexus", "analyze", "--skip-agents-md"], cwd=str(tree), capture_output=True, text=True,
++                       timeout=300)
++    assert r.returncode == 0, r.stdout + r.stderr
++    hits, notes, ok = jc.inst_gitnexus(" --help", jc.tokens(" --help"), jc.Context(str(tree), {"node": ["node"]}))
++    assert (notes, ok) == ([], True), notes
+diff --git a/tests/test_jev_locate_echo.py b/tests/test_jev_locate_echo.py
+index 451adf0..0ef6c8d 100644
+--- a/tests/test_jev_locate_echo.py
++++ b/tests/test_jev_locate_echo.py
+@@ -628,6 +628,50 @@ def test_echo_with_no_removed_code_line_has_nothing_to_echo(tmp_path):
+     assert "nothing to echo: the diff removes no code line" in out
+ 
+ 
++NO_ANSWER = '"ranking": "no instrument answered'   # stacks.toml's fix-echo reads unmapped on this (LS-B12-R1 item 1)
++
++
++def heavy_patch(path):
++    """The heaviest no-answer pack this test could build: removed and added lines of quotes and backslashes (JSON
++    doubles each), string-literal tokens of 40 quotes (each an unmapped rg-token note), two shapes, twenty fixed sites
++    (the site line past its 400-character cut), and a patch path of quotes."""
++    hunks = []
++    for i in range(20):
++        name = "scripts/m%02d.py" % i
++        rem = "    value_%d = store.fetch_rows_%d('%s', \"%s\")" % (i, i, '"' * 38 + "%02d" % i, "\\\\" * 30)
++        add = "    value_%d = store.fetch_rows_%d('%s')" % (i, i, '"' * 60)
++        hunks.append("--- a/%s\n+++ b/%s\n@@ -1,1 +1,1 @@\n-%s\n+%s\n" % (name, name, rem, add))
++    path.write_text("".join(hunks))
++    return path
++
++
++def test_a_no_answer_pack_keeps_its_ranking_at_the_default_budget_and_in_the_skeleton(tmp_path):
++    """LS-B12-R1 item 1, the skeleton question: can a missing-tools pack reach render()'s JSON skeleton at the default
++    budget (6,000)? No. Each field it grows is cut before JSON doubles its quotes (the three head values at 300, the
++    fixed-site line at 400, each rg-token note's token at 40); the rest is this tool's own text, so the pack stays under
++    about 4,100 characters. Measured 2026-09-30: the pack built here, with every instrument missing (PATH empty;
++    graft/INDEX.md present, so graft is tried too), is 3,060 characters: it prints whole at 6,000, its structural
++    ranking in it. At BUDGET_MIN (1,000) the same pack takes the skeleton, which keeps the ranking (cleaned, cut at
++    200) and so the marker. Mutants: the skeleton without its ranking; the no-answer ranking reworded."""
++    root, home, nobin = tmp_path / "root", tmp_path / "home", tmp_path / "no-bin"
++    write(root, {"graft/INDEX.md": "x", "scripts/a.py": "x = 1\n"})
++    home.mkdir()
++    nobin.mkdir()
++    env = {"PATH": str(nobin), "HOME": str(home)}
++    patch = heavy_patch(tmp_path / ('q"' * 60 + ".patch"))
++    packs = {}
++    for budget in ("9000", "6000", "1000"):
++        rc, out, err = run(ECHO, "--diff", str(patch), "--root", str(root), "--json", "--budget", budget,
++                           "--no-jev-log", env=env)
++        assert rc == 0, err
++        packs[budget] = out
++    full = json.loads(packs["9000"])
++    assert full["answered"] == [] and len(full["notes"]) == 9 and full["ranking"].startswith("no instrument answered")
++    assert len(packs["9000"]) < 6000 and packs["6000"] == packs["9000"] and NO_ANSWER in packs["6000"]
++    small = json.loads(packs["1000"])
++    assert small["truncated"] is True and small["ranking"] == full["ranking"] and NO_ANSWER in packs["1000"]
++
++
+ @pytest.mark.parametrize("args", [["--diff", "no-such-ref-xyz"], ["--diff", "-x"], [], ["--diff", "HEAD", "--top", "0"],
+                                   ["--diff", "HEAD", "--instruments", "rg"]])
+ def test_echo_usage_errors_exit_64(args, tmp_path):
+diff --git a/tests/test_stack.py b/tests/test_stack.py
+index 27b7335..af05dfa 100644
+--- a/tests/test_stack.py
++++ b/tests/test_stack.py
+@@ -19,7 +19,6 @@ import fcntl
+ import hashlib
+ import importlib.util
+ import json
+-import mmap
+ import os
+ import re
+ import shlex
+@@ -1066,8 +1065,8 @@ NOTES = {   # issue #80's pre-wiring list (VERIFY-LS-B9 round 3), each under its
+                "`review`'s sentrux section is advisory; `tool exit N` is the only sign of a failed run."],
+     "changes": ["`No changes detected.` covers only symbols the index holds; a `PARTIAL RESULT` or `LISTING CAPPED` "
+                 "header line is not a clean check."],
+-    "fix-echo": ["`fix-echo` reads unmapped when no instrument answered: rg and graft missing, or a diff that removes "
+-                 "no code line."],
++    "fix-echo": ["`fix-echo` prints JSON; it reads unmapped when no instrument answered (rg and graft missing); a diff "
++                 "with nothing to echo reads ok, its ranking says why."],
+ }
+ WAVE1 = ["harvest", "gate", "ctx", "impact", "find", "premise", "echo", "review", "ci"]
+ NEW_LABELS = ["cbm", "changes", "why", "locate", "fix-echo"]      # task #385 (LS-B12), after wave 1 in the registry
+@@ -2525,15 +2524,18 @@ def gitnexus_runner_source():
+ 
+ 
+ UNMAPPED_385 = {   # step: (unmapped_if, tool), the text its tool prints where it cannot answer (measured 2026-09-30)
+-    "cbm.search": ("project not found or not indexed", "codebase-memory"),
+-    "changes.all": ("gitnexus runner: could not launch", "gitnexus"),
+-    "changes.staged": ("gitnexus runner: could not launch", "gitnexus"),
+-    "changes.unstaged": ("gitnexus runner: could not launch", "gitnexus"),
+-    "changes.compare": ("gitnexus runner: could not launch", "gitnexus"),
++    # LS-B12-R1: each is a text no repo text in that step's output can hold (the item-3 sweep and item 1); changes'
++    # scope steps carry none (detect-changes prints headings verbatim): their probe reads the runner's launch failure
++    "cbm.search": ('{"error":"project not found', "codebase-memory"),
++    "changes.probe": ("gitnexus runner: could not launch", "gitnexus"),
++    "changes.all": (None, None),
++    "changes.staged": (None, None),
++    "changes.unstaged": (None, None),
++    "changes.compare": (None, None),
+     "why.file": (None, None),
+     "why.function": (None, None),
+     "locate.pack": (None, None),
+-    "fix-echo.sites": ("answered: none", "rg-and-graft"),
++    "fix-echo.sites": ('"ranking": "no instrument answered', "rg-and-graft"),
+ }
+ 
+ 
+@@ -2556,6 +2558,7 @@ def test_the_committed_registry_loads_with_fourteen_stacks_and_the_catalog_shows
+         words = [e[1] for e in step.elems if e[0] == "lit"]
+         assert words[:2] == ["python3", script] and "--no-jev-log" in words, words
+         assert words[words.index("--order") + 1] == "lexical", words
++        assert ("--json" in words) == (label == "fix-echo"), words      # LS-B12-R1: fix-echo's marker is JSON's
+     r = real(tmp_path, "catalog")
+     assert r.returncode == 0 and len(r.stdout) < mod.CATALOG_CAP and "not shown" not in r.stdout, r.stdout
+     assert [ln.split()[0] for ln in r.stdout.splitlines()[1:-1] if not ln.startswith(" ")] == WAVE1 + NEW_LABELS
+@@ -2577,7 +2580,9 @@ tree {TREE} · HEAD {HEAD}
+ params: scope=all
+ <run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+ group 1
+-  all: node .gitnexus/run.cjs detect-changes --scope all --repo . (timeout 120 s, headline)
++  probe: node .gitnexus/run.cjs --version
++group 2
++  all: node .gitnexus/run.cjs detect-changes --scope all --repo . (timeout 120 s, needs probe, headline)
+   staged: not selected (when scope=staged)
+   unstaged: not selected (when scope=unstaged)
+   compare: not selected (when scope=compare)
+@@ -2588,8 +2593,10 @@ tree {TREE} · HEAD {HEAD}
+ params: scope=staged base=main
+ <run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+ group 1
++  probe: node .gitnexus/run.cjs --version
++group 2
+   all: not selected (when scope=all)
+-  staged: node .gitnexus/run.cjs detect-changes --scope staged --repo . (timeout 120 s, headline)
++  staged: node .gitnexus/run.cjs detect-changes --scope staged --repo . (timeout 120 s, needs probe, headline)
+   unstaged: not selected (when scope=unstaged)
+   compare: not selected (when scope=compare)
+ """),
+@@ -2599,9 +2606,11 @@ tree {TREE} · HEAD {HEAD}
+ params: scope=unstaged
+ <run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+ group 1
++  probe: node .gitnexus/run.cjs --version
++group 2
+   all: not selected (when scope=all)
+   staged: not selected (when scope=staged)
+-  unstaged: node .gitnexus/run.cjs detect-changes --scope unstaged --repo . (timeout 120 s, headline)
++  unstaged: node .gitnexus/run.cjs detect-changes --scope unstaged --repo . (timeout 120 s, needs probe, headline)
+   compare: not selected (when scope=compare)
+ """),
+     "changes-compare": ("changes", ["scope=compare", "base=origin/main"], """\
+@@ -2610,10 +2619,12 @@ tree {TREE} · HEAD {HEAD}
+ params: scope=compare base=origin/main
+ <run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+ group 1
++  probe: node .gitnexus/run.cjs --version
++group 2
+   all: not selected (when scope=all)
+   staged: not selected (when scope=staged)
+   unstaged: not selected (when scope=unstaged)
+-  compare: node .gitnexus/run.cjs detect-changes --scope compare --base-ref origin/main --repo . (timeout 120 s, headline)
++  compare: node .gitnexus/run.cjs detect-changes --scope compare --base-ref origin/main --repo . (timeout 120 s, needs probe, headline)
+ """),
+     "why": ("why", ["file=scripts/why.sh"], """\
+ explain why — a file's or a function's chronology: its commits, the last change's full message, the docs that name it
+@@ -2657,7 +2668,7 @@ tree {TREE} · HEAD {HEAD}
+ params: diff=0de29b2
+ <run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+ group 1
+-  sites: python3 scripts/jev_echo.py --diff 0de29b2 --order lexical --no-jev-log (timeout 120 s)
++  sites: python3 scripts/jev_echo.py --diff 0de29b2 --order lexical --no-jev-log --json (timeout 120 s)
+ """),
+     "fix-echo-patch": ("fix-echo", ["diff=tasks/briefs/labeling/LS-B12.patch"], """\
+ explain fix-echo — after a fix: other sites like the lines it removed, from jev_echo.py (rg and graft) in the plain lexical order
+@@ -2665,7 +2676,7 @@ tree {TREE} · HEAD {HEAD}
+ params: diff=tasks/briefs/labeling/LS-B12.patch
+ <run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+ group 1
+-  sites: python3 scripts/jev_echo.py --diff tasks/briefs/labeling/LS-B12.patch --order lexical --no-jev-log (timeout 120 s)
++  sites: python3 scripts/jev_echo.py --diff tasks/briefs/labeling/LS-B12.patch --order lexical --no-jev-log --json (timeout 120 s)
+ """),
+ }
+ 
+@@ -2748,25 +2759,88 @@ def test_cbm_reads_unmapped_when_its_binary_is_missing_and_runs_the_home_copy_fi
+ 
+ 
+ @pytest.mark.skipif(cbm_binary() is None, reason="codebase-memory-mcp is not installed (CI has none): the oracle for "
+-                    "cbm's unmapped_if is the binary's own message table")
+-def test_cbms_unmapped_if_is_a_message_the_installed_binary_holds():
+-    """The oracle for cbm's unmapped_if is the binary itself: measured 2026-09-30 (0.10.8), a project with no index
+-    exits 1 with {"error":"project not found or not indexed",...} on stderr, and the text is in the binary's message
+-    table. Mutant: the text changed to one the binary never prints (the step would read FAILED, never unmapped)."""
+-    with open(cbm_binary(), "rb") as fh, mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+-        assert mm.find(UNMAPPED_385["cbm.search"][0].encode()) >= 0
++                    "cbm's unmapped_if is the binary's own not-indexed error")
++def test_cbms_unmapped_if_is_the_binarys_own_not_indexed_error(tmp_path):
++    """The oracle for cbm's unmapped_if is the binary itself, run as the step runs it: a project with no index exits 1
++    with {"error":"project not found or not indexed",...} on stderr (measured 2026-09-30, 0.10.8). The JSON is built
++    at run time (the binary's strings hold the bare text and a `{"error":"project not found"}`, not this line), so
++    the oracle is a run, not the message table: a private HOME and cache, and a project name no store holds (a search
++    writes nothing to any store). Mutant: a marker the binary never prints, such as `"error": "` with a space (the
++    step would read FAILED)."""
++    home = tmp_path / "home"
++    cache = home / ".cache" / "codebase-memory-mcp"
++    cache.mkdir(parents=True)
++    env = {**os.environ, "HOME": str(home), "CBM_CACHE_DIR": str(cache), "XDG_CACHE_HOME": str(home / ".cache")}
++    r = subprocess.run([cbm_binary(), "cli", "search_graph", "--project", "ls-b12-r1-no-such-project", "--query",
++                        "stack runner"], cwd=str(tmp_path), env=env, capture_output=True, text=True, timeout=120)
++    assert r.returncode == 1 and UNMAPPED_385["cbm.search"][0] in r.stderr, r.stdout + r.stderr
++    assert '{"error":"project not found or not indexed",' in r.stderr and r.stdout == ""
++
++
++# LS-B12-R1 item 3: codebase-memory prints a Route node's string literal verbatim, spaces and all. Measured 2026-09-30
++# (0.10.8) on a tiny tree under a private HOME: `@app.route("/project not found or not indexed")` and a
++# requests.get() URL holding the same words; the search's stdout, whole. A heading becomes a Section with its spaces
++# turned to dashes; a name or path that holds a space is quoted, its quotes escaped (a path holding
++# `{"error":"project not found or not indexed"}` printed as `"{\"error\":\"project ...`).
++CBM_ROUTES = """total: 2
++search_mode: bm25
++results: 2  (cols: qn label file lines rank)
++  "__route__ANY__/project not found or not indexed" Route - - -15.47
++  "__route__GET__http://example.com/project not found or not indexed" Route - - -14.59
++has_more: false
++"""
++
++
++def test_cbm_reads_ok_when_a_result_quotes_the_not_indexed_text(tmp_path):
++    """Item 3: a search whose rows quote the not-indexed text (the capture above, replayed by a tiny program at
++    $HOME/.local/bin, the [tools] entry's first candidate) is an answer: ok, exit 0, the rows in the print. RED at
++    the PIN (74285a5): its unmapped_if was the bare `project not found or not indexed`, which the rows hold: unmapped,
++    exit 1. The not-indexed error is JSON on stderr and starts `{"error":"`, which the table cannot hold (a quote in a
++    row is escaped). Mutant: the old unmapped_if."""
++    home = tmp_path / "home"
++    fake = home / ".local" / "bin" / "codebase-memory-mcp"
++    fake.parent.mkdir(parents=True)
++    fake.write_text("#!%s\nimport sys\nsys.stdout.write(%r)\n" % (PY, CBM_ROUTES))
++    fake.chmod(0o755)
++    env = {"HOME": str(home), "PATH": str(bin_dir(tmp_path / "bin", git=shutil.which("git")))}
++    r = run_env(tmp_path, ROOT, env, "cbm", "q=project not found")
++    assert r.returncode == 0, r.stdout + r.stderr
++    assert "\n## search · ok · rc 0 · " in r.stdout and CBM_ROUTES.splitlines()[3] + "\n" in r.stdout, r.stdout
++
++
++CBM_NOT_INDEXED = (   # the binary's stderr for a project with no index (0.10.8, measured 2026-09-30), its last 2 lines
++    "hint: this command started a temporary CBM daemon. `codebase-memory-mcp daemon start` keeps one warm and removes "
++    "this startup cost from every CLI command.\n"
++    '{"error":"project not found or not indexed","hint":"Use list_projects to see all indexed projects, then pass it as '
++    'the \\"project\\" argument.","available_projects":["home-user-i59-landing"],"count":1}\n')
++
++
++def test_cbm_reads_unmapped_on_the_not_indexed_error(tmp_path):
++    """The control of the test above: the binary's own not-indexed error (replayed: stderr, exit 1) reads unmapped
++    through the step's unmapped_if, the run exit 1. Mutants: an unmapped_if the binary never prints (the step reads
++    FAILED); the unmapped_if deleted."""
++    home = tmp_path / "home"
++    fake = home / ".local" / "bin" / "codebase-memory-mcp"
++    fake.parent.mkdir(parents=True)
++    fake.write_text("#!%s\nimport sys\nsys.stderr.write(%r)\nsys.exit(1)\n" % (PY, CBM_NOT_INDEXED))
++    fake.chmod(0o755)
++    env = {"HOME": str(home), "PATH": str(bin_dir(tmp_path / "bin", git=shutil.which("git")))}
++    r = run_env(tmp_path, ROOT, env, "cbm", "q=stack runner")
++    assert r.returncode == 1, r.stdout + r.stderr
++    assert "\n## search · unmapped — codebase-memory unavailable\n" in r.stdout, r.stdout
+ 
+ 
+ @NEEDS_NODE
+ def test_changes_reads_unmapped_in_a_tree_without_the_gitnexus_runner(tmp_path):
+-    """A tree `gitnexus analyze` never ran in has no .gitnexus/run.cjs: each scope's step reads unmapped by the
+-    runner's script check, and the run exits 1 (runs anywhere node is, CI included). Mutant: an unmapped step counted
+-    as ok (exit 0)."""
++    """A tree `gitnexus analyze` never ran in has no .gitnexus/run.cjs: the probe reads unmapped by the runner's script
++    check, each scope's step is skipped, and the run exits 1 (runs anywhere node is, CI included). Mutant: an
++    unmapped step counted as ok (exit 0)."""
+     tree = make_tree(tmp_path / "t")
+     for scope in ("all", "staged", "unstaged", "compare"):
+         r = run_env(tmp_path, tree, {"GIT_CEILING_DIRECTORIES": str(tmp_path)}, "changes", "scope=" + scope)
+         assert r.returncode == 1, r.stdout + r.stderr
+-        assert "\n## %s · unmapped — .gitnexus/run.cjs unavailable\n" % scope in r.stdout, r.stdout
++        assert "\n## probe · unmapped — .gitnexus/run.cjs unavailable\n" in r.stdout, r.stdout
++        assert "\n## %s · SKIPPED — its prerequisite step probe was unmapped\n" % scope in r.stdout, r.stdout
+ 
+ 
+ def runner_tree(tmp_path, *programs):
+@@ -2785,43 +2859,86 @@ NEEDS_RUNNER = pytest.mark.skipif(shutil.which("node") is None or gitnexus_runne
+ @NEEDS_RUNNER
+ def test_changes_reads_unmapped_when_the_gitnexus_runner_cannot_launch(tmp_path):
+     """The real runner (.gitnexus/run.cjs) with PATH holding node and git alone: it finds no gitnexus, pnpm, bunx or
+-    npx and prints `gitnexus runner: could not launch ...` (exit 1), which each scope's step reads as unmapped.
+-    Mutant: unmapped_if deleted from any one scope's step (that scope reads FAILED)."""
++    npx and prints `gitnexus runner: could not launch ...` (exit 1), which the probe (`--version`) reads as unmapped;
++    each scope's step is skipped. Mutant: unmapped_if deleted from the probe (it reads FAILED)."""
+     tree, env = runner_tree(tmp_path)
+     for scope in ("all", "staged", "unstaged", "compare"):
+         r = run_env(tmp_path, tree, env, "changes", "scope=" + scope)
+         assert r.returncode == 1, r.stdout + r.stderr
+-        assert "\n## %s · unmapped — gitnexus unavailable\n" % scope in r.stdout, r.stdout
++        assert "\n## probe · unmapped — gitnexus unavailable\n" in r.stdout, r.stdout
+         assert "gitnexus runner: could not launch `npx`" in r.stdout
++        assert "\n## %s · SKIPPED — its prerequisite step probe was unmapped\n" % scope in r.stdout, r.stdout
+ 
+ 
+ @NEEDS_RUNNER
+ @pytest.mark.skipif(shutil.which("gitnexus") is None, reason="gitnexus is not installed: the control needs it to run")
+ def test_changes_reads_failed_when_gitnexus_itself_fails(tmp_path):
+-    """The control of the test above: with gitnexus on PATH too, the runner launches it, and it fails on its own (this
+-    tree has no index: `Repository "." not found`, exit 1). That reads FAILED, not unmapped: the unmapped_if text
+-    matches the runner's launch failure only. Mutant: an unmapped_if broad enough to take gitnexus's own error."""
++    """The control of the test above: with gitnexus on PATH too, the runner launches it; the probe is ok, and
++    detect-changes fails on its own (this tree has no index: `Repository "." not found`, exit 1). That reads FAILED,
++    not unmapped. Mutant: an unmapped_if on the scope step broad enough to take gitnexus's own error."""
+     tree, env = runner_tree(tmp_path, "gitnexus")
+     r = run_env(tmp_path, tree, env, "changes")
+     assert r.returncode == 1, r.stdout + r.stderr
++    assert "\n## probe · ok · rc 0 · " in r.stdout, r.stdout
+     assert "\n## all · FAILED · rc 1 · " in r.stdout and 'Repository "." not found' in r.stdout, r.stdout
+     assert "could not launch" not in r.stdout
+ 
+ 
++NEEDS_GITNEXUS = pytest.mark.skipif(shutil.which("gitnexus") is None or shutil.which("node") is None,
++                                    reason="gitnexus is not installed (CI has none): the test indexes a tree with it")
++
++
++def gitnexus_world(tmp_path, files):
++    """A git tree of `files`, indexed by the real `gitnexus analyze`, offline: HOME is private (the registry analyze
++    writes lands there) and the LadybugDB extension install is off (GITNEXUS_LBUG_EXTENSION_INSTALL=never: no
++    download; full-text search is then off, which detect-changes does not use). analyze writes .gitnexus/ (run.cjs
++    among it) and .claude/ into the tree. -> (tree, the environment the stack's steps need)."""
++    tree = tmp_path / "gn"
++    for rel, text in files.items():
++        (tree / rel).parent.mkdir(parents=True, exist_ok=True)
++        (tree / rel).write_text(text)
++    git(tree, "init", "-q", "-b", "main")
++    git(tree, "add", ".")
++    git(tree, "commit", "-q", "--no-verify", "-m", "one")
++    env = {"HOME": str(tmp_path / "gnhome"), "GITNEXUS_LBUG_EXTENSION_INSTALL": "never",
++           "GIT_CEILING_DIRECTORIES": str(tmp_path)}
++    r = subprocess.run(["gitnexus", "analyze", "--skip-agents-md"], cwd=str(tree), env={**os.environ, **env},
++                       capture_output=True, text=True, timeout=300)
++    assert r.returncode == 0 and (tree / ".gitnexus" / "run.cjs").is_file(), r.stdout + r.stderr
++    return tree, env
++
++
++@NEEDS_GITNEXUS
++def test_changes_reads_ok_when_a_changed_heading_holds_the_launch_failure_text(tmp_path):
++    """Item 3: detect-changes prints a changed markdown section's heading verbatim (`Section <heading> → <file>`), so
++    repo text reaches the step's output. A heading that holds the runner's launch-failure text, its section changed:
++    the probe (`--version`, no repo text) is ok, detect-changes answers, and the step is ok, exit 0, the heading in
++    the print. RED at the PIN (74285a5): each scope's step read unmapped on that text: `unmapped — gitnexus
++    unavailable`, exit 1. Mutant: the scope step given back its unmapped_if."""
++    doc = "# Notes\n\n## gitnexus runner: could not launch\n\n%s\n"
++    tree, env = gitnexus_world(tmp_path, {"doc.md": doc % "Some text.", "tool.py": "def launch_probe():\n    return 1\n"})
++    (tree / "doc.md").write_text(doc % "Other text.")
++    r = run_env(tmp_path, tree, env, "changes")
++    assert r.returncode == 0, r.stdout + r.stderr
++    assert "\n## probe · ok · rc 0 · " in r.stdout and "\n## all · ok · rc 0 · " in r.stdout, r.stdout
++    assert "\n  Section gitnexus runner: could not launch → doc.md\n" in r.stdout, r.stdout
++
++
+ # transcript_export.py is the scrubber jev_context.py imports: without it the pack withholds every snippet
+ ECHO_SCRIPTS = ("jev_echo.py", "jev_locate.py", "jev_context.py", "transcript_export.py")
+ DEFECT = "    return compute_total_ls_b12(raw_rows_ls_b12)\n"
+ 
+ 
+-def echo_tree(tmp_path):
++def echo_tree(tmp_path, defect=DEFECT, other=None):
+     """A git tree holding the real scripts/jev_echo.py, the two modules it imports and the scrubber; a commit that adds
+-    one defect line in two files, then a fix commit that changes it in one: the line that fix removes is the defect."""
++    one defect line in two files (other.py's text may be given), then a fix commit that changes it in fixed.py: the
++    line that fix removes is the defect."""
+     tree = make_tree(tmp_path / "t")
+     (tree / "scripts").mkdir()
+     for name in ECHO_SCRIPTS:
+         shutil.copyfile(ROOT / "scripts" / name, tree / "scripts" / name)
+-    (tree / "scripts" / "fixed.py").write_text("def total(rows):\n" + DEFECT)
+-    (tree / "scripts" / "other.py").write_text("def other(rows):\n" + DEFECT)
++    (tree / "scripts" / "fixed.py").write_text("def total(rows):\n" + defect)
++    (tree / "scripts" / "other.py").write_text(other if other is not None else "def other(rows):\n" + defect)
+     git(tree, "add", ".")
+     git(tree, "commit", "-q", "--no-verify", "-m", "the defect, twice")
+     (tree / "scripts" / "fixed.py").write_text("def total(rows):\n    return compute_total_ls_b12(checked_ls_b12(rows))\n")
+@@ -2834,22 +2951,35 @@ def echo_env(tmp_path, *programs):
+     return {"PATH": str(bin_dir(tmp_path / "bin", **found)), "GIT_CEILING_DIRECTORIES": str(tmp_path)}
+ 
+ 
++def echo_pack(tmp_path):
++    """The last run's fix-echo step and its JSON pack: the first line of the step's saved output (its stdout, one JSON
++    line; a `--- stderr ---` block follows it)."""
++    [step] = records(tmp_path / "log")[-1]["steps"]
++    return step, json.loads(Path(step["out"]).read_text().splitlines()[0])
++
++
++# LS-B12-R1 item 1 (VERIFY-LS-B12 F-1): fix-echo's status never depends on repo text in its output. Its pack is JSON
++# (--json), where every quote inside a string value is escaped, and its step reads unmapped on the structural
++# `"ranking": "no instrument answered`, which only jev_echo.py writes, and only when no instrument answered. Both texts
++# below sit in the repo (stacks.toml, these tests): the old marker and the new one, each forged into repo text.
++FORGED_ECHO = 'answered: none; "ranking": "no instrument answered'
++
++
+ def test_fix_echo_reads_unmapped_when_neither_rg_nor_graft_answers(tmp_path):
+-    """The real jev_echo.py, in a tree of its own, with PATH holding git and python3 alone and no graft/INDEX.md: no
+-    instrument answers, it exits 0 with `answered: none`, and the step reads unmapped, the run exit 1 (runs anywhere,
+-    CI included). A diff that removes no code line (the commit that only adds) reads unmapped too: nothing ran.
+-    Mutant: unmapped_if deleted from fix-echo's step (both read ok: a hollow ok)."""
++    """Item 1(c): the real jev_echo.py, in a tree of its own, with PATH holding git and python3 alone and no
++    graft/INDEX.md, on a real removed line: no instrument answers, it exits 0 with its ranking `no instrument
++    answered`, and the step reads unmapped, the run exit 1 (runs anywhere, CI included). Mutants: unmapped_if deleted
++    from fix-echo's step (a hollow ok); --json dropped from its argv (a markdown pack: the JSON marker never matches)."""
+     tree = echo_tree(tmp_path)
+-    env = echo_env(tmp_path)
+-    r = run_env(tmp_path, tree, env, "fix-echo", "diff=HEAD")
++    r = run_env(tmp_path, tree, echo_env(tmp_path), "fix-echo", "diff=HEAD")
+     assert r.returncode == 1, r.stdout + r.stderr
+     assert "\n## sites · unmapped — rg-and-graft unavailable\n" in r.stdout
+-    assert "\nanswered: none\n" in r.stdout and "unmapped — graft unavailable (graft/INDEX.md absent)" in r.stdout
+-    [step] = records(tmp_path / "log")[-1]["steps"]
++    step, pack = echo_pack(tmp_path)
+     assert (step["status"], step["rc"]) == ("unmapped", 0)
+-    r = run_env(tmp_path, tree, env, "fix-echo", "diff=HEAD~1")
+-    assert r.returncode == 1 and "\n## sites · unmapped — rg-and-graft unavailable\n" in r.stdout, r.stdout
+-    assert "nothing to echo: the diff removes no code line" in r.stdout
++    assert pack["answered"] == [] and pack["top"] == [] and pack["head"]["defect (removed)"] == DEFECT.strip()
++    assert pack["ranking"] == ("no instrument answered: each one is unmapped or had nothing to search (see the notes), "
++                               "so no site is listed (Jev not asked)")
++    assert "unmapped — graft unavailable (graft/INDEX.md absent)" in pack["notes"], pack["notes"]
+ 
+ 
+ @NEEDS_RG
+@@ -2860,12 +2990,72 @@ def test_fix_echo_lists_the_other_site_when_rg_answers(tmp_path):
+     tree = echo_tree(tmp_path)
+     r = run_env(tmp_path, tree, echo_env(tmp_path, "rg"), "fix-echo", "diff=HEAD")
+     assert r.returncode == 0, r.stdout + r.stderr
+-    assert "\n## sites · ok · rc 0 · " in r.stdout and "\nanswered: rg-token\n" in r.stdout, r.stdout
+-    assert "\ndefect (removed): %s\n" % DEFECT.strip() in r.stdout, r.stdout
+-    items = [ln for ln in r.stdout.splitlines() if re.match(r"[0-9]+\. ", ln)]
+-    assert any(" scripts/other.py:2 — " in ln and ln.endswith(DEFECT.strip()) for ln in items), items
+-    assert not any("scripts/fixed.py" in ln for ln in items), items
+-    assert "\nfixed site: scripts/fixed.py:1-2\n" in r.stdout
++    assert "\n## sites · ok · rc 0 · " in r.stdout, r.stdout
++    step, pack = echo_pack(tmp_path)
++    assert pack["answered"] == ["rg-token"] and pack["head"]["defect (removed)"] == DEFECT.strip()
++    assert [(t["path"], t["line"]) for t in pack["top"]] == [("scripts/other.py", 2)], pack["top"]
++    assert pack["top"][0]["snippet"].endswith(DEFECT.strip()), pack["top"][0]
++    assert pack["extra"] == ["fixed site: scripts/fixed.py:1-2"]
++
++
++@NEEDS_RG
++def test_fix_echo_reads_ok_when_the_removed_line_holds_an_unmapped_text(tmp_path):
++    """Item 1(a): a fix whose removed line holds both markers (the old `answered: none` and the new structural one) as
++    repo text: rg answers, so the step is ok, exit 0, and the pack shows the line whole. RED at the PIN (74285a5): its
++    markdown pack printed the removed line, which held `answered: none`: unmapped, exit 1. Mutants: --json dropped
++    from the argv (a markdown pack: never unmapped, so the test of (c) above fails instead); the old unmapped_if."""
++    defect = "    return compute_total_ls_b12(raw_rows_ls_b12) # %s\n" % FORGED_ECHO     # one space: clean() keeps it
++    tree = echo_tree(tmp_path, defect=defect)
++    r = run_env(tmp_path, tree, echo_env(tmp_path, "rg"), "fix-echo", "diff=HEAD")
++    assert r.returncode == 0, r.stdout + r.stderr
++    assert "\n## sites · ok · rc 0 · " in r.stdout, r.stdout
++    step, pack = echo_pack(tmp_path)
++    assert pack["answered"] == ["rg-token"] and pack["head"]["defect (removed)"] == defect.strip()
++    # the line's string literals ("ranking" among them) are tokens too, and the tree's copies of the Jev scripts hold
++    # them: other sites join scripts/other.py:2, the one that holds the whole line
++    assert ("scripts/other.py", 2) in [(t["path"], t["line"]) for t in pack["top"]], pack["top"]
++
++
++@NEEDS_RG
++def test_fix_echo_reads_ok_when_a_sites_snippet_holds_an_unmapped_text(tmp_path):
++    """Item 1(b): the other site's context (3 lines each side) holds both markers as repo text; the removed line is
++    plain. rg answers, the step is ok, exit 0, and the snippet shows them. RED at the PIN: the snippet printed
++    `answered: none`: unmapped, exit 1. Mutant: the old unmapped_if."""
++    other = "def other(rows):\n" + DEFECT + "    # %s\n" % FORGED_ECHO
++    tree = echo_tree(tmp_path, other=other)
++    r = run_env(tmp_path, tree, echo_env(tmp_path, "rg"), "fix-echo", "diff=HEAD")
++    assert r.returncode == 0, r.stdout + r.stderr
++    assert "\n## sites · ok · rc 0 · " in r.stdout, r.stdout
++    step, pack = echo_pack(tmp_path)
++    assert [(t["path"], t["line"]) for t in pack["top"]] == [("scripts/other.py", 2)], pack["top"]
++    assert pack["top"][0]["snippet"].endswith("# " + FORGED_ECHO), pack["top"][0]
++    assert FORGED_ECHO.replace('"', '\\"') in r.stdout         # in the print, escaped as JSON escapes it
++
++
++F8_CASES = {   # item 2 (VERIFY-LS-B12 F-8): the diff given, and the reason the pack's ranking gives
++    "notes.md": "the input holds no unified diff (no file header)",          # a file that is not a diff
++    "HEAD:scripts/fixed.py": "the input holds no unified diff (no file header)",   # a blob: git show prints the file
++    "link.md": "the input holds no unified diff (no file header)",           # an in-tree symlink to notes.md
++    "HEAD~1": "the diff removes no code line",                               # the commit that only adds lines
++}
++
++
++@pytest.mark.parametrize("diff", sorted(F8_CASES))
++def test_fix_echo_with_nothing_to_echo_reads_ok_and_says_why(tmp_path, diff):
++    """Item 2: a diff with nothing to echo is an answer, not an outage: no instrument is asked, the step is ok, exit
++    0, and the pack's ranking (in the print) says nothing was echoed and why. RED at the PIN: each read unmapped (its
++    markdown pack said `answered: none`), and the three that hold no diff said `the diff removes no code line`.
++    Mutants: the nothing-to-echo case given the no-answer ranking (unmapped); the reason reverted to one text."""
++    tree = echo_tree(tmp_path)
++    (tree / "notes.md").write_text("A note, not a diff.\n")
++    (tree / "link.md").symlink_to("notes.md")
++    r = run_env(tmp_path, tree, echo_env(tmp_path), "fix-echo", "diff=" + diff)
++    assert r.returncode == 0, r.stdout + r.stderr
++    assert "\n## sites · ok · rc 0 · " in r.stdout, r.stdout
++    step, pack = echo_pack(tmp_path)
++    assert pack["ranking"] == "nothing to echo: %s, so it names no anti-pattern (Jev not asked)" % F8_CASES[diff]
++    assert (pack["answered"], pack["top"], pack["notes"]) == ([], [], [])
++    assert "nothing to echo: " + F8_CASES[diff] in r.stdout
+ 
+ 
+ def why_chronology(text):

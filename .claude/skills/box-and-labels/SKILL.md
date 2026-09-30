@@ -43,11 +43,13 @@ skill holds the details.
 | `fix-echo` | `scripts/jev_echo.py` (plain order): the sites that look like the lines a fix removed (rg and graft) | `diff` (a commit or a patch file) | none | yes |
 
 Task #385 (LS-B12) added the last five. `locate` and `fix-echo` run the Jev tools in their plain order (`--order
-lexical --no-jev-log`: no stack calls a model, KC-J1, D-077). `changes` runs one step per scope, so `base` reaches
-`compare` only; a `PARTIAL RESULT` (its exit is 1) or `LISTING CAPPED` line in its header is not a clean check, and
+lexical --no-jev-log`: no stack calls a model, KC-J1, D-077). `changes` runs a probe (the runner's `--version`,
+unmapped where GitNexus cannot launch), then one step per scope, so `base` reaches `compare` only; a
+`PARTIAL RESULT` (its exit is 1) or `LISTING CAPPED` line in its header is not a clean check, and
 `No changes detected.` covers only the symbols the index holds. `cbm`'s CLI starts a temporary codebase-memory daemon
 in its own session, which outlives the step by about half a second (about 12 s after a timeout), out of the runner's
-reach. `fix-echo` reads unmapped when no instrument answered, a diff that removes no code line included.
+reach. `fix-echo` prints its pack as JSON and reads unmapped only when no instrument answered (rg and graft
+missing); a diff with nothing to echo reads ok, and its ranking says why.
 
 ## The box (LS-B11; the full grammar is the THE BOX section of `scripts/ls_req.py`'s docstring)
 

@@ -541,7 +541,10 @@ ok_rc = [0, 75]
 # {"error":"project not found or not indexed",...} on stderr where the project has no index (a fresh HOME, or a clone
 # at another path, whose slug differs), which reads unmapped. The CLI starts a temporary daemon in its own session: it
 # outlived the CLI by 0.44 to 0.48 s, and by 11.6 to 13.4 s when the CLI's process group was killed (a step's timeout),
-# out of the runner's reach (it kills the step's own group).
+# out of the runner's reach (it kills the step's own group). LS-B12-R1: a row can quote repo text, a Route node's
+# string literal verbatim with its spaces (measured on a tiny tree: `@app.route("/project not found or not indexed")`),
+# so the bare message read unmapped on an answer. The step reads unmapped on the JSON error's opening instead: a row
+# cannot hold `{"error":"`, since a name or path with a space is printed quoted, its quotes escaped (measured).
 [stacks.cbm]
 summary = "codebase-memory's graph search (project home-user-agent-factory): ranked symbols with their file and lines"
 replaces = "a hand codebase-memory-mcp cli search_graph call"
@@ -559,7 +562,7 @@ argv = ["codebase-memory-mcp", "cli", "search_graph", "--project", "home-user-ag
 group = 1
 timeout = 120
 cap_lines = 60
-unmapped_if = "project not found or not indexed"
+unmapped_if = '{"error":"project not found'
 tool = "codebase-memory"
 
 # ---------------------------------------------------------------------------------------------------------------- changes
@@ -569,8 +572,11 @@ tool = "codebase-memory"
 # listing capped, the CLI's FIRST line says so (`PARTIAL RESULT: ...`, `LISTING CAPPED: ...`), and it exits 1 on
 # partial, 0 on capped (output() in its dist/cli/tool.js): headline puts that first line in the print's header, where
 # the print cap never cuts it. compare without base: rc 1 `Error: base_ref is required for "compare" scope`. No runner
-# (no global gitnexus, npx, pnpm or bunx): rc 1 `gitnexus runner: could not launch ...`, which reads unmapped; a tree
-# with no .gitnexus/run.cjs reads unmapped too (the runner's script check).
+# (no global gitnexus, npx, pnpm or bunx): rc 1 `gitnexus runner: could not launch ...`; a tree with no
+# .gitnexus/run.cjs reads unmapped (the runner's script check). LS-B12-R1: detect-changes prints a changed markdown
+# section's heading verbatim (`Section <heading> → <file>`), so a scope step that read unmapped on the runner's text
+# read unmapped on a heading that holds it. The probe asks the same runner for gitnexus's version, which holds no repo
+# text, and reads unmapped on that text; each scope's step needs it and reads its own output for no marker.
 [stacks.changes]
 summary = "GitNexus detect-changes: the changed symbols and the flows they touch, for all, staged or unstaged changes or since a base"
 replaces = "the hand detect-changes call before a commit: node .gitnexus/run.cjs detect-changes --scope all --repo ."
@@ -589,43 +595,48 @@ default = "all"
 type = "text"
 
 [[stacks.changes.steps]]
-id = "all"
-argv = ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "all", "--repo", "."]
+id = "probe"
+argv = ["node", ".gitnexus/run.cjs", "--version"]
 group = 1
-timeout = 120
-headline = true
+timeout = 60
+cap_lines = 5
 unmapped_if = "gitnexus runner: could not launch"
 tool = "gitnexus"
+
+[[stacks.changes.steps]]
+id = "all"
+argv = ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "all", "--repo", "."]
+group = 2
+needs = ["probe"]
+timeout = 120
+headline = true
 when = { scope = "all" }
 
 [[stacks.changes.steps]]
 id = "staged"
 argv = ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "staged", "--repo", "."]
-group = 1
+group = 2
+needs = ["probe"]
 timeout = 120
 headline = true
-unmapped_if = "gitnexus runner: could not launch"
-tool = "gitnexus"
 when = { scope = "staged" }
 
 [[stacks.changes.steps]]
 id = "unstaged"
 argv = ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "unstaged", "--repo", "."]
-group = 1
+group = 2
+needs = ["probe"]
 timeout = 120
 headline = true
-unmapped_if = "gitnexus runner: could not launch"
-tool = "gitnexus"
 when = { scope = "unstaged" }
 
 [[stacks.changes.steps]]
 id = "compare"
 argv = ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "compare", "{base?:--base-ref}", "--repo", "."]
-group = 1
+group = 2
+needs = ["probe"]
 timeout = 120
 headline = true
-unmapped_if = "gitnexus runner: could not launch"
-tool = "gitnexus"
 when = { scope = "compare" }
 
 # -------------------------------------------------------------------------------------------------------------------- why
@@ -697,15 +708,17 @@ timeout = 120
 # task #385: scripts/jev_echo.py in its plain order, after a fix: the lines the diff's code hunks remove are the
 # defect, and rg (their tokens and shapes) and graft find other sites that look like them, the fixed site excluded.
 # --order lexical and --no-jev-log as for locate (KC-J1; D-077). Measured 2026-09-30: rc 0 and a pack of about 20
-# lines; a diff that is neither a readable patch file nor a commit git can show exits 64. With rg and graft both
-# unavailable it exits 0 with `answered: none` and no site, so that line reads unmapped; so does a diff that removes no
-# code line (`nothing to echo`), where no instrument runs.
+# lines; a diff that is neither a readable patch file nor a commit git can show exits 64. LS-B12-R1: the pack shows the
+# removed lines and the sites' code, so a text in the print is repo text; --json makes it one JSON line, where every
+# quote inside a string is escaped, and the step reads unmapped on the structural `"ranking": "no instrument answered`,
+# which jev_echo.py writes only when the diff removes code lines and no instrument answered (rg and graft missing). A
+# diff with nothing to echo (no removed code line, or no diff at all) is an answer: ok, its ranking says why.
 [stacks.fix-echo]
 summary = "after a fix: other sites like the lines it removed, from jev_echo.py (rg and graft) in the plain lexical order"
 replaces = "the bug-echo lookup of a fix's removed lines by hand: rg for their tokens and shapes, graft ask"
 outward = false
 rated = true
-notes = ["`fix-echo` reads unmapped when no instrument answered: rg and graft missing, or a diff that removes no code line."]
+notes = ["`fix-echo` prints JSON; it reads unmapped when no instrument answered (rg and graft missing); a diff with nothing to echo reads ok, its ranking says why."]
 
 # path, not text or word: a commit id (0de29b2, HEAD~1, origin/main) passes the path checks as a name inside the tree,
 # and a patch file must lie inside the tree and off the deny list (text would let a patch path name any file on the
@@ -716,8 +729,8 @@ required = true
 
 [[stacks.fix-echo.steps]]
 id = "sites"
-argv = ["python3", "scripts/jev_echo.py", "--diff", "{diff}", "--order", "lexical", "--no-jev-log"]
+argv = ["python3", "scripts/jev_echo.py", "--diff", "{diff}", "--order", "lexical", "--no-jev-log", "--json"]
 group = 1
 timeout = 120
-unmapped_if = "answered: none"
+unmapped_if = '"ranking": "no instrument answered'
 tool = "rg-and-graft"
