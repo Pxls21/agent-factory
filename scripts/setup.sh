@@ -450,6 +450,12 @@ if [ -d "$REPO_ROOT/sandbox-kit/output-styles" ]; then
     || warn "output-styles copy failed"
 fi
 
+# --- Jev relay (task #419, D-119, D-120) --------------------------------------
+# The output pruner posts to the relay on 127.0.0.1:47430 and prunes nothing without it; a container restart stops it
+# (AF-AP-252). The starter prints one status line and exits 0 on every status; the off switch is the file .jev/relay-off.
+say "Jev relay"
+bash "$REPO_ROOT/scripts/jev_relay_up.sh"
+
 # --- Tool smoke table (INSTALL1, D-090) ---------------------------------------
 # One line per tool the workflow names (the installation table: docs/research/findings/system1-context/
 # AUDIT-2026-09-25.md, section 7): the tool's first --version line (or a presence count) when it is found, and a warn()
