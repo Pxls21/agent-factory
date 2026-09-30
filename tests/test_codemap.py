@@ -4,8 +4,13 @@ Every pack here is built by the REAL instruments (graft, GitNexus, code-review-g
 throwaway repository: one fixture repo is indexed once per module under an isolated HOME (GitNexus keeps its registry
 there), and each test works on a copy of it (GitNexus registers the copy with `gitnexus index`; code-review-graph stores
 absolute paths, so the copy's graph is rebuilt). The shared indexes of this tree are never touched. The oracles are
-independent of the code under test: symbol spans from Python's own `ast`, blob ids from `git hash-object`, risk from
-GitNexus's per-symbol CLI, registry rows by the fixture's design, file sizes by `wc`.
+independent of the code under test: symbol spans from Python's own `ast`, blob ids from `git hash-object` and `git
+rev-parse HEAD:<path>`, risk from GitNexus's per-symbol CLI, registry rows by the fixture's design, file sizes by `wc`.
+
+K2 RE-SCOPE (task #353, contract revision 5, D-117): a pack describes the file's blob in the build's commit, never the
+working copy; its symbols are that blob's own ast (a Python file) or none, never a graph's (committed-symbols: graft
+indexes a canary it never shows; untracked-file: no blob, no pack); the graph sections stay in the pack and no reader
+shows them (no-graph-lines). Round 4's provenance checks went with the callers-and-tests surface.
 
 The post-commit tests run the real hook (scripts/hooks/post-commit, copied in) through `git commit` with the re-index
 slowed by shims that sleep inside the hook's own lock before running the real tool, and record when each re-index
@@ -22,7 +27,6 @@ import json
 import os
 import re
 import shutil
-import sqlite3
 import subprocess
 import sys
 import time
@@ -109,17 +113,19 @@ greet() {
 greet world
 '''
 WIDE = "字" * 40                # 3 bytes each in UTF-8: the entry passes the byte cap
+# the function's name ends in 140 of them: with no graph's lines in an entry (K2 RE-SCOPE), its head line and its three
+# registry rows pass the cap on their own (1,674 bytes uncapped, measured)
 LONG = ('''"""long: an entry longer than the byte cap."""
 import os
 
 
-def a_function_whose_name_is_long_enough_to_fill_the_head_line_of_its_entry(first_argument, second_argument):
+def a_function_whose_name_is_long_enough_to_fill_the_head_line_of_its_entry_%s(first_argument, second_argument):
     a = os.environ.get("%s_1")
     b = os.environ.get("%s_2")
     c = os.environ.get("%s_3")
     d = os.environ.get("%s_4")
     return a, b, c, d, first_argument, second_argument
-''' % (WIDE, WIDE, WIDE, WIDE))
+''' % ("字" * 140, WIDE, WIDE, WIDE, WIDE))
 FILES = {"scripts/alpha.py": ALPHA, "scripts/beta.py": BETA, "scripts/user.py": USER, "tests/test_alpha.py": TEST_ALPHA,
          "scripts/tool.sh": TOOL_SH, "scripts/long.py": LONG, "README.md": "# fixture\n"}
 # the tools the hook and the refresh run, never committed in the fixture (a commit must not carry them)
@@ -127,6 +133,7 @@ TOOLING = {"scripts/codemap.py": CODEMAP, "scripts/ap_screen.py": ROOT / "script
            ".claude/hooks/edit-snapshot.py": ROOT / ".claude" / "hooks" / "edit-snapshot.py",
            "scripts/hooks/post-commit": HOOK,
            ".claude/hooks/system1-context.py": SYSTEM1}              # codemap's readers open files with its opens
+SCREENS = ("scripts/ap_screen.py", ".claude/hooks/edit-snapshot.py")     # the registry screen: its code and its table
 EXCLUDE = "\n".join(list(TOOLING) + [".gitnexus/", "graft/", ".code-review-graph/", ".claude/skills/", ".jev/",
                                      ".gitignore", ".ignore", "AGENTS.md", "CLAUDE.md"]) + "\n"
 
@@ -260,10 +267,14 @@ def check_pack_fields(repo, base):
     assert p["sha256"] == hashlib.sha256(data).hexdigest() and p["bytes"] == len(data)
     assert p["lines"] == int(_run(["wc", "-l", "scripts/alpha.py"], repo, _env(base["home"])).stdout.split()[0])
     assert p["commit"] == _git(repo, _env(base["home"]), "rev-parse", "HEAD").strip()
+    assert p["blob"] == _git(repo, _env(base["home"]), "rev-parse", "HEAD:scripts/alpha.py").strip() and \
+        p["symbols_from"] == "ast" and "provenance" not in p, "not the committed blob's pack"
     ins = p["instruments"]
     assert {k: (ins[k]["status"], ins[k].get("graph")) for k in ins} == {
         "graft": ("ok", "fresh"), "gitnexus": ("ok", "fresh"), "code-review-graph": ("ok", "fresh"),
         "ap_screen": ("ok", None)}, "an instrument section is not ok and fresh"
+    assert ins["ap_screen"]["screens"] == {r: _run(["git", "hash-object", r], repo, _env(base["home"])).stdout.strip()
+                                           for r in SCREENS}, "the screens are not the screen files' blob ids"
     got = [(s["qualname"], s["start"], s["end"], s.get("from", s["start"])) for s in p["symbols"]]
     assert got == ast_symbols(data.decode()), "the symbols and spans differ from the file's own AST"
     by = {s["qualname"]: s for s in p["symbols"]}
@@ -287,7 +298,6 @@ def check_lookup_positions(repo, base):
         return cm.lookup("scripts/alpha.py", line, end, root=repo)
     r = at(11)
     assert (r["status"], r["symbol"]["qualname"], r["stale"]) == ("hit", "helper", False), r
-    assert "risk LOW" in r["text"] and "use scripts/beta.py:4" in r["text"]
     r = at(21)
     assert (r["status"], r["symbol"]["qualname"]) == ("hit", "Box.get"), "a method line did not give the method"
     r = at(31)
@@ -302,8 +312,7 @@ def check_lookup_positions(repo, base):
     r = at(999)
     assert r["status"] == "past-end" and "past the end" in r["text"], "a line past the end: %s" % r["status"]
     r = at(33)
-    assert r["symbol"]["qualname"] == "main" and "risk UNKNOWN" in r["text"]
-    assert "unresolved, not zero" in r["text"], "UNKNOWN is not said as unresolved"
+    assert r["symbol"]["qualname"] == "main"
     r = at(18, 21)
     assert (r["status"], r["symbol"]["qualname"]) == ("hit", "Box"), "a range over two methods is their class"
 
@@ -344,9 +353,9 @@ def check_absent(repo, base):
     assert p["instruments"]["graft"]["status"] == "absent" and "not installed" in p["instruments"]["graft"]["note"], \
         "an absent graft is not named absent"
     assert p["instruments"]["gitnexus"]["status"] == "absent"
-    assert p["symbols_from"] == "code-review-graph" and all(s["gitnexus"] is None for s in p["symbols"]), out
-    text = load(repo).lookup("scripts/alpha.py", 11, root=repo)["text"]
-    assert "GitNexus absent" in text and "graft absent" in text
+    got = [(s["qualname"], s["start"], s["end"], s.get("from", s["start"])) for s in p["symbols"]]
+    assert p["symbols_from"] == "ast" and got == ast_symbols(ALPHA), out
+    assert all(s["gitnexus"] is None for s in p["symbols"]), out
 
 
 def check_identical(repo, base):
@@ -376,17 +385,20 @@ def check_edit_context(repo, base):
     payload.write_text(json.dumps({"tool_name": "Edit", "tool_input": {
         "file_path": str(repo / "scripts" / "alpha.py"), "old_string": old, "new_string": old + "  # x"}}))
     out = _run([sys.executable, "scripts/codemap.py", "demo", str(payload)], repo, _env(base["home"])).stdout
-    assert out.startswith("old_string at: L32-33\nenclosing: main\n") and "risk UNKNOWN" in out
+    assert out.startswith("old_string at: L32-33\nenclosing: main\n"), out
 
 
 def check_record_that_lies(repo, base):
     """GitNexus's own record claims the file's current bytes while its nodes are older (measured on this tree:
     proofs/S0-08/check_containment.py kept its 09-14 spans under the current sha256). Reproduced here: alpha.py gains
-    three lines, graft and code-review-graph re-index, GitNexus does not, and its fileHashes entry is set to the new
-    sha256. The pack must not call that graph fresh, and still joins its data by name, flagged."""
+    three lines in a commit (the pack describes the committed blob), graft and code-review-graph re-index, GitNexus
+    does not, and its fileHashes entry is set to the new sha256. The pack must not call that graph fresh, and still
+    joins its data by name, flagged."""
     env = _env(base["home"])
     f = repo / "scripts" / "alpha.py"
     f.write_text("# one\n# two\n# three\n" + ALPHA)
+    _git(repo, env, "add", "scripts/alpha.py")
+    _git(repo, env, "commit", "-q", "-m", "three lines")
     _index(repo, env, graphs=("graft", "code-review-graph"))
     meta = json.loads((repo / ".gitnexus" / "meta.json").read_text())
     meta["fileHashes"]["scripts/alpha.py"] = hashlib.sha256(f.read_bytes()).hexdigest()
@@ -399,14 +411,13 @@ def check_record_that_lies(repo, base):
     helper = {s["qualname"]: s for s in p["symbols"]}["helper"]
     assert helper["start"] == 12 and helper["gitnexus"]["matched_by"].startswith("name")
     assert helper["gitnexus"]["risk"] == "LOW"
-    assert "from a STALE GitNexus graph" in load(repo).lookup("scripts/alpha.py", 14, root=repo)["text"]
 
 
 def check_file_entry(repo, base):
     """L2b (task #353): codemap.file_entry, the file-level reader the file-pack hook shows for a touch that names no
     one symbol. The whole file: the symbol count and the top-level symbols with their spans (the oracle: the file's own
-    AST), the tests and the registry rows; a range: every symbol that overlaps it and the rows in it; an edited file:
-    the STALE mark on the second line."""
+    AST) and the registry rows; a range: every symbol that overlaps it and the rows in it; an edited file: the STALE
+    mark on the second line."""
     build(repo, base, "scripts/alpha.py")
     cm = load(repo)
     syms = sorted(ast_symbols((repo / "scripts" / "alpha.py").read_text()), key=lambda s: (s[1], -s[2], s[0]))
@@ -419,8 +430,6 @@ def check_file_entry(repo, base):
     assert (r["status"], r["stale"]) == ("file", False), r
     assert "symbols: " + spans(top) in lines, "the file entry does not name the top-level symbols with their spans"
     assert lines[0].startswith("codemap scripts/alpha.py — %d symbols, %d at top level" % (len(syms), len(top)))
-    assert any(x.startswith("tests of the file (code-review-graph) 1: tests/test_alpha.py:")
-               and x.endswith(" test_helper_adds_one") for x in lines), lines
     assert "registry rows 2: AP-1 :6, AP-32 :26" in lines, lines
     r = cm.file_entry("scripts/alpha.py", 18, 26, root=repo)
     lines = r["text"].split("\n")
@@ -436,146 +445,102 @@ def check_file_entry(repo, base):
     assert cm.file_entry("scripts/beta.py", root=repo)["status"] == "miss"       # no pack was built for beta.py
 
 
-def check_provenance(repo, base):
-    """K2 round 4 (D-115, provenance by blob), the builder's side: a caller or a test name enters the pack only when the
-    graph that named it indexed exactly its file's blob in the build's commit. GitNexus and code-review-graph are
-    re-indexed over an untracked caller file, an uncommitted caller in the tracked beta.py and an uncommitted test in
-    the tracked tests/test_alpha.py, a canary each: none enters the pack, the total that counted them is left out, and
-    the provenance record says which blob each named file has and which one each graph indexed (the oracle: git's own
-    blob ids); the committed callers stay (the controls)."""
+def check_committed_symbols(repo, base):
+    """D-117 (a): the pack's symbols are the committed blob's own ast. alpha.py's working copy gains an uncommitted def
+    with a canary, and graft re-indexes it (its graph now holds the canary); the code map builds. The pack's symbols are
+    the committed file's (the oracle: Python's ast over `git show HEAD:`), and no reader's text names the canary, not
+    even at the canary's line; the committed symbols show (the control)."""
     env = _env(base["home"])
-    unt, unc, unct = ("%s%s" % (k, os.urandom(5).hex()) for k in ("unt", "unc", "unct"))
-    (repo / "scripts" / "unt.py").write_text("from alpha import helper\n\n\ndef %s():\n    return helper(5)\n" % unt)
-    (repo / "scripts" / "beta.py").write_text(BETA + "\n\ndef %s():\n    return helper(6)\n" % unc)
-    (repo / "tests" / "test_alpha.py").write_text(TEST_ALPHA + "\n\ndef test_%s():\n    assert helper(2) == 3\n" % unct)
-    _index(repo, env, graphs=("gitnexus", "code-review-graph"))
+    cn = "cs" + os.urandom(5).hex()
+    (repo / "scripts" / "alpha.py").write_text(ALPHA + "\n\ndef leak_%s(x):\n    return x\n" % cn)
+    _index(repo, env, graphs=("graft",))
+    assert cn in _run([TOOLS["graft"], "skeleton", "--json", "--no-refresh", "scripts/alpha.py"], repo, env).stdout, \
+        "not the case: graft holds no canary"
     build(repo, base, "scripts/alpha.py")
     p = pack(repo, "scripts/alpha.py")
-    text = json.dumps(p)
-    assert unt not in text, "a name from an untracked file entered the pack"
-    assert unc not in text, "a name from an uncommitted edit of a tracked file entered the pack"
-    assert unct not in text, "a test from an uncommitted edit of a tracked test file entered the pack"
-    by = {s["qualname"]: s["gitnexus"]["callers"] for s in p["symbols"] if (s.get("gitnexus") or {}).get("callers")}
-    assert (by["helper"]["count"], by["helper"]["tests"]) == (None, None), \
-        "a callers total that counted a name the pack does not hold stood"
-    assert [(c["name"], c["file"]) for c in by["helper"]["sample"]] == [("__init__", "scripts/alpha.py")], \
-        "the control: a committed caller was left out: %s" % by["helper"]
-    assert (by["cached"]["count"], [(c["name"], c["file"]) for c in by["cached"]["sample"]]) == (
-        2, [("fetch", "scripts/user.py"), ("main", "scripts/alpha.py")]), \
-        "the control: a total whose callers are all committed was changed: %s" % by["cached"]
-    head = _git(repo, env, "rev-parse", "HEAD").strip()
-
-    def blob(rel):
-        return _git(repo, env, "rev-parse", "HEAD:" + rel).strip()
-    kept = {r: {"blob": blob(r), "indexed": blob(r)} for r in ("scripts/alpha.py", "scripts/user.py")}
-    read_other = {r: {"blob": blob(r), "indexed": None} for r in ("scripts/beta.py", "tests/test_alpha.py")}
-    assert p["provenance"] == {"commit": head, "gitnexus": dict(kept, **read_other, **{
-        "scripts/unt.py": {"blob": None, "indexed": None}}), "code-review-graph": {
-        "tests/test_alpha.py": read_other["tests/test_alpha.py"]}}, \
-        "the provenance record is not each file's blob and the blob each graph indexed: %s" % p["provenance"]
-    assert p["tests"] == [], "a test from a file its graph did not index as committed stayed: %s" % p["tests"]
+    got = [(s["qualname"], s["start"], s["end"], s.get("from", s["start"])) for s in p["symbols"]]
+    committed = _git(repo, env, "show", "HEAD:scripts/alpha.py")
+    assert cn not in json.dumps(p["symbols"]) and got == ast_symbols(committed), \
+        "a symbol the committed blob does not hold entered the pack: %s" % got
+    cm = load(repo)
+    texts = [cm.file_entry("scripts/alpha.py", root=repo)["text"], cm.lookup("scripts/alpha.py", 38, root=repo)["text"]]
+    assert not any(cn in x for x in texts), "an uncommitted symbol reached a reader's text: %s" % texts
+    assert texts[0].split("\n")[2].startswith("symbols: helper L9-13 · "), "the control: %s" % texts[0]
 
 
-def check_provenance_same_file(repo, base):
-    """A same-file name needs its graph fresh as well as the file's blob: GitNexus indexes an alpha.py whose `cached`
-    starts a line higher while every caller keeps its committed line; the file goes back to its committed bytes and
-    GitNexus's record is set to them. The record vouches for the blob and each name is on its line in it, so only the
-    graph's staleness (the lie _moved flags) keeps the same-file callers out; the callers in other files stay."""
+def check_untracked_file(repo, base):
+    """D-117 (a): a file with no blob in the build's commit gets no pack. An untracked file with a canary def: the build
+    says untracked and writes nothing; a tracked file's pack is removed once a commit untracks it (the old pack would
+    describe bytes HEAD's tree does not hold); a tracked file builds (the control)."""
     env = _env(base["home"])
-    f = repo / "scripts" / "alpha.py"
-    moved = ALPHA.replace("        return self.v\n\n\n@functools", "        return self.v\n\n@functools").replace(
-        "hexdigest()\n\n\ndef main", "hexdigest()\n\n\n\ndef main")
-    assert moved != ALPHA and moved.count("\n") == ALPHA.count("\n")
-    f.write_text(moved)
-    _index(repo, env, graphs=("gitnexus",))
-    f.write_text(ALPHA)
-    meta = json.loads((repo / ".gitnexus" / "meta.json").read_text())
-    meta["fileHashes"]["scripts/alpha.py"] = hashlib.sha256(ALPHA.encode("utf-8")).hexdigest()
-    (repo / ".gitnexus" / "meta.json").write_text(json.dumps(meta))
+    cn = "ut" + os.urandom(5).hex()
+    (repo / "scripts" / "unt.py").write_text("def leak_%s(x):\n    return x\n" % cn)
+    out = build(repo, base, "scripts/unt.py", "scripts/beta.py").split("\n")
+    packs = repo / ".jev" / "codemap" / "scripts"
+    assert any(x.startswith("built scripts/beta.py ") for x in out) and (packs / "beta.py.json").is_file(), \
+        "the control: a tracked file was not built: %s" % out
+    assert "untracked scripts/unt.py" in out and not (packs / "unt.py.json").exists(), \
+        "an untracked file got a pack: %s" % out
+    _git(repo, env, "rm", "-q", "--cached", "scripts/beta.py")
+    _git(repo, env, "commit", "-q", "-m", "beta untracked")
+    out = build(repo, base, "scripts/beta.py").split("\n")
+    assert "untracked scripts/beta.py" in out and not (packs / "beta.py.json").exists(), \
+        "an untracked file got a pack: %s" % out
+
+
+GRAPH_LINES = ("risk", "callers", "tests of the file", "instruments:")          # how the removed lines began
+GRAPH_NAMES = ("use scripts/beta.py", "__init__ scripts/alpha.py", "test_helper_adds_one", "fetch scripts/user.py",
+               "scripts/user.py", "tests/test_alpha.py", "GitNexus", "graft", "code-review-graph")
+
+
+def check_no_graph_lines(repo, base):
+    """The callers-and-tests surface went (K2 RE-SCOPE): the pack still holds the graph sections (GitNexus's callers and
+    risk per symbol, code-review-graph's tests, the caller files), and no reader shows any of them: a lookup at every
+    kind of position, the file entry, a range and an Edit's context name no caller, test or graph outside the registry
+    rows, and no line begins as the removed lines did; the symbols and the registry rows show (the control)."""
     build(repo, base, "scripts/alpha.py")
     p = pack(repo, "scripts/alpha.py")
-    blob = _git(repo, env, "rev-parse", "HEAD:scripts/alpha.py").strip()
-    assert p["instruments"]["gitnexus"]["graph"] == "stale" and p["provenance"]["gitnexus"]["scripts/alpha.py"] == {
-        "blob": blob, "indexed": blob}, "not the case: the record and the names do not vouch for the blob, or " \
-        "_moved saw nothing: %s" % p["provenance"]
-    same = [(s["qualname"], c["name"]) for s in p["symbols"]
-            for c in (((s.get("gitnexus") or {}).get("callers") or {}).get("sample") or [])
-            if c["file"] == "scripts/alpha.py"]
-    assert same == [], "a same-file caller from a stale GitNexus graph entered the pack: %s" % same
-    helper = {s["qualname"]: s for s in p["symbols"]}["helper"]["gitnexus"]["callers"]
-    assert [(c["name"], c["file"]) for c in helper["sample"]] == [("use", "scripts/beta.py"), (
-        "test_helper_adds_one", "tests/test_alpha.py")], "the control: a committed caller was left out: %s" % helper
+    by = {s["qualname"]: s for s in p["symbols"]}
+    assert p["tests"] and p["caller_files"] and by["helper"]["gitnexus"]["callers"]["sample"], \
+        "not the case: the pack holds no graph data"
+    cm = load(repo)
+    texts = [cm.lookup("scripts/alpha.py", n, root=repo)["text"] for n in (6, 11, 17, 21, 24, 31, 33)]
+    texts += [cm.file_entry("scripts/alpha.py", root=repo)["text"],
+              cm.file_entry("scripts/alpha.py", 18, 26, root=repo)["text"],
+              cm.edit_context(str(repo / "scripts" / "alpha.py"), "    try:\n        return inner(1)",
+                              root=repo)["text"]]
+    lines = [ln for x in texts for ln in x.split("\n") if not ln.startswith("registry rows")]
+    shown = sorted({w for ln in lines for w in GRAPH_NAMES if w in ln} | {ln for ln in lines if ln.startswith(
+        GRAPH_LINES)})
+    assert not shown, "a graph's caller, test, count or state reached a reader's text: %s" % shown
+    assert texts[1].startswith("codemap scripts/alpha.py:11 — function helper L9-13 · def helper(x)") and \
+        "registry rows 2: AP-1 :6, AP-32 :26" in texts[7].split("\n"), "the control: %s" % texts
 
 
-def check_provenance_record_lies(repo, base):
-    """The blob tie reads each graph's own record, and a record can be newer than the graph's nodes (the GitNexus lie
-    _moved flags for the file itself) or be read after a re-index; so each name must also sit on its line in the
-    committed blob (why the builder reads the blob). GitNexus and code-review-graph index a canary caller in beta.py and
-    a canary test in tests/test_alpha.py; both files go back to their committed bytes and both graphs' records are set
-    to those bytes. user.py keeps an uncommitted comment, its one name on its committed line. No canary enters the pack;
-    none of the three files keeps a name (user.py: its graph read other bytes), and each total that counted one is left
-    out; the file's own callers stay (the control)."""
-    env = _env(base["home"])
-    gn, ct = ("%s%s" % (k, os.urandom(5).hex()) for k in ("gnlie", "crglie"))
-    lies = {"scripts/beta.py": BETA, "tests/test_alpha.py": TEST_ALPHA}
-    (repo / "scripts" / "beta.py").write_text(BETA + "\n\ndef %s():\n    return helper(6)\n" % gn)
-    (repo / "tests" / "test_alpha.py").write_text(TEST_ALPHA + "\n\ndef test_%s():\n    assert helper(2) == 3\n" % ct)
-    (repo / "scripts" / "user.py").write_text(USER + "\n# an uncommitted comment\n")
-    _index(repo, env, graphs=("gitnexus", "code-review-graph"))
-    meta = json.loads((repo / ".gitnexus" / "meta.json").read_text())
-    for rel, text in lies.items():
-        (repo / rel).write_text(text)
-        meta["fileHashes"][rel] = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    (repo / ".gitnexus" / "meta.json").write_text(json.dumps(meta))
-    con = sqlite3.connect(repo / ".code-review-graph" / "graph.db")
-    try:
-        with con:
-            n = con.execute("UPDATE nodes SET file_hash = ? WHERE kind = 'File' AND file_path = ?",
-                            (hashlib.sha256(TEST_ALPHA.encode("utf-8")).hexdigest(),
-                             os.path.realpath(repo / "tests" / "test_alpha.py"))).rowcount
-    finally:
-        con.close()
-    assert n == 1, "the fixture: code-review-graph holds no File row for tests/test_alpha.py"
-    build(repo, base, "scripts/alpha.py")
-    p = pack(repo, "scripts/alpha.py")
-    text = json.dumps(p)
-    assert gn not in text, "a caller from bytes its graph's record does not describe entered the pack"
-    assert ct not in text, "a test from bytes its graph's record does not describe entered the pack"
-
-    def blob(rel):
-        return _git(repo, env, "rev-parse", "HEAD:" + rel).strip()
-    other = ("scripts/beta.py", "tests/test_alpha.py", "scripts/user.py")
-    prov = p["provenance"]
-    assert {r: prov["gitnexus"].get(r) for r in other} == {r: {"blob": blob(r), "indexed": None} for r in other} \
-        and prov["code-review-graph"] == {"tests/test_alpha.py": {"blob": blob("tests/test_alpha.py"),
-                                                                  "indexed": None}}, \
-        "a file whose graph read other bytes was vouched for: %s" % prov
-    by = {s["qualname"]: s["gitnexus"]["callers"] for s in p["symbols"] if (s.get("gitnexus") or {}).get("callers")}
-    assert [(k, by[k]["count"], [(c["name"], c["file"]) for c in by[k]["sample"]]) for k in ("helper", "cached")] == [
-        ("helper", None, [("__init__", "scripts/alpha.py")]), ("cached", None, [("main", "scripts/alpha.py")])], \
-        "not the case: each lying file's names dropped with the total, the file's own callers kept: %s" % by
-    assert p["tests"] == [], "a test from a file whose graph read other bytes stayed: %s" % p["tests"]
-
-
-LOOKUP_CHECKS = {"pack-fields": check_pack_fields, "record-that-lies": check_record_that_lies, "lookup-positions": check_lookup_positions, "stale": check_stale,
-                 "miss": check_miss, "byte-cap": check_byte_cap, "absent": check_absent,
-                 "identical": check_identical, "edit-context": check_edit_context, "file-entry": check_file_entry,
-                 "provenance": check_provenance, "provenance-same-file": check_provenance_same_file,
-                 "provenance-record-lies": check_provenance_record_lies}
+LOOKUP_CHECKS = {"pack-fields": check_pack_fields, "record-that-lies": check_record_that_lies,
+                 "lookup-positions": check_lookup_positions, "stale": check_stale, "miss": check_miss,
+                 "byte-cap": check_byte_cap, "absent": check_absent, "identical": check_identical,
+                 "edit-context": check_edit_context, "file-entry": check_file_entry,
+                 # K2 RE-SCOPE (D-117): (a) the committed blob's own symbols, and the surface that went
+                 "committed-symbols": check_committed_symbols, "untracked-file": check_untracked_file,
+                 "no-graph-lines": check_no_graph_lines}
 # one mutation per property: (the check it must fail, old text, new text, the failure it must fail with)
-OK_LINE = '            ok = blob is not None and indexed == sha and _named_here(data, f, files[f])\n'
+AST_SYMBOLS = '    syms = _ast_symbols(data) if lang == "python" else []'
+COMMITTED_READ = "    got = _committed(root, commit, [rel]).get(rel)\n"
+WORKING_READ = "    got = (None, hashlib.sha256(path.read_bytes()).hexdigest(), path.read_bytes())\n"
 MUTANTS = {
     "blob-without-header": ("pack-fields", 'hashlib.sha1(b"blob %d\\0" % len(data) + data)', "hashlib.sha1(data)",
                             "blob is not git's blob id"),
-    "spans-without-decorators": ("pack-fields", '            s["from"] = first[(s["name"], s["start"])]',
-                                 "            pass", "the symbols and spans differ from the file's own AST"),
+    "spans-without-decorators": ("pack-fields", 's["from"] = min(d.lineno for d in n.decorator_list)', "pass",
+                                 "the symbols and spans differ from the file's own AST"),
+    "screens-sha256": ("pack-fields", "            blobs[rel] = blob_sha(data)\n",
+                       "            blobs[rel] = hashlib.sha256(data).hexdigest()\n",
+                       "the screens are not the screen files' blob ids"),
     "outermost-symbol": ("lookup-positions", 'sym = max(enclosing, key=lambda s: (s["start"], -s["end"]))',
                          'sym = min(enclosing, key=lambda s: (s["start"], -s["end"]))',
                          "a method line did not give the method"),
     "no-past-end": ("lookup-positions", 'if line > pack["lines"]:', 'if line > pack["lines"] + 10 ** 6:',
                     "a line past the end: module"),
-    "unknown-read-as-none": ("lookup-positions", 'line = "risk UNKNOWN — " + UNRESOLVED % s["name"]',
-                             'line = "risk UNKNOWN — no callers"', "UNKNOWN is not said as unresolved"),
     "never-stale": ("stale", 'stale = blob_sha(sys1.read_regular(str(root / rel), True)) != pack["blob"]', "stale = False",
                     "an edited file was not flagged stale"),
     "miss-as-module": ("miss", 'return dict(res, status="miss", text="codemap: %s for %s',
@@ -599,37 +564,20 @@ MUTANTS = {
     "file-entry-never-stale": ("file-entry", 'stale = pack["blob"] != blob_sha(sys1.read_regular(str(root / rel), True))',
                                "stale = False",
                                "an edited file's entry does not say STALE"),
-    # K2 round 4 (D-115): a named mutant per clause of the blob tie, the builder's side
-    "builder-path-not-blob": ("provenance", OK_LINE, "            ok = blob is not None\n",
-                              "a name from an uncommitted edit of a tracked file entered the pack"),
-    "builder-working-bytes": ("provenance", "            blob, sha, data = committed.get(f, (None, None, None))\n",
-                              "            blob, data = committed.get(f, (None,))[0], (Path(root) / f).read_bytes()\n"
-                              "            sha = hashlib.sha256(data).hexdigest()\n",
-                              "a name from an uncommitted edit of a tracked file entered the pack"),
-    "builder-indexed-hash-skipped": ("provenance-record-lies", OK_LINE,
-                                     "            ok = blob is not None and _named_here(data, f, files[f])\n",
-                                     "a file whose graph read other bytes was vouched for"),
-    "builder-names-unchecked": ("provenance-record-lies", OK_LINE,
-                                "            ok = blob is not None and indexed == sha\n",
-                                "a caller from bytes its graph's record does not describe entered the pack"),
-    "builder-missing-blob-accepted": ("provenance", 'rec.get("blob") is not None and rec.get("indexed") == rec["blob"]',
-                                      'rec.get("indexed") == rec.get("blob")',
-                                      "a name from an untracked file entered the pack"),
-    "builder-total-kept-on-drop": ("provenance", '        if len(kept) < c["count"]:\n', "        if False:\n",
-                                   "a callers total that counted a name the pack does not hold stood"),
-    "builder-callers-unfiltered": ("provenance", '        kept = [x for x in c.pop("all") if vouched(x["file"], '
-                                   '"gitnexus", gn_sec)]\n',
-                                   '        kept = c.pop("all")\n', "a name from an untracked file entered the pack"),
-    "builder-tests-unfiltered": ("provenance",
-                                 '    tests = [x for x in tests if vouched(x["file"], "code-review-graph", crg_sec)]\n',
-                                 "    tests = list(tests)\n",
-                                 "a test from an uncommitted edit of a tracked test file entered the pack"),
-    "builder-same-file-fresh-ignored": ("provenance-same-file",
-                                        '        return _proven(prov, graph, f) and (f != rel or sec.get("graph") == '
-                                        '"fresh")\n', "        return _proven(prov, graph, f)\n",
-                                        "a same-file caller from a stale GitNexus graph entered the pack"),
+    # K2 RE-SCOPE (D-117): the builder's side of (a), and the surface that went
+    "symbols-from-working-copy": ("committed-symbols", AST_SYMBOLS,
+                                  '    syms = _ast_symbols(path.read_bytes()) if lang == "python" else []',
+                                  "a symbol the committed blob does not hold entered the pack"),
+    "symbols-from-graft": ("committed-symbols", AST_SYMBOLS, "    syms = _nest(graft_syms)",
+                           "a symbol the committed blob does not hold entered the pack"),
+    "pack-of-the-working-copy": ("untracked-file", COMMITTED_READ, WORKING_READ, "an untracked file got a pack"),
+    "caller-line-restored": ("no-graph-lines", '    if where_rows:\n        lines.append("registry rows here %d: "',
+                             '    if sym is not None and (sym.get("gitnexus") or {}).get("callers"):\n'
+                             '        lines.append("callers: " + " · ".join("%s %s:%s" % '
+                             '(x["name"], x["file"], x["line"]) for x in sym["gitnexus"]["callers"]["sample"]))\n'
+                             '    if where_rows:\n        lines.append("registry rows here %d: "',
+                             "a graph's caller, test, count or state reached a reader's text"),
 }
-
 
 @needs_tools
 @pytest.mark.parametrize("name", sorted(LOOKUP_CHECKS))
@@ -669,16 +617,16 @@ def test_risk_equals_gitnexus_per_symbol_cli(base, tmp_path):
 
 
 @needs_tools
-def test_shell_file_gets_crg_symbols_and_says_what_is_not_parsed(base, tmp_path):
+def test_a_shell_file_gets_no_symbols(base, tmp_path):
+    """D-117 (a): only Python's ast names symbols, so a shell file's pack holds none (code-review-graph parses it, but
+    a graph's symbols are never a pack's); the graphs that do not parse it say n/a."""
     repo = clone(base, tmp_path)
     build(repo, base, "scripts/tool.sh")
     p = pack(repo, "scripts/tool.sh")
-    assert p["language"] == "shell" and p["symbols_from"] == "code-review-graph"
-    assert [(s["qualname"], s["start"], s["end"]) for s in p["symbols"]] == [("greet", 2, 4)]
+    assert p["language"] == "shell" and p["symbols_from"] == "ast" and p["symbols"] == []
     assert (p["instruments"]["graft"]["status"], p["instruments"]["gitnexus"]["status"]) == ("n/a", "n/a")
-    text = load(repo).lookup("scripts/tool.sh", 3, root=repo)["text"]
-    assert "GitNexus n/a (GitNexus does not parse this file type)" in text
-
+    r = load(repo).lookup("scripts/tool.sh", 3, root=repo)
+    assert r["status"] == "module" and "greet" not in r["text"], r
 
 # ---------- the post-commit refresh: ordering, docs-only, widening ----------
 
@@ -793,7 +741,8 @@ def check_refresh_that_starts_first_waits(repo, base, tmp_path):
 
 
 def check_gives_up_and_marks_stale(repo, base, tmp_path):
-    """No re-index ever comes (it was skipped): after the grace the refresh builds and marks the graph stale."""
+    """No re-index ever comes (it was skipped): after the grace the refresh builds and marks the graph stale; the
+    symbols are the committed blob's own, gamma included, whatever the graph holds (D-117 (a))."""
     env = _env(base["home"])
     add_gamma(repo)
     _git(repo, env, "add", "-A")
@@ -805,8 +754,7 @@ def check_gives_up_and_marks_stale(repo, base, tmp_path):
     assert "not ready: graft (it had not indexed scripts/alpha.py)" in out, out
     p = pack(repo, "scripts/alpha.py")
     assert p["instruments"]["graft"]["graph"] == "stale", "a graph that never caught up is not marked stale"
-    assert "gamma" not in {s["qualname"] for s in p["symbols"]}
-    assert "graft stale" in load(repo).lookup("scripts/alpha.py", 11, root=repo)["text"]
+    assert "gamma" in {s["qualname"] for s in p["symbols"]}, "the committed symbols waited on a graph"
 
 
 def check_docs_only_commit(repo, base, tmp_path):
@@ -978,7 +926,7 @@ else:
 print(json.dumps(out))
 """
 # what each reader gives when the file it opens is a FIFO no one writes: refused at once, never waited on
-FIFO_WANT = {"load-pack": [True, "the pack is unreadable (OSError)"], "lookup": ["module", True],
+FIFO_WANT = {"load-pack": [True, "the pack is unreadable (OSError)"], "lookup": ["hit", True],
              "file-entry": ["file", True],
              "edit-context": ["miss", "codemap: cannot place the edit (the file is unreadable or outside the repo)"],
              "language": [None]}
@@ -999,19 +947,24 @@ FIFO_MUTANTS = {
 
 
 def fifo_check(tmp_path, codemap_text, reader, bound=10):
-    """A tree holding `codemap_text` as scripts/codemap.py and the System-1 hook; scripts/x.py's pack built by the
-    real builder with no graph installed; then the file `reader` opens swapped for a FIFO no one writes. The reader
-    runs in a child: a run past `bound` seconds is a stall."""
+    """A git repository holding `codemap_text` as scripts/codemap.py and the System-1 hook, and scripts/x.py committed;
+    x.py's pack built by the real builder with no graph installed, of its committed blob; then the file `reader` opens
+    swapped for a FIFO no one writes. The reader runs in a child: a run past `bound` seconds is a stall."""
     root = tmp_path / "fifo"
     (root / "scripts").mkdir(parents=True)
     (root / ".claude" / "hooks").mkdir(parents=True)
     (root / "scripts" / "codemap.py").write_text(codemap_text, encoding="utf-8")
     shutil.copy2(SYSTEM1, root / ".claude" / "hooks" / "system1-context.py")
     (root / "scripts" / "x.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    env = _env(tmp_path / "home", [])
+    _git(root, env, "init", "-q")
+    _git(root, env, "add", "scripts/x.py")
+    _git(root, env, "commit", "-q", "-m", "x")
     spec = importlib.util.spec_from_file_location("codemap_fifo_build", CODEMAP)
     cm = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cm)
-    outcome, _ = cm.build_one(root, "scripts/x.py", ("absent", "not in this test"), {"PATH": "/nonexistent"}, "0" * 40)
+    outcome, _ = cm.build_one(root, "scripts/x.py", ("absent", "not in this test"), {"PATH": "/nonexistent"},
+                              _git(root, env, "rev-parse", "HEAD").strip())
     assert outcome == "built"
     target = {"load-pack": root / ".jev" / "codemap" / "scripts" / "x.py.json",
               "language": root / "scripts" / "tool"}.get(reader, root / "scripts" / "x.py")

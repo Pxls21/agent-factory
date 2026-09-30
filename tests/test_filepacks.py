@@ -11,36 +11,40 @@ which file, which commit touched which file), Python's ast for symbol spans, git
 
 Each property is a check run on the real filepacks.py and on mutated copies of it (MUTANTS: one mutation per property,
 its anchor found exactly once, the mutant compiled before use, so a mutant that does not compile is never counted as a
-kill). A mutant must fail the same check with the named failure. The code-map pack of scripts/alpha.py is planted in
-codemap.py's format, its symbols from the file's own AST as the real builder's are (tests/test_codemap.py
-check_pack_fields holds them equal); test_the_planted_code_pack_has_the_real_builders_fields compares its fields with a
-pack the real codemap builder writes. Deterministic and LLM-free.
+kill). A mutant must fail the same check with the named failure; CM_MUTANTS do the same with a copy of
+scripts/codemap.py. The code-map pack of scripts/alpha.py is planted in codemap.py's format as its builder writes one
+since the re-scope (`plant_code_pack`: the symbols from the file's own AST, the graph sections no reader shows);
+test_the_planted_code_pack_has_the_real_builders_fields compares its fields and symbols with a pack the real codemap
+builder writes. Deterministic and LLM-free.
 
 Round 2 (VERIFY-K2): F1, a file untracked since the last build whose code pack was rebuilt from the working copy with a
 canary, runs three ways: with no build after the untracking commit (check untracked-since-build), with the post-commit
-patch applied to the real hook by `git apply` (its build alone keeps the file out), and with the REAL L2a refresh
-building the pack after a graft re-index (the verifier's probe_p6.py; skipped loudly where graft is absent). The
-verifier's seventeen F14 checks are here under their names, and the parser's F3, F4 and F5 shapes (the wrong files, the
-nested scripts, the remote commands, a 3,000-pair command's time). `run` kills a stalled hook and fails as a stall.
+patch applied to the real hook by `git apply` (its build alone keeps the file out), and with the REAL L2a refresh after
+a graft re-index (skipped loudly where graft is absent). The verifier's seventeen F14 checks are here under their names,
+and the parser's F3, F4 and F5 shapes (the wrong files, the nested scripts, the remote commands, a 6,000-pair command's
+time). `run` kills a stalled hook and fails as a stall.
 
-Round 3 (VERIFY-K2 round 2): B1, a caller or test in an untracked file named in a tracked file's code part, runs on
-planted packs (untracked-callers, same-file-stale, caller-path-newline); its real-hook test became round 4's class
-test. B2, a pack whose symbols come from a graph that had not indexed its bytes, runs on planted packs
-(stale-symbol-graph, sourceless-symbols) and through the REAL refresh in both of the verifier's shapes (an untracked
-file, a reverted edit).
-B3: `hook_dir` applies the post-commit patch only to a hook that does not carry it, and the negative control's hook
-comes from UNPATCHED_AT, so this file passes before the patch lands and after. The verifier's seven checks that killed
-mutants the round-2 checks missed are here under their names.
+Rounds 3 and 4 (VERIFY-K2 rounds 2 and 3; D-115): B1 (a caller or test in an untracked file named in a tracked file's
+code part), R3-1 and the provenance by blob tested the callers-and-tests surface, which the re-scope removed; their
+checks, mutants and class test went with it. B2 (a pack whose symbols came from a graph that had not indexed its bytes)
+became condition (a) below. B3: `hook_dir` applies the post-commit patch only to a hook that does not carry it, and the
+negative control's hook comes from UNPATCHED_AT (refused unless it is the patch's pre-image), so this file passes before
+the patch lands and after. The verifier's seven checks that killed mutants the round-2 checks missed are here.
 
-Round 4 (VERIFY-K2 round 3, R3-1; D-115, provenance by blob): the planted packs carry the provenance codemap.py's
-builder records (`provenance`), and the reader's clauses run on them (blob-tie: a record of other bytes, of another
-blob, of a file untracked at the build, a total beside a dropped name, a pack with no provenance), with the verifier's
-four n4 checks re-stated for the blob tie (tail-path-caller, tests-graph, not-indexed, caller-files-missing) and a
-wrong UNPATCHED_AT refused. The class test (class_scenario) plants a canary in each shape of the class, through the REAL
-patched post-commit hook and the real graphs: untracked files outside and inside the refresh paths, the untracked era
-of files later committed with other text (R3-1's late-outside, and late-track with the refresh held behind its lock),
-an uncommitted edit of a tracked caller and test (NOT done 1) and a caller file untracked while the file-pack build is
-held (NOT done 9); its leak control turns the blob comparison off at the builder and the reader, and each canary shows.
+K2 RE-SCOPE (task #353, contract revision 5, D-117; VERIFY-K2-R4's R4-1): every byte shown is committed text of HEAD's
+tree. (b) Nothing is shown unless the build's tree is HEAD's: tree-after-reset (`git reset --mixed` and `--soft` after
+a build: nothing, the record says tree), same-tree-move (push_clean's ref move to a commit with HEAD's tree: the packs
+stay), head-unresolved (an unborn branch, no repository, a git that does not answer), and the class test through the
+REAL patched post-commit hook (`reset_scenario`: both resets and the ledger line they uncommit, and the same-tree ref
+move), whose leak control turns the tree check off so each canary shows. (a) A pack's symbols are the committed blob's
+own ast: committed-symbols (the real code-map builder over a working copy with an uncommitted def), legacy-symbols (a
+pack whose symbols came from a graph is withheld), late-code-pack (a code pack of an older commit's blob), and the real
+refresh after graft indexed a canary. The surface that went: no-graph-text plants a canary in every graph field and none
+shows; registry-screens shows a row only from the build's committed screen. A build replaces its record with one that
+names no tree before it changes any pack, and the reader reads the record again after the parts: build-in-flight (a
+Read while a build of the undone commit runs, after a reset) and record-rechecked (a build that begins between the two
+reads) show nothing. Every build's record carries its own random id: record-rebuilt (two builds between the reads, the
+second of the commit the record names, both 0 ms long) shows nothing.
 """
 import ast
 import fcntl
@@ -53,6 +57,7 @@ import secrets
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -176,25 +181,16 @@ def committed_blob(repo, commit_id, rel):
     return head.split()[2] if r.returncode == 0 and path == rel and head.split()[1:2] == ["blob"] else None
 
 
-def provenance(repo, commit_id, named, override=None):
-    """A code-map pack's `provenance` as codemap.py's builder records it (K2 round 4), for graphs that indexed the
-    working copy: per graph in `named` ({graph: files}), each file's blob in `commit_id` and, when the working bytes are
-    that blob, the same blob as `indexed` (else None). `override` ({graph: {file: record}}) replaces records."""
-    out = {"commit": commit_id}
-    for g, files in named.items():
-        out[g] = {}
-        for f in files:
-            blob = committed_blob(repo, commit_id, f) if "\n" not in f else None
-            work = git(repo, "hash-object", "--", f).strip() if blob and (repo / f).is_file() else None
-            out[g][f] = {"blob": blob, "indexed": blob if blob and work == blob else None}
-    for g, recs in (override or {}).items():
-        out.setdefault(g, {}).update(recs)
-    return out
+SCREENS = ("scripts/ap_screen.py", ".claude/hooks/edit-snapshot.py")     # codemap.SCREENS: the registry screen's files
 
 
 def plant_code_pack(repo, rel, commit_id):
-    """A code-map pack of `rel` in codemap.py's format (schema 1), its symbols from the file's AST, fresh, and its
-    provenance as the builder records it at `commit_id`."""
+    """A code-map pack of `rel` in codemap.py's format (schema 1) as its builder writes one at `commit_id` since the
+    re-scope (K2, D-117): the symbols from the AST of the file's bytes (`symbols_from: "ast"`), their blob, one
+    registry row with the blob ids of the screen files as they are here (`0` * 40 for one that is absent), and graph
+    sections that no reader shows (a GitNexus caller and risk per symbol, a code-review-graph test). The builder
+    reads the committed blob: a pack planted from a working copy that differs from `commit_id` stands for a pack of
+    other bytes."""
     data = (repo / rel).read_bytes()
     sha = hashlib.sha256(data).hexdigest()
     syms = []
@@ -206,15 +202,14 @@ def plant_code_pack(repo, rel, commit_id):
             s["from"] = frm
         syms.append(s)
     fresh = {"status": "ok", "graph": "fresh", "indexed_sha256": sha}
+    screens = {p: git(repo, "hash-object", "--", p).strip() if (repo / p).is_file() else "0" * 40 for p in SCREENS}
     pack = {"schema": 1, "path": rel, "language": "python", "blob": git(repo, "hash-object", "--", rel).strip(),
             "sha256": sha, "lines": data.count(b"\n"), "bytes": len(data), "commit": commit_id,
-            "symbols_from": "graft", "caller_files": [],
-            "provenance": provenance(repo, commit_id, {"gitnexus": [rel],
-                                                       "code-review-graph": ["tests/test_alpha.py"]}),
+            "symbols_from": "ast", "caller_files": [],
             "instruments": {"graft": dict(fresh), "gitnexus": dict(fresh, indexed_commit=commit_id, symbols=len(syms),
                                                                    unmatched=[]),
                             "code-review-graph": dict(fresh, tests_found=1),
-                            "ap_screen": {"status": "ok", "rows_screened": 1}},
+                            "ap_screen": {"status": "ok", "rows_screened": 1, "screens": screens}},
             "symbols": syms, "tests": [{"file": "tests/test_alpha.py", "line": 3, "name": "test_helper",
                                         "indirect": False}],
             "registry": [{"row": "AF-AP-9", "line": 2, "text": "import os", "message": "a fixture row"}],
@@ -225,9 +220,10 @@ def plant_code_pack(repo, rel, commit_id):
     return pack
 
 
-def fixture(tmp, fp_text=None):
+def fixture(tmp, fp_text=None, cm_text=None):
     """(repo, commit ids): the tree committed at c1, briefs A to D one commit each (c2 to c5), then three commits to
-    scripts/alpha.py (c6 to c8); the tooling copied in, never committed; alpha's code pack planted."""
+    scripts/alpha.py (c6 to c8); the tooling copied in (with `fp_text` / `cm_text` as filepacks.py / codemap.py when
+    given: a mutant), never committed; alpha's code pack planted."""
     repo = tmp / "repo"
     repo.mkdir()
     repo = repo.resolve()
@@ -237,6 +233,8 @@ def fixture(tmp, fp_text=None):
         shutil.copy2(src, repo / rel)
     if fp_text is not None:
         (repo / "scripts" / "filepacks.py").write_text(fp_text, encoding="utf-8")
+    if cm_text is not None:
+        (repo / "scripts" / "codemap.py").write_text(cm_text, encoding="utf-8")
     ids = {"c1": commit(repo, base_files(repo), "fixture: the tree", 1)}
     for k, name in enumerate("ABCD"):
         text = "# %s\nnames scripts/alpha.py%s\n" % (name, " and itself: " + BRIEF % name if name == "A" else "")
@@ -469,12 +467,15 @@ def check_build_briefs_commits(repo, st, ids, tmp):
 
 
 def check_build_sha_threaded(repo, st, ids, tmp):
-    """AF-AP-175: every read names the commit the build was given, never HEAD."""
+    """AF-AP-175: every read names the commit the build was given, never HEAD; so does the tree it records (the
+    reader's check, D-117)."""
     ledger = (repo / LEDGER).read_text(encoding="utf-8")
     later = commit(repo, {LEDGER: ledger + "a later line naming scripts/beta.py\n"}, "a later ledger", 9)
     fp = load(repo)
     rec = fp.build(repo, st, sha=ids["fourth"])
     assert rec["commit"] == ids["fourth"]
+    assert rec["tree"] == git(repo, "rev-parse", ids["fourth"] + "^{tree}").strip(), \
+        "the build recorded another commit's tree"
     assert "ledger" not in pack(st, "scripts/beta.py")["counts"], \
         "the build read a source at HEAD, not at the commit it was given"
     rec = fp.build(repo, st)
@@ -502,6 +503,7 @@ def check_build_meta(repo, st, ids, tmp):
     b = json.loads((pdir / "BUILD.json").read_text())
     tracked = git(repo, "ls-tree", "-r", "--name-only", "HEAD").split("\n")[:-1]
     assert (b["schema"], b["commit"], b["tracked"], b["files"]) == (1, ids["fourth"], len(tracked), 12), b
+    assert b.get("tree") == git(repo, "rev-parse", "HEAD^{tree}").strip(), "the build recorded no tree: %s" % b
     assert b["missing"] == [".claude/skills/%s/SKILL.md" % s for s in SKILLS if s != "env-tool-quirks"], b
     assert isinstance(b["ms"], int) and b["ms"] >= 0
     assert (pdir / "TRACKED.txt").read_text() == "\n" + "\n".join(tracked) + "\n"
@@ -528,15 +530,18 @@ def check_budget_cut(repo, st, ids, tmp):
         assert len(got) == fits, "the cut kept %d lines where %d fit (budget %d)" % (len(got), fits, budget)
 
 
-def check_older_p2_stale_code(repo, st, ids, tmp):
+def check_stale_code(repo, st, ids, tmp):
+    """An uncommitted edit (HEAD's tree unchanged since the build): the code part is the committed blob's and goes out
+    with the code map's STALE mark, or not at all when the mark does not fit; the pack's lines are the build's. (A
+    commit after the build shows nothing at all: tree-after-reset and the class test.)"""
     build(repo, st)
     alpha = (repo / "scripts" / "alpha.py").read_text()
-    commit(repo, {LEDGER: (repo / LEDGER).read_text() + "a newer line naming scripts/alpha.py\n",
-                  "scripts/alpha.py": alpha + "# rev 5\n"}, "a commit after the build", 9)
+    (repo / "scripts" / "alpha.py").write_text(alpha + "# rev 5\n", encoding="utf-8")
     lines = context(run(repo, st, read(repo, "scripts/alpha.py"))).split("\n")
     assert any(x.startswith("filepack scripts/alpha.py @%s: ledger 5 · " % ids["fourth"][:7]) for x in lines), \
-        "the P2 pack built at an older commit was not read: %s" % lines
-    assert lines[1].startswith("STALE: the file changed since this pack was built"), "a stale code pack passed as fresh"
+        "the pack's lines were not read: %s" % lines
+    assert lines[0].startswith("codemap scripts/alpha.py — 5 symbols") and lines[1].startswith(
+        "STALE: the file changed since this pack was built"), "a stale code pack passed as fresh: %s" % lines[:2]
     fp = load(repo)
     packs = fp.Packs(repo, st)
     whole = fp.entry("scripts/alpha.py", {}, 10 ** 6, packs=packs)
@@ -788,15 +793,16 @@ def gamma_probes(repo, sid):
 
 
 def check_untracked_since_build(repo, st, ids, tmp):
+    """F1's stale boundary: the untracking commit changed HEAD's tree after the build, so nothing is shown (the record
+    says tree); the canary's code pack, of bytes no commit holds, would be left out by the blob check as well."""
     canary = untrack_with_a_canary(repo, st)
     assert "\nscripts/gamma.py\n" in (st / "filepacks" / "TRACKED.txt").read_text(), "not F1's stale boundary"
     assert canary in (repo / ".jev" / "codemap" / "scripts" / "gamma.py.json").read_text(), "no canary in the pack"
     for p in gamma_probes(repo, "p6"):
         ctx = context(run(repo, st, p))
         assert canary not in ctx and canary[4:] not in ctx, "the untracked file's text reached the model"
-        assert heads(ctx) == ["scripts/gamma.py"] and ctx.startswith("filepack scripts/gamma.py @"), \
-            "the pack's lines were not shown alone: %r" % ctx[:80]
-        assert records(st)[-1]["injected"][0].get("code_skip") == "blob", records(st)[-1]["injected"]
+        assert ctx == "", "the packs of a tree that is not HEAD's reached the model: %r" % ctx[:80]
+        assert records(st)[-1]["skipped"] == [{"key": "file:scripts/gamma.py", "why": "tree"}], records(st)[-1]
 
 
 def check_blobs_exact_path(repo, st, ids, tmp):
@@ -1029,7 +1035,7 @@ def check_linear_parse(repo, st, ids, tmp):
     assert heads(ctx) == ["docs/NOTE.md"], "the control: the reader's file was read: %s" % heads(ctx)
 
 
-# ---------- round 3: VERIFY-K2 R2 B1 (untracked callers and tests), B2 (the symbols' graph), the seven checks ------
+# ---------- round 3: the verifier's seven checks (B1 went with the callers and tests; B2 is now (a)) ----------
 
 def alter_pack(repo, change):
     """Apply `change` (a function of the pack) to alpha's planted code pack."""
@@ -1037,244 +1043,6 @@ def alter_pack(repo, change):
     pk = json.loads(p.read_text(encoding="utf-8"))
     change(pk)
     p.write_text(json.dumps(pk, indent=1, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def plant_callers(repo, callers, tests, caller_files, count=5, graphs=None, override=None):
-    """alpha's code pack with helper's callers sample, the file's tests and its caller files as given, the graph marks
-    in `graphs` ({graph: fresh|stale}) and the provenance the builder records at HEAD for every file they name
-    (`override` replaces records, see provenance); everything else as plant_code_pack wrote it."""
-    head = git(repo, "rev-parse", "HEAD").strip()
-    named = {"gitnexus": sorted({"scripts/alpha.py", *caller_files, *(c["file"] for c in callers)}),
-             "code-review-graph": sorted({t["file"] for t in tests})}
-    prov = provenance(repo, head, named, override)
-
-    def change(pk):
-        helper = next(s for s in pk["symbols"] if s["qualname"] == "helper")
-        helper["gitnexus"]["callers"] = {"count": count, "tests": 1, "sample": callers}
-        pk["tests"], pk["caller_files"], pk["provenance"] = tests, caller_files, prov
-        for g, v in (graphs or {}).items():
-            pk["instruments"][g]["graph"] = v
-    alter_pack(repo, change)
-
-
-def helper_edit(repo, sid):
-    return edit(repo, "scripts/alpha.py", "    return x + 1", sid=sid)
-
-
-def check_untracked_callers(repo, st, ids, tmp):
-    """VERIFY-K2 R2 B1: GitNexus (and code-review-graph) index untracked files too. The code part names only the
-    callers and tests whose files the pack's provenance ties to their blob at the build (an untracked file has none,
-    K2 round 4), and a callers total that counted any other caller (a sampled one, or one past the sample that
-    caller_files names) is left out; a clean pack's total stands (the control)."""
-    commit(repo, {"tests/test_trk.py": "def test_trk():\n    pass\n"}, "a tracked test", 9)
-    build(repo, st)
-    uc, ut, trk = ("%s%s" % (k, secrets.token_hex(5)) for k in ("uc", "ut", "trk"))
-    tracked = [{"name": trk, "file": "scripts/beta.py", "line": 2},
-               {"name": "main", "file": "scripts/alpha.py", "line": 18}]
-    tests = [{"file": "tests/test_trk.py", "line": 1, "name": "test_" + trk, "indirect": False}]
-    test_line = "tests of the file (code-review-graph) 1: tests/test_trk.py:1 test_" + trk
-    left_out = ("callers in tracked files (the total is left out): %s scripts/beta.py:2 · main scripts/alpha.py:18"
-                % trk)
-    plant_callers(repo, tracked, tests, ["scripts/beta.py", "tests/test_trk.py"])
-    lines = context(run(repo, st, helper_edit(repo, "uc0"))).split("\n")
-    assert "callers 5 (1 in tests): %s scripts/beta.py:2 · main scripts/alpha.py:18 · +3 more" % trk in lines, \
-        "the control: a clean pack's callers total was left out: %s" % lines[:4]
-    plant_callers(repo, [{"name": uc, "file": "scripts/caller_%s.py" % uc, "line": 4}] + tracked,
-                  [{"file": "tests/test_%s.py" % ut, "line": 1, "name": "test_" + ut, "indirect": False}] + tests,
-                  ["scripts/beta.py", "scripts/caller_%s.py" % uc, "tests/test_%s.py" % ut, "tests/test_trk.py"])
-    for k, p in enumerate((helper_edit(repo, "uc1"), read(repo, "scripts/alpha.py", sid="uc2"))):
-        ctx = context(run(repo, st, p))
-        assert uc not in ctx, "an untracked caller reached the model"
-        assert ut not in ctx, "an untracked test reached the model"
-        assert test_line in ctx.split("\n") and (k or "%s scripts/beta.py:2" % trk in ctx), \
-            "the control: a tracked caller or test was left out: %r" % ctx[:400]
-        assert k or left_out in ctx.split("\n"), \
-            "a callers total counted a caller the model is not shown: %r" % ctx[:400]
-    plant_callers(repo, tracked, tests, ["scripts/beta.py", "scripts/caller_%s.py" % uc, "tests/test_trk.py"])
-    lines = context(run(repo, st, helper_edit(repo, "uc3"))).split("\n")
-    assert left_out in lines, "a callers total counted an unseen untracked caller: %s" % lines[:4]
-
-
-def check_same_file_stale(repo, st, ids, tmp):
-    """A caller or a test in the file itself is named from a graph's index of the file: from a stale graph the name can
-    come from bytes no commit holds (B2's class, through B1's lists), so it is left out, and so is the callers total
-    (it can count such callers past the sample); a fresh graph's names stay (the control)."""
-    build(repo, st)
-    cc, ct, trk = ("%s%s" % (k, secrets.token_hex(5)) for k in ("cc", "ct", "trk"))
-    callers = [{"name": trk, "file": "scripts/beta.py", "line": 2},
-               {"name": cc, "file": "scripts/alpha.py", "line": 30}]
-    tests = [{"file": "scripts/alpha.py", "line": 31, "name": ct, "indirect": False}]
-    plant_callers(repo, callers, tests, ["scripts/beta.py"], count=2)
-    ctx = context(run(repo, st, helper_edit(repo, "sf0")))
-    assert cc in ctx and ct in ctx, "the control: a fresh graph's names of this file were left out: %r" % ctx[:400]
-    plant_callers(repo, callers, tests, ["scripts/beta.py"], count=2,
-                  graphs={"gitnexus": "stale", "code-review-graph": "stale"})
-    ctx = context(run(repo, st, helper_edit(repo, "sf1")))
-    assert cc not in ctx, "a caller named by a stale GitNexus graph of this file reached the model"
-    assert ct not in ctx, "a test named by a stale code-review-graph of this file reached the model"
-    assert "%s scripts/beta.py:2" % trk in ctx, "the control: a tracked caller in another file was left out"
-    plant_callers(repo, callers[:1], [], ["scripts/beta.py"], count=2, graphs={"gitnexus": "stale"})
-    lines = context(run(repo, st, helper_edit(repo, "sf2"))).split("\n")
-    assert "callers in tracked files (the total is left out): %s scripts/beta.py:2" % trk in lines, \
-        "a callers total from a stale GitNexus graph stood: %s" % lines[:4]
-
-
-def check_caller_path_newline(repo, st, ids, tmp):
-    """BLOBS.txt's match is one whole `path TAB blob` line (K2 round 4): a caller path holding a newline, which with
-    the blob of the line before it spans two lines one after the other (alpha's, then beta's), never takes the second
-    line's blob, even with a record that claims it."""
-    build(repo, st)
-    alpha, beta = (committed_blob(repo, "HEAD", r) for r in ("scripts/alpha.py", "scripts/beta.py"))
-    assert "\nscripts/alpha.py\t%s\nscripts/beta.py\t%s\n" % (alpha, beta) in (
-        st / "filepacks" / "BLOBS.txt").read_text(), "not the case"
-    cn = "cn" + secrets.token_hex(5)
-    f = "scripts/alpha.py\t%s\nscripts/beta.py" % alpha
-    plant_callers(repo, [{"name": cn, "file": f, "line": 1}], [], ["scripts/beta.py"],
-                  override={"gitnexus": {f: {"blob": beta, "indexed": beta}}})
-    ctx = context(run(repo, st, helper_edit(repo, "pn")))
-    assert ctx.startswith("codemap scripts/alpha.py:6 — function helper"), "the control: no code part: %r" % ctx[:80]
-    assert cn not in ctx, "a caller path holding a newline took another file's blob"
-
-
-def check_stale_symbol_graph(repo, st, ids, tmp):
-    """VERIFY-K2 R2 B2: a pack's symbols come from one graph's index (symbols_from). When that graph had not indexed the
-    pack's bytes, the symbols can be another content's (an untracked or a reverted edit), so the code part is left out
-    and the record says stale-graph; the source graph is the one read (the control: a stale graft beside a fresh
-    code-review-graph source leaves the code part shown)."""
-    build(repo, st)
-
-    def marks(src, graft, crg):
-        def change(pk):
-            pk["symbols_from"] = src
-            pk["instruments"]["graft"]["graph"], pk["instruments"]["code-review-graph"]["graph"] = graft, crg
-        alter_pack(repo, change)
-    for k, (src, graft, crg) in enumerate([("graft", "stale", "fresh"), ("code-review-graph", "fresh", "stale")]):
-        marks(src, graft, crg)
-        ctx = context(run(repo, st, read(repo, "scripts/alpha.py", sid="sg%d" % k)))
-        assert ctx.startswith("filepack scripts/alpha.py @") and "codemap " not in ctx, \
-            "a code part from a stale symbol graph reached the model: %r" % ctx[:80]
-        assert records(st)[-1]["injected"][0].get("code_skip") == "stale-graph", records(st)[-1]["injected"]
-    marks("code-review-graph", "stale", "fresh")
-    ctx = context(run(repo, st, read(repo, "scripts/alpha.py", sid="sg-c")))
-    assert ctx.startswith("codemap scripts/alpha.py — 5 symbols"), \
-        "the control: a fresh symbol graph's code part was left out: %r" % ctx[:80]
-
-
-def check_sourceless_symbols(repo, st, ids, tmp):
-    """A pack that holds symbols but names no graph they came from is left out: no graph can vouch for them. One with
-    neither gives the file's entry (the control: nothing to tie)."""
-    build(repo, st)
-    alter_pack(repo, lambda pk: pk.update(symbols_from=None))
-    ctx = context(run(repo, st, read(repo, "scripts/alpha.py", sid="ns0")))
-    assert ctx.startswith("filepack scripts/alpha.py @"), \
-        "a code part whose symbols name no source graph reached the model: %r" % ctx[:80]
-    alter_pack(repo, lambda pk: pk.update(symbols=[]))
-    ctx = context(run(repo, st, read(repo, "scripts/alpha.py", sid="ns1")))
-    assert ctx.startswith("codemap scripts/alpha.py — 0 symbols"), "the control: no file entry: %r" % ctx[:80]
-
-
-# Round 4 (D-115, provenance by blob): item 1's clauses, and the verifier's four n4 checks (VERIFY-K2 R3 item 6)
-# re-stated for the blob tie.
-
-LEFT_OUT = "callers in tracked files (the total is left out): "
-
-
-def check_blob_tie(repo, st, ids, tmp):
-    """K2 round 4, item 1's clauses on planted packs, a canary each: a name stays only when the pack's provenance says
-    its graph indexed exactly its file's blob and that blob is the file's blob in BLOBS.txt, and a dropped name drops
-    the total. A record whose graph read other bytes (indexed None: NOT done 1), a record of a blob that is not
-    BLOBS.txt's (the file committed since with other text), a file untracked at the build, a sampled file beside
-    caller_files that are all tied, and a pack with no provenance (built before this round) each show no such name and
-    no total; a record tied to BLOBS.txt's blob shows its name and the total (the control)."""
-    old_beta, gamma = (committed_blob(repo, "HEAD", r) for r in ("scripts/beta.py", "scripts/gamma.py"))
-    commit(repo, {"scripts/beta.py": "def beta():\n    return 22\n"}, "beta rewritten", 9)
-    git(repo, "rm", "-q", "--cached", "scripts/gamma.py", k=10)
-    git(repo, "commit", "-q", "-m", "gamma untracked", k=10)
-    build(repo, st)
-    beta = committed_blob(repo, "HEAD", "scripts/beta.py")
-    ok, ni, ob, un, zz, lg = ("%s%s" % (k, secrets.token_hex(5)) for k in ("ok", "ni", "ob", "un", "zz", "lg"))
-
-    def lines(sid, name, file="scripts/beta.py", extra=(), **kw):
-        plant_callers(repo, [{"name": name, "file": file, "line": 1}, *extra], [], [file], **kw)
-        return context(run(repo, st, helper_edit(repo, sid))).split("\n")
-    got = lines("bt0", ok)
-    assert "callers 5 (1 in tests): %s scripts/beta.py:1 · +4 more" % ok in got, \
-        "the control: a caller tied to its blob, or its total, was left out: %s" % got[:4]
-    got = lines("bt1", ni, override={"gitnexus": {"scripts/beta.py": {"blob": beta, "indexed": None}}})
-    assert LEFT_OUT + "none shown" in got, \
-        "a name from bytes its graph read that are not its file's blob reached the model: %s" % got[:4]
-    got = lines("bt2", ob, override={"gitnexus": {"scripts/beta.py": {"blob": old_beta, "indexed": old_beta}}})
-    assert LEFT_OUT + "none shown" in got, \
-        "a name from a blob that is not its file's blob at the build reached the model: %s" % got[:4]
-    got = lines("bt3", un, file="scripts/gamma.py",
-                override={"gitnexus": {"scripts/gamma.py": {"blob": gamma, "indexed": gamma}}})
-    assert LEFT_OUT + "none shown" in got, "a name from a file untracked at the build reached the model: %s" % got[:4]
-    got = lines("bt4", ok, extra=[{"name": zz, "file": "scripts/zeta.py", "line": 1}])
-    assert LEFT_OUT + "%s scripts/beta.py:1" % ok in got, "a callers total stood beside a dropped name: %s" % got[:4]
-    plant_callers(repo, [{"name": lg, "file": "scripts/beta.py", "line": 1}], [], ["scripts/beta.py"])
-    alter_pack(repo, lambda pk: pk.pop("provenance"))
-    got = context(run(repo, st, helper_edit(repo, "bt5"))).split("\n")
-    assert LEFT_OUT + "none shown" in got, "a pack with no provenance showed a caller: %s" % got[:4]
-
-
-def check_tail_path_caller(repo, st, ids, tmp):
-    """The verifier's n4_listed_substring under the blob tie: a caller in an untracked `beta.py`, whose path is the tail
-    of the tracked scripts/beta.py, is not shown even beside a record claiming beta's blob (BLOBS.txt's match is the
-    whole path); a same-file caller of a fresh graph is (the control)."""
-    build(repo, st)
-    beta = committed_blob(repo, "HEAD", "scripts/beta.py")
-    sub = "sb" + secrets.token_hex(5)
-    plant_callers(repo, [{"name": sub, "file": "beta.py", "line": 2},
-                         {"name": "main", "file": "scripts/alpha.py", "line": 18}], [], ["beta.py"],
-                  override={"gitnexus": {"beta.py": {"blob": beta, "indexed": beta}}})
-    ctx = context(run(repo, st, helper_edit(repo, "n4s")))
-    assert "main scripts/alpha.py:18" in ctx, "the control: a same-file caller of a fresh graph was left out: %r" % (
-        ctx[:300])
-    assert sub not in ctx, "a caller in an untracked file whose path is the tail of a tracked path was shown"
-
-
-def check_tests_graph(repo, st, ids, tmp):
-    """The verifier's n4_tests_graph: a same-file test is judged by code-review-graph's freshness, a same-file caller by
-    GitNexus's, each graph on its own."""
-    build(repo, st)
-    ct, cc = ("%s%s" % (k, secrets.token_hex(5)) for k in ("ct", "cc"))
-    tests = [{"file": "scripts/alpha.py", "line": 31, "name": ct, "indirect": False}]
-    callers = [{"name": cc, "file": "scripts/alpha.py", "line": 30}]
-    plant_callers(repo, callers, tests, [], count=1, graphs={"gitnexus": "fresh", "code-review-graph": "stale"})
-    ctx = context(run(repo, st, helper_edit(repo, "n4t1")))
-    assert cc in ctx, "the control: a same-file caller of a fresh GitNexus graph was left out: %r" % ctx[:300]
-    assert ct not in ctx, "a same-file test named by a stale code-review-graph was shown (GitNexus fresh)"
-    plant_callers(repo, callers, tests, [], count=1, graphs={"gitnexus": "stale", "code-review-graph": "fresh"})
-    ctx = context(run(repo, st, helper_edit(repo, "n4t2")))
-    assert ct in ctx, "the control: a same-file test of a fresh code-review-graph was left out: %r" % ctx[:300]
-    assert cc not in ctx, "a same-file caller named by a stale GitNexus graph was shown (code-review-graph fresh)"
-
-
-def check_not_indexed(repo, st, ids, tmp):
-    """The verifier's n4_not_indexed: `not-indexed` is not fresh, for a same-file name and for the symbols' graph."""
-    build(repo, st)
-    cc = "ni" + secrets.token_hex(5)
-    plant_callers(repo, [{"name": cc, "file": "scripts/alpha.py", "line": 30}], [], [], count=1,
-                  graphs={"gitnexus": "not-indexed"})
-    ctx = context(run(repo, st, helper_edit(repo, "n4n1")))
-    assert ctx.startswith("codemap scripts/alpha.py:6"), "the control: no code part: %r" % ctx[:80]
-    assert cc not in ctx, "a same-file caller named by a GitNexus graph that had not indexed the file was shown"
-    alter_pack(repo, lambda pk: pk["instruments"]["graft"].update(graph="not-indexed"))
-    ctx = context(run(repo, st, read(repo, "scripts/alpha.py", sid="n4n2")))
-    assert ctx.startswith("filepack scripts/alpha.py @") and "codemap " not in ctx, \
-        "a code part whose symbol graph had not indexed the file was shown: %r" % ctx[:80]
-
-
-def check_caller_files_missing(repo, st, ids, tmp):
-    """The verifier's n4_caller_files_missing: a callers total with no caller_files to vouch for it is left out."""
-    build(repo, st)
-    trk = "cf" + secrets.token_hex(5)
-    plant_callers(repo, [{"name": trk, "file": "scripts/beta.py", "line": 2}], [], ["scripts/beta.py"], count=4)
-    got = context(run(repo, st, helper_edit(repo, "n4c0"))).split("\n")
-    assert any(ln.startswith("callers 4") for ln in got), "the control: a clean pack's total was left out: %s" % got[:4]
-    alter_pack(repo, lambda pk: pk.pop("caller_files"))
-    got = context(run(repo, st, helper_edit(repo, "n4c1"))).split("\n")
-    assert not any(ln.startswith("callers 4") for ln in got), "a total stood with no caller_files to vouch for it"
 
 
 # The verifier's seven (VERIFY-K2 R2 finding 4: each mutant survived the round-2 checks), from its mutdrv3.py killers.
@@ -1326,12 +1094,305 @@ def check_files_max(repo, st, ids, tmp):
     assert n == 64, "a command line gave %d paths, not FILES_MAX (64)" % n
 
 
+# ---------- K2 RE-SCOPE (D-117): (b) nothing unless the build's tree is HEAD's; (a) the blob's own symbols ----
+
+def check_tree_after_reset(repo, st, ids, tmp):
+    """VERIFY-K2-R4's R4-1 on built packs: a commit adds a ledger line naming scripts/beta.py and a def to
+    scripts/alpha.py, a canary each, and a build follows; `git reset --mixed HEAD~1` moves HEAD back and runs no hook,
+    so the packs describe the undone commit: nothing is shown, and the record says tree. The same after the commit is
+    made again, built, and undone by `git reset --soft HEAD~1`. Before each reset the canaries show (the control)."""
+    cn = "rs" + secrets.token_hex(5)
+    led, alpha = (repo / LEDGER).read_text(), (repo / "scripts" / "alpha.py").read_text()
+    changed = {LEDGER: led + "**T9 HOME.** %s: a line naming scripts/beta.py\n" % cn,
+               "scripts/alpha.py": alpha + "\n\ndef leak_%s(x):\n    return x\n" % cn}
+    for k, mode in enumerate(("--mixed", "--soft")):
+        head = commit(repo, changed, "canaries", 9 + k)
+        plant_code_pack(repo, "scripts/alpha.py", head)
+        build(repo, st)
+        probes = [read(repo, "scripts/beta.py", sid="tr%d-b" % k), read(repo, "scripts/alpha.py", sid="tr%d-a" % k)]
+        assert all(cn in context(run(repo, st, p)) for p in probes), "the control: a committed canary was not shown"
+        git(repo, "reset", "-q", mode, "HEAD~1")
+        for p in probes:
+            p = dict(p, session_id=p["session_id"] + "-after")
+            ctx = context(run(repo, st, p))
+            assert cn not in ctx and ctx == "", "a byte HEAD's tree does not hold reached the model: %r" % ctx[:120]
+            rel = p["tool_input"]["file_path"][len(str(repo)) + 1:]
+            assert records(st)[-1]["skipped"] == [{"key": "file:" + rel, "why": "tree"}], records(st)[-1]
+
+
+def check_same_tree_move(repo, st, ids, tmp):
+    """scripts/push_clean.sh:69-72 moves the branch to a commit with the same tree (its rewrite) and runs no hook: the
+    packs describe that tree, so they still show (trees, not commits)."""
+    build(repo, st)
+    head = git(repo, "rev-parse", "HEAD").strip()
+    new = git(repo, "commit-tree", "HEAD^{tree}", "-p", "HEAD~1", "-m", "rewritten", k=9).strip()
+    git(repo, "update-ref", git(repo, "symbolic-ref", "HEAD").strip(), new)
+    assert git(repo, "rev-parse", "HEAD").strip() == new != head and git(repo, "rev-parse", "HEAD^{tree}") == git(
+        repo, "rev-parse", head + "^{tree}"), "not the case: a same-tree ref move"
+    assert json.loads((st / "filepacks" / "BUILD.json").read_text())["commit"] == head, "not the case: a build before"
+    for k, p in enumerate((read(repo, "scripts/alpha.py", sid="st0"), read(repo, "docs/NOTE.md", sid="st1"))):
+        ctx = context(run(repo, st, p))
+        assert ctx.startswith(("codemap scripts/alpha.py — ", "filepack docs/NOTE.md @")[k]), \
+            "the packs of HEAD's tree were not shown after a same-tree ref move: %r" % ctx[:80]
+
+
+def check_head_unresolved(repo, st, ids, tmp):
+    """A HEAD that cannot be resolved shows nothing: an unborn branch, no repository (.git moved away; the search stops
+    at the repo's parent), a git that does not answer within HEAD_TIMEOUT (a `git` first on PATH that sleeps: the real
+    one cannot be made to hang on demand); a HEAD that resolves shows (the control, before and after)."""
+    build(repo, st)
+    env = dict(env_for(repo, st), GIT_CEILING_DIRECTORIES=str(repo.parent))
+    assert context(run(repo, st, read(repo, "docs/NOTE.md", sid="hu0"), env=env)), "the control: a HEAD that resolves"
+    ref = git(repo, "symbolic-ref", "HEAD").strip()
+    git(repo, "symbolic-ref", "HEAD", "refs/heads/k2-unborn")
+    try:
+        ctx = context(run(repo, st, read(repo, "docs/NOTE.md", sid="hu1"), env=env))
+    finally:
+        git(repo, "symbolic-ref", "HEAD", ref)
+    assert ctx == "", "an unresolved HEAD showed a pack (an unborn branch): %r" % ctx[:80]
+    os.rename(repo / ".git", tmp / "dotgit-away")
+    try:
+        ctx = context(run(repo, st, read(repo, "docs/NOTE.md", sid="hu2"), env=env))
+    finally:
+        os.rename(tmp / "dotgit-away", repo / ".git")
+    assert ctx == "", "an unresolved HEAD showed a pack (no repository): %r" % ctx[:80]
+    shim = tmp / "slow-git"
+    shim.mkdir()
+    (shim / "git").write_text("#!/bin/sh\nexec sleep 30\n")
+    (shim / "git").chmod(0o755)
+    t0 = time.monotonic()
+    ctx = context(run(repo, st, read(repo, "docs/NOTE.md", sid="hu3"), env=dict(env, PATH="%s:%s" % (
+        shim, env["PATH"])), timeout=25))
+    assert ctx == "" and time.monotonic() - t0 < 15, "an unresolved HEAD showed a pack (a git that does not answer)"
+    assert context(run(repo, st, read(repo, "docs/NOTE.md", sid="hu4"), env=env)), "the control: after"
+
+
+def check_late_code_pack(repo, st, ids, tmp):
+    """The code map's refresh waits on the graph re-indexes, so it can lag the file-pack build: a code pack of
+    alpha.py's blob at an older commit, whose def a later commit removed, is left out (`blob`) and the pack's lines show
+    alone; once the code pack is of the build's blob it shows (the control)."""
+    cn = "lc" + secrets.token_hex(5)
+    alpha = (repo / "scripts" / "alpha.py").read_text()
+    old = commit(repo, {"scripts/alpha.py": alpha + "\n\ndef old_%s(x):\n    return x\n" % cn}, "an old def", 9)
+    plant_code_pack(repo, "scripts/alpha.py", old)
+    commit(repo, {"scripts/alpha.py": alpha}, "the old def removed", 10)
+    build(repo, st)
+    ctx = context(run(repo, st, read(repo, "scripts/alpha.py", sid="lc0")))
+    assert cn not in ctx, "a code pack of another blob reached the model"
+    assert ctx.startswith("filepack scripts/alpha.py @"), ctx[:80]
+    assert records(st)[-1]["injected"][0].get("code_skip") == "blob", records(st)[-1]["injected"]
+    plant_code_pack(repo, "scripts/alpha.py", git(repo, "rev-parse", "HEAD").strip())
+    ctx = context(run(repo, st, read(repo, "scripts/alpha.py", sid="lc1")))
+    assert ctx.startswith("codemap scripts/alpha.py — 5 symbols"), "the control: the build's blob: %r" % ctx[:80]
+
+
+def codemap_build(repo, tmp, *rels):
+    """The REAL code-map builder of the fixture (`codemap.py build`), no graph on PATH (their sections say absent)."""
+    r = subprocess.run([sys.executable, "scripts/codemap.py", "build", *rels], cwd=repo, capture_output=True,
+                       text=True, timeout=120, env={"PATH": "/usr/bin:/bin", "HOME": str(tmp), "LANG": "C.UTF-8",
+                                                    "PYTHONDONTWRITEBYTECODE": "1"})
+    assert r.returncode == 0, (r.stdout[-400:], r.stderr[-400:])
+    return r.stdout
+
+
+def check_committed_symbols(repo, st, ids, tmp):
+    """D-117 (a): the real code-map builder over a working copy of alpha.py that holds an uncommitted def with a canary.
+    The pack describes the committed blob, so the canary never reaches the model on Edit, Read or cat; the committed
+    symbols do (the control: helper's entry on the Edit, the symbols on the Read), with the STALE mark."""
+    cn = "cs" + secrets.token_hex(5)
+    with open(repo / "scripts" / "alpha.py", "a", encoding="utf-8") as f:
+        f.write("\n\ndef leak_%s(token='%s-arg'):\n    return token\n" % (cn, cn))
+    out = codemap_build(repo, tmp, "scripts/alpha.py")
+    assert out.startswith("built scripts/alpha.py "), "not the real builder: %r" % out[-300:]
+    build(repo, st)
+    probes = [edit(repo, "scripts/alpha.py", "    return x + 1", sid="cs0"), read(repo, "scripts/alpha.py", sid="cs1"),
+              bash(repo, "cat scripts/alpha.py", sid="cs2")]
+    for k, p in enumerate(probes):
+        ctx = context(run(repo, st, p))
+        assert cn not in ctx, "an uncommitted symbol reached the model"
+        assert ctx.startswith(("codemap scripts/alpha.py:6 — function helper L5-6 · def helper(x)",
+                               "codemap scripts/alpha.py — 5 symbols", "codemap scripts/alpha.py — 5 symbols")[k]) \
+            and "\nSTALE: the file changed" in ctx, "the control: the committed symbols: %r" % ctx[:120]
+
+
+def check_legacy_symbols(repo, st, ids, tmp):
+    """D-117 (a): a code pack whose symbols came from a graph (a code map from before the re-scope: symbols_from graft,
+    code-review-graph or none) is left out (`symbols`) and the pack's lines show alone, even with the build's blob; the
+    builder's own marker shows (the control, with the same planted symbol)."""
+    build(repo, st)
+    cn = "lg" + secrets.token_hex(5)
+    alter_pack(repo, lambda pk: pk["symbols"].append(dict(pk["symbols"][0], name=cn, qualname=cn, start=16, end=16)))
+    for k, src in enumerate(("graft", "code-review-graph", None, "ast")):
+        alter_pack(repo, lambda pk: pk.update(symbols_from=src))
+        ctx = context(run(repo, st, read(repo, "scripts/alpha.py", sid="lg%d" % k)))
+        if src == "ast":
+            assert cn in ctx, "the control: the builder's marker was left out: %r" % ctx[:120]
+            break
+        assert cn not in ctx and ctx.startswith("filepack scripts/alpha.py @"), \
+            "a code part whose symbols came from a graph reached the model: %r" % ctx[:80]
+        assert records(st)[-1]["injected"][0].get("code_skip") == "symbols", records(st)[-1]["injected"]
+
+
+def check_no_graph_text(repo, st, ids, tmp):
+    """The callers-and-tests surface went (K2 RE-SCOPE): a canary in every graph field of alpha's code pack (per symbol
+    a caller's name and file, its counts and risk; the file's tests and caller files; each graph section's state and
+    note) shows on none of an Edit in a symbol, an Edit at module level, a Read range, a whole Read and cat, and no line
+    names a risk, a caller, a test or an instrument; the symbols show (the control)."""
+    build(repo, st)
+    cn = "ng" + secrets.token_hex(5)
+
+    def change(pk):
+        for s in pk["symbols"]:
+            s["gitnexus"] = {"id": "x", "risk": "HIGH" + cn, "impacted": 912345, "direct": 912346, "callers": {
+                "count": 912347, "tests": 912348,
+                "sample": [{"name": "c" + cn, "file": "scripts/%s.py" % cn, "line": 3}]}}
+        pk["tests"] = [{"file": "tests/test_%s.py" % cn, "line": 1, "name": "test_" + cn, "indirect": False}]
+        pk["caller_files"] = ["scripts/%s.py" % cn]
+        for g in ("graft", "gitnexus", "code-review-graph"):
+            pk["instruments"][g].update(graph="stale", note=cn)
+    alter_pack(repo, change)
+    probes = [edit(repo, "scripts/alpha.py", "    return x + 1", sid="ng0"), edit(repo, "scripts/alpha.py", "import os",
+                                                                              sid="ng1"),
+              read(repo, "scripts/alpha.py", sid="ng2", offset=9, limit=6), read(repo, "scripts/alpha.py", sid="ng3"),
+              bash(repo, "cat scripts/alpha.py", sid="ng4")]
+    for p in probes:
+        ctx = context(run(repo, st, p))
+        assert ctx.startswith("codemap scripts/alpha.py"), "the control: no code part: %r" % ctx[:80]
+        lines = ctx.split("\n")
+        assert cn not in ctx and "91234" not in ctx and not any(ln.startswith((
+            "risk", "callers", "tests of the file", "instruments:")) for ln in lines), \
+            "a graph's caller, test, count or state reached the model: %r" % ctx[:300]
+
+
+def check_registry_screens(repo, st, ids, tmp):
+    """A registry row carries its id and message from the screen's table: it shows only when the screen the code map ran
+    (its recorded blobs of scripts/ap_screen.py and .claude/hooks/edit-snapshot.py) is the build's committed one. Both
+    committed and recorded: the row shows (the control); a pack recorded over an uncommitted edit of either file (a
+    canary in the row's message): the row is left out, and the code part stays."""
+    commit(repo, {SCREENS[0]: "# the screen's code, a fixture\n", SCREENS[1]: "AP_SCREEN = []\n"}, "the screen", 9)
+    plant_code_pack(repo, "scripts/alpha.py", git(repo, "rev-parse", "HEAD").strip())
+    build(repo, st)
+    lines = context(run(repo, st, edit(repo, "scripts/alpha.py", "import os", sid="rg0"))).split("\n")
+    assert "registry rows here 1: AF-AP-9 :2 import os — a fixture row" in lines, "the control: the row: %s" % lines
+    for k, rel in enumerate(SCREENS):
+        cn = "rg" + secrets.token_hex(5)
+        before = (repo / rel).read_text()
+        (repo / rel).write_text(before + "# %s\n" % cn)
+        blob = git(repo, "hash-object", "--", rel).strip()
+        (repo / rel).write_text(before)
+
+        def change(pk):
+            pk["instruments"]["ap_screen"]["screens"][rel] = blob
+            pk["registry"][0]["message"] = cn
+        alter_pack(repo, change)
+        ctx = context(run(repo, st, edit(repo, "scripts/alpha.py", "import os", sid="rg%d" % (k + 1))))
+        assert ctx.startswith("codemap scripts/alpha.py:2 — module level"), "the control: no code part: %r" % ctx[:80]
+        assert cn not in ctx and "AF-AP-9" not in ctx, \
+            "a registry row from a screen the build does not hold reached the model: %r" % ctx[:200]
+        plant_code_pack(repo, "scripts/alpha.py", git(repo, "rev-parse", "HEAD").strip())
+
+
+def check_build_in_flight(repo, st, ids, tmp):
+    """A build rewrites the packs before it writes its record, so while it runs the record is the last build's: the
+    build replaces the record with one that names no tree before it changes any pack. The case: a build at the fixture's
+    head; a commit adds a ledger line naming scripts/beta.py with a canary; `git reset --soft HEAD~1` puts HEAD back on
+    the built tree; a build at the undone commit (as its post-commit hook launched it) runs, and a Read of
+    scripts/beta.py is made the moment its packs are written (at its BLOBS.txt write). Nothing is shown and the record
+    says tree, while the pack on disk holds the canary (else: not the case)."""
+    build(repo, st)
+    cn = "bf" + secrets.token_hex(5)
+    head = commit(repo, {LEDGER: (repo / LEDGER).read_text() + "**T9 HOME.** %s: a line naming scripts/beta.py\n" % cn},
+                  "a canary line", 9)
+    git(repo, "reset", "-q", "--soft", "HEAD~1")
+    fp, seen = load(repo), {}
+    real, n = fp._write, len(records(st))
+
+    def probe(path, raw):
+        if path.endswith("BLOBS.txt") and not seen:
+            seen["pack"] = cn in (st / "filepacks" / "scripts" / "beta.py.json").read_text()
+            seen["ctx"] = context(run(repo, st, read(repo, "scripts/beta.py", sid="bf0")))
+            seen["recs"] = records(st)[n:]
+        return real(path, raw)
+    fp._write = probe
+    fp.build(repo, st, sha=head)
+    assert seen.get("pack"), "not the case: the build had not written the canary's pack: %s" % seen
+    assert cn not in seen["ctx"] and seen["ctx"] == "", \
+        "a byte HEAD's tree does not hold reached the model (a build in flight): %r" % seen["ctx"][:120]
+    assert [r["skipped"] for r in seen["recs"]] == [[{"key": "file:scripts/beta.py", "why": "tree"}]], seen["recs"]
+
+
+def check_record_rechecked(repo, st, ids, tmp):
+    """The record is read before the parts and again after them: a build that began in between (it replaces the record
+    first) may have rewritten a part, so the parts go (tree). In process: the entry of scripts/alpha.py, with a
+    build's first write (a record with no tree) landing right after the reader's P2 read; the same entry with no build
+    between shows the code part (the control)."""
+    build(repo, st)
+    fp = load(repo)
+    e = fp.entry("scripts/alpha.py", {}, packs=fp.Packs(repo, st))
+    assert e["text"].startswith("codemap scripts/alpha.py — "), "the control: %r" % e["text"][:80]
+    path = st / "filepacks" / "BUILD.json"
+    raw, real = path.read_bytes(), fp._p2_lines
+
+    def p2(rel, packs):
+        out = real(rel, packs)
+        path.write_text(json.dumps({"schema": 1, "commit": "0" * 40, "building": True}) + "\n")
+        return out
+    fp._p2_lines = p2
+    try:
+        e = fp.entry("scripts/alpha.py", {}, packs=fp.Packs(repo, st))
+    finally:
+        path.write_bytes(raw)
+    assert e["text"] == "" and e["skip"] == "tree", \
+        "a part read while a build began reached the model: %r" % e["text"][:120]
+
+
+def check_record_rebuilt(repo, st, ids, tmp):
+    """Two builds while the parts are read, another commit's and then HEAD's again, each taking 0 ms (the module's
+    clock is held): the record ends with the fields it began with, and the part read between was the other commit's.
+    Its id tells the two HEAD builds apart, so nothing shows. The case: a build at the fixture's head; a commit adds a
+    ledger line naming scripts/beta.py with a canary; `git reset --soft HEAD~1`; builds of that commit and of HEAD; the
+    entry of scripts/beta.py, with both builds run around the reader's P2 read (it holds the canary, else not the case).
+    The entry with no build between shows the pack (the control)."""
+    build(repo, st)
+    cn = "rb" + secrets.token_hex(5)
+    line = "**T9 HOME.** %s: a line naming scripts/beta.py\n" % cn
+    other = commit(repo, {LEDGER: (repo / LEDGER).read_text() + line}, "a canary line", 9)
+    git(repo, "reset", "-q", "--soft", "HEAD~1")
+    fp = load(repo)
+
+    class Clock:                                         # the module's clock: every build is 0 ms long
+        monotonic = staticmethod(lambda: 0.0)
+
+        def __getattr__(self, name):
+            return getattr(time, name)
+    fp.time = Clock()
+    fp.build(repo, st, sha=other)
+    fp.build(repo, st)                                   # HEAD's after the other commit's: the record the reader reads
+    e = fp.entry("scripts/beta.py", {}, packs=fp.Packs(repo, st))
+    assert e["text"].startswith("filepack scripts/beta.py @") and cn not in e["text"], "the control: %r" % e["text"]
+    path, real, seen = st / "filepacks" / "BUILD.json", fp._p2_lines, {}
+
+    def p2(rel, packs):
+        fp.build(repo, st, sha=other)
+        out = real(rel, packs)
+        seen["read"] = "\n".join(out)
+        fp.build(repo, st)
+        return out
+    fp._p2_lines = p2
+    before = json.loads(path.read_text())
+    e = fp.entry("scripts/beta.py", {}, packs=fp.Packs(repo, st))
+    after = json.loads(path.read_text())
+    assert cn in seen.get("read", ""), "not the case: the part read was not the other commit's: %s" % seen
+    assert dict(before, id=None) == dict(after, id=None), "not the case: the record changed more than its id"
+    assert cn not in e["text"] and e["text"] == "" and e["skip"] == "tree", \
+        "a part another build wrote reached the model (two builds while the parts were read): %r" % e["text"][:120]
+
 CHECKS = {"edit-once-per-symbol": check_edit_once_per_symbol, "read-range": check_read_range,
           "bash-readers": check_bash_readers, "reset": check_reset, "doc-pack-lines": check_doc_pack_lines,
           "build-lines": check_build_lines, "build-briefs-commits": check_build_briefs_commits,
           "build-sha-threaded": check_build_sha_threaded, "build-removes": check_build_removes,
           "build-meta": check_build_meta, "budget-cut": check_budget_cut,
-          "older-p2-stale-code": check_older_p2_stale_code, "corrupt": check_corrupt,
+          "stale-code": check_stale_code, "corrupt": check_corrupt,
           "missing-state": check_missing_state, "lock-held": check_lock_held, "empty-fields": check_empty_fields,
           "untracked": check_untracked, "outside-root": check_outside_root, "links": check_links,
           "data-words": check_data_words, "call-and-window-max": check_call_and_window_max,
@@ -1348,24 +1409,23 @@ CHECKS = {"edit-once-per-symbol": check_edit_once_per_symbol, "read-range": chec
           "dot-slash": check_dot_slash, "nul-newline": check_nul_newline, "cd-scope": check_cd_scope,
           "pushd-popd": check_pushd_popd, "grep-pattern": check_grep_pattern, "nested-script": check_nested_script,
           "remote": check_remote, "linear-parse": check_linear_parse,
-          # round 3 (VERIFY-K2 R2): B1, B2, and the verifier's seven (finding 4)
-          "untracked-callers": check_untracked_callers, "same-file-stale": check_same_file_stale,
-          "caller-path-newline": check_caller_path_newline, "stale-symbol-graph": check_stale_symbol_graph,
-          "sourceless-symbols": check_sourceless_symbols, "blobs-missing": check_blobs_missing,
-          "grep-long-value": check_grep_long_value, "grep-attached": check_grep_attached,
-          "script-paren": check_script_paren, "dq-substitution": check_dq_substitution,
-          "grep-double-dash": check_grep_double_dash, "files-max": check_files_max,
-          # round 4 (D-115): item 1's clauses, and the verifier's four n4 checks under the blob tie
-          "blob-tie": check_blob_tie, "tail-path-caller": check_tail_path_caller, "tests-graph": check_tests_graph,
-          "not-indexed": check_not_indexed, "caller-files-missing": check_caller_files_missing}
+          # round 3 (VERIFY-K2 R2): the verifier's seven (finding 4)
+          "blobs-missing": check_blobs_missing, "grep-long-value": check_grep_long_value,
+          "grep-attached": check_grep_attached, "script-paren": check_script_paren,
+          "dq-substitution": check_dq_substitution, "grep-double-dash": check_grep_double_dash,
+          "files-max": check_files_max,
+          # K2 RE-SCOPE (D-117): (b) the tree check, (a) the committed blob's own symbols, the surface that went
+          "tree-after-reset": check_tree_after_reset, "same-tree-move": check_same_tree_move,
+          "head-unresolved": check_head_unresolved, "late-code-pack": check_late_code_pack,
+          "committed-symbols": check_committed_symbols, "legacy-symbols": check_legacy_symbols,
+          "no-graph-text": check_no_graph_text, "registry-screens": check_registry_screens,
+          "build-in-flight": check_build_in_flight, "record-rechecked": check_record_rechecked,
+          "record-rebuilt": check_record_rebuilt}
 # one mutation per property: (the check it must fail, old text, new text, the failure it must fail with)
-ALL_KEPT = ('    all_kept = fresh["gitnexus"] and isinstance(files, list) and all(proven(f, "gitnexus") for f in '
-            'files + [rel])\n')
-TESTS_KEPT = '    pack["tests"] = [x for x in pack.get("tests") or [] if keep(x, "code-review-graph")]\n'
-STALE_GRAPH = '    if (src is not None or pack.get("symbols")) and (graphs.get(src) or {}).get("graph") != "fresh":\n'
-PROVEN_HEAD = '        return (isinstance(rec, dict) and "\\n" not in f and isinstance(rec.get("blob"), str)\n'
-PROVEN_TAIL = '                and rec.get("indexed") == rec["blob"] and rec["blob"] == packs.blob(f))\n'
-PROV_LINE = '    prov = pack.get("provenance") if isinstance(pack.get("provenance"), dict) else {}\n'
+TREE_GATE = ('    if not packs.current():\n        return dict(res, skip="tree")                    # D-117 (b): the '
+             "packs describe a tree that is not HEAD's\n")
+TRY_CODE = "    try:\n        status, text, sym, stale, skip = _code_part(rel, ti, packs)\n"
+CURRENT = '            want, got = self.record().get("tree"), _rev(self.root, "HEAD^{tree}")\n'
 MUTANTS = {
     "edit-key-per-file": ("edit-once-per-symbol",
                           'key = "sym:%s:%s" % (rel, e["symbol"]) if tool == "Edit" and e["symbol"] else fkey',
@@ -1418,9 +1478,9 @@ MUTANTS = {
                      "            break", "the cut is not on a line boundary"),
     "chars-not-bytes": ("budget-cut", 'cost = len(ln.encode("utf-8")) + (1 if kept else 0)',
                         "cost = len(ln) + (1 if kept else 0)", "over budget"),
-    "stale-passes": ("older-p2-stale-code", "if stale and not any(STALE_MARK in ln for ln in kept):", "if False:",
+    "stale-passes": ("stale-code", "if stale and not any(STALE_MARK in ln for ln in kept):", "if False:",
                      "a stale code part went out without its STALE mark"),
-    "stale-word-only": ("older-p2-stale-code", "if stale and not any(STALE_MARK in ln for ln in kept):",
+    "stale-word-only": ("stale-code", "if stale and not any(STALE_MARK in ln for ln in kept):",
                         'if stale and not any("STALE" in ln for ln in kept):',
                         "a stale code part went out without its STALE mark (the word in a symbol's name)"),
     "corrupt-code-pack-ignored": ("corrupt", '        raise PackError("corrupt") from None\n    if not isinstance(pack, dict)',
@@ -1455,9 +1515,11 @@ MUTANTS = {
                         "a bytecode cache was written under .claude"),
     "sidechain-counted": ("replay", 'if rec.get("type") != "assistant" or rec.get("isSidechain") or',
                           'if rec.get("type") != "assistant" or', "the replay counted a subagent's call"),
-    # round 2: F1
-    "no-blob-check": ("untracked-since-build", 'if pack["blob"] != packs.blob(rel):', "if False:",
-                      "the untracked file's text reached the model"),
+    # round 2: F1 (since the re-scope the tree check guards F1's shape first; the blob check guards a late code pack)
+    "no-blob-check": ("late-code-pack", 'if pack["blob"] != packs.blob(rel):', "if False:",
+                      "a code pack of another blob reached the model"),
+    "untracked-since-build-tree-off": ("untracked-since-build", TREE_GATE, "",
+                                       "the packs of a tree that is not HEAD's reached the model"),
     "blobs-suffix-match": ("blobs-exact-path", 'key = ("\\n%s\\t" % rel).encode("utf-8")',
                            'key = ("%s\\t" % rel).encode("utf-8")', "a code pack was checked against another file's blob"),
     # round 2: the verifier's seventeen (VERIFY-K2 F14), each anchored on this file's text
@@ -1518,36 +1580,6 @@ MUTANTS = {
                               "a command under ssh injected"),
     "no-word-cap": ("linear-parse", "        for s, e in self.toks[i:i + WORDS_MAX]:", "        for s, e in self.toks[i:]:",
                     "the parse is not linear"),
-    # round 3: B1 (a filter per list, the total both ways), the same-file names of a stale graph, the exact line
-    "untracked-callers-kept": ("untracked-callers", '        kept = [x for x in sample if keep(x, "gitnexus")]\n',
-                               "        kept = list(sample)\n", "an untracked caller reached the model"),
-    "untracked-tests-kept": ("untracked-callers", TESTS_KEPT, '    pack["tests"] = pack.get("tests") or []\n',
-                             "an untracked test reached the model"),
-    "callers-total-kept": ("untracked-callers", "        if not all_kept or len(kept) < len(sample):\n",
-                           "        if False:\n", "a callers total counted a caller the model is not shown"),
-    "callers-total-always-dropped": ("untracked-callers", ALL_KEPT, "    all_kept = False\n",
-                                     "the control: a clean pack's callers total was left out"),
-    "caller-files-ignored": ("untracked-callers", ALL_KEPT, '    all_kept = fresh["gitnexus"]\n',
-                             "a callers total counted an unseen untracked caller"),
-    "same-file-names-from-stale-graphs": ("same-file-stale",
-                                          "        return proven(f, graph) and (f != rel or fresh[graph])\n",
-                                          "        return proven(f, graph)\n",
-                                          "a caller named by a stale GitNexus graph of this file reached the model"),
-    "stale-gitnexus-total-stands": ("same-file-stale", ALL_KEPT,
-                                    '    all_kept = isinstance(files, list) and all(proven(f, "gitnexus") for f in '
-                                    'files + [rel])\n', "a callers total from a stale GitNexus graph stood"),
-    "blobs-newline-unguarded": ("caller-path-newline", PROVEN_HEAD,
-                                '        return (isinstance(rec, dict) and isinstance(rec.get("blob"), str)\n',
-                                "a caller path holding a newline took another file's blob"),
-    # B2: the clause, its source graph, a pack with symbols and no source
-    "stale-symbol-graph-shown": ("stale-symbol-graph", STALE_GRAPH, "    if False:\n",
-                                 "a code part from a stale symbol graph reached the model"),
-    "symbol-graph-always-graft": ("stale-symbol-graph", '(graphs.get(src) or {}).get("graph") != "fresh"',
-                                  '(graphs.get("graft") or {}).get("graph") != "fresh"',
-                                  "a code part from a stale symbol graph reached the model"),
-    "sourceless-symbols-shown": ("sourceless-symbols", '    if (src is not None or pack.get("symbols")) and',
-                                 "    if src is not None and",
-                                 "a code part whose symbols name no source graph reached the model"),
     # the verifier's seven, with the anchors and replacements of its mutdrv2.py and mutdrv3.py
     "blob-fail-open": ("blobs-missing", '    if pack["blob"] != packs.blob(rel):',
                        '    if packs.blob(rel) is not None and pack["blob"] != packs.blob(rel):',
@@ -1564,60 +1596,73 @@ MUTANTS = {
     "grep-double-dash-dropped": ("grep-double-dash", "            operands += words[i:]\n            break\n",
                                  "            break\n", "grep -- lost its files or read its pattern"),
     "files-max-off": ("files-max", "FILES_MAX = 64 ", "FILES_MAX = 10 ** 9 ", "not FILES_MAX (64)"),
-    # round 4 (D-115): a named mutant per clause of item 1, the reader's side (the builder's are in test_codemap.py)
-    "blob-tie-by-path": ("blob-tie", PROVEN_TAIL, '                and rec.get("indexed") == rec["blob"] and '
-                         'packs.tracked(f))\n', "a name from a blob that is not its file's blob at the build"),
-    "indexed-hash-skipped": ("blob-tie", PROVEN_TAIL, '                and rec["blob"] == packs.blob(f))\n',
-                             "a name from bytes its graph read that are not its file's blob reached the model"),
-    "missing-blob-accepted": ("blob-tie", PROVEN_TAIL, '                and rec.get("indexed") == rec["blob"] and '
-                              'packs.blob(f) in (None, rec["blob"]))\n',
-                              "a name from a file untracked at the build reached the model"),
-    "total-kept-on-drop": ("blob-tie", "        if not all_kept or len(kept) < len(sample):\n",
-                           "        if not all_kept:\n", "a callers total stood beside a dropped name"),
-    "legacy-pack-trusted": ("blob-tie", PROV_LINE, PROV_LINE + "    if not prov:\n        return\n",
-                            "a pack with no provenance showed a caller"),
-    "committed-filter-uncalled": ("untracked-callers", "    _committed_only(pack, rel, packs, graphs)\n", "",
-                                  "an untracked caller reached the model"),
-    "blob-tie-off": ("blob-tie", PROVEN_HEAD + PROVEN_TAIL, "        return True\n",   # the class test's leak control
-                     "a name from bytes its graph read that are not its file's blob reached the model"),
-    # round 4: the verifier's mutants of round 3's clauses (VERIFY-K2 R3 item 6, mutdrv4.py), re-anchored
-    "blob-key-substring": ("tail-path-caller", 'key = ("\\n%s\\t" % rel).encode("utf-8")',
-                           'key = ("%s\\t" % rel).encode("utf-8")',
-                           "a caller in an untracked file whose path is the tail of a tracked path was shown"),
-    "tests-by-gitnexus": ("tests-graph", TESTS_KEPT,
-                          '    pack["tests"] = [x for x in pack.get("tests") or [] if keep(x, "gitnexus")]\n',
-                          "a same-file test named by a stale code-review-graph was shown (GitNexus fresh)"),
-    "callers-by-crg": ("tests-graph", '        kept = [x for x in sample if keep(x, "gitnexus")]\n',
-                       '        kept = [x for x in sample if keep(x, "code-review-graph")]\n',
-                       "the control: a same-file caller of a fresh GitNexus graph was left out"),
-    "keep-rel-any-graph": ("tests-graph", "        return proven(f, graph) and (f != rel or fresh[graph])\n",
-                           "        return proven(f, graph) and (f != rel or any(fresh.values()))\n",
-                           "a same-file test named by a stale code-review-graph was shown (GitNexus fresh)"),
-    "tests-rel-unfiltered": ("tests-graph", TESTS_KEPT, '    pack["tests"] = [x for x in pack.get("tests") or [] if '
-                             'isinstance(x, dict) and proven(x.get("file"), "code-review-graph")]\n',
-                             "a same-file test named by a stale code-review-graph was shown (GitNexus fresh)"),
-    "fresh-unless-stale": ("not-indexed", '    fresh = {g: (graphs.get(g) or {}).get("graph") == "fresh" for g in '
-                           '("gitnexus", "code-review-graph")}\n', '    fresh = {g: (graphs.get(g) or {}).get("graph") '
-                           '!= "stale" for g in ("gitnexus", "code-review-graph")}\n',
-                           "a same-file caller named by a GitNexus graph that had not indexed the file was shown"),
-    "clause-not-indexed-passes": ("not-indexed", '(graphs.get(src) or {}).get("graph") != "fresh"',
-                                  '(graphs.get(src) or {}).get("graph") not in ("fresh", "not-indexed")',
-                                  "a code part whose symbol graph had not indexed the file was shown"),
-    "files-not-list-ok": ("caller-files-missing", ALL_KEPT, '    all_kept = fresh["gitnexus"] and (not '
-                          'isinstance(files, list) or all(proven(f, "gitnexus") for f in files + [rel]))\n',
-                          "a total stood with no caller_files to vouch for it"),
+    # K2 RE-SCOPE (D-117): the brief's item 7 on the reader's side, and one per new clause
+    "tree-check-off": ("tree-after-reset", TREE_GATE, "", "a byte HEAD's tree does not hold reached the model"),
+    "p2-outside-the-check": ("tree-after-reset", TREE_GATE + TRY_CODE,
+                             "    try:\n        status, text, sym, stale, skip = _code_part(rel, ti, packs) "
+                             'if packs.current() else (None, "", None, None, "tree")\n',
+                             "a byte HEAD's tree does not hold reached the model"),
+    "commits-not-trees": ("same-tree-move", CURRENT, '            want, got = self.record().get("commit"), '
+                          '_rev(self.root, "HEAD")\n',
+                          "the packs of HEAD's tree were not shown after a same-tree ref move"),
+    "unresolved-head-trusted": ("head-unresolved", " and got == want\n", " and got in (want, None)\n",
+                                "an unresolved HEAD showed a pack (an unborn branch)"),
+    "tree-at-head": ("build-sha-threaded", '_git(root, "rev-parse", "--verify", sha + "^{tree}")',
+                     '_git(root, "rev-parse", "--verify", "HEAD^{tree}")', "the build recorded another commit's tree"),
+    "no-tree-in-build": ("build-meta", '"commit": sha, "tree": tree, ', '"commit": sha, ',
+                         "the build recorded no tree"),
+    "legacy-symbols-shown": ("legacy-symbols", '    if pack.get("symbols_from") != "ast":\n', "    if False:\n",
+                             "a code part whose symbols came from a graph reached the model"),
+    "screens-unchecked": ("registry-screens", "    if not _screened(pack, packs):\n", "    if False:\n",
+                          "a registry row from a screen the build does not hold reached the model"),
+    "screens-one-file": ("registry-screens", "for p in codemap().SCREENS)", "for p in codemap().SCREENS[:1])",
+                         "a registry row from a screen the build does not hold reached the model"),
+    "no-building-marker": ("build-in-flight",
+                           '    _write(str(pdir / "BUILD.json"), (json.dumps({"schema": SCHEMA, "commit": sha, '
+                           '"building": True}, sort_keys=True)\n' + " " * 38 + '+ "\\n").encode("utf-8"))', "    pass",
+                           "a byte HEAD's tree does not hold reached the model (a build in flight)"),
+    "record-not-rechecked": ("record-rechecked", "    if not packs.still():\n", "    if False:\n",
+                             "a part read while a build began reached the model"),
+    "record-without-id": ("record-rebuilt", ', "id": os.urandom(8).hex()}', "}",
+                          "a part another build wrote reached the model (two builds while the parts were read)"),
 }
+
+
+def mutate_text(path, old, new):
+    """`path`'s text with `old` (found exactly once) replaced by `new`, compiled (INVALID, never a kill, otherwise)."""
+    text = Path(path).read_text(encoding="utf-8")
+    assert text.count(old) == 1, "INVALID: the anchor occurs %d times in %s" % (text.count(old), Path(path).name)
+    out = text.replace(old, new)
+    compile(out, str(path), "exec")
+    return out
 
 
 def mutant(name):
     """The text of filepacks.py with mutant `name` applied: its anchor must occur exactly once, and the result must
     compile (a mutant that does not compile would fail every check for the wrong reason: INVALID, never a kill)."""
     _, old, new, _ = MUTANTS[name]
-    text = FILEPACKS.read_text(encoding="utf-8")
-    assert text.count(old) == 1, "INVALID %s: the anchor occurs %d times" % (name, text.count(old))
-    out = text.replace(old, new)
-    compile(out, "filepacks-%s.py" % name, "exec")
-    return out
+    return mutate_text(FILEPACKS, old, new)
+
+
+CODEMAP = ROOT / "scripts" / "codemap.py"
+AST_SYMBOLS = '    syms = _ast_symbols(data) if lang == "python" else []'
+# the code map's side of the re-scope, run through the reader: (the check it must fail, old text, new text, the failure)
+CM_MUTANTS = {
+    "symbols-from-working-copy": ("committed-symbols", AST_SYMBOLS,
+                                  '    syms = _ast_symbols(path.read_bytes()) if lang == "python" else []',
+                                  "an uncommitted symbol reached the model"),
+    "caller-line-restored": ("no-graph-text", '    if where_rows:\n        lines.append("registry rows here %d: "',
+                             '    if sym is not None and (sym.get("gitnexus") or {}).get("callers"):\n'
+                             '        lines.append("callers: " + " · ".join("%s %s:%s" % '
+                             '(x["name"], x["file"], x["line"]) for x in sym["gitnexus"]["callers"]["sample"]))\n'
+                             '    if where_rows:\n        lines.append("registry rows here %d: "',
+                             "a graph's caller, test, count or state reached the model"),
+}
+
+
+def cm_mutant(name):
+    _, old, new, _ = CM_MUTANTS[name]
+    return mutate_text(CODEMAP, old, new)
 
 
 @pytest.mark.parametrize("name", sorted(CHECKS))
@@ -1635,26 +1680,22 @@ def test_negative_control_the_same_check_fails_on_a_mutant(tmp_path, name):
         CHECKS[check](repo, tmp_path / "state", ids, tmp_path)
 
 
+@pytest.mark.parametrize("name", sorted(CM_MUTANTS))
+def test_negative_control_the_same_check_fails_on_a_code_map_mutant(tmp_path, name):
+    check, _, _, why = CM_MUTANTS[name]
+    repo, ids = fixture(tmp_path, cm_text=cm_mutant(name))
+    assert (repo / "scripts" / "codemap.py").read_text(encoding="utf-8") == cm_mutant(name)   # the mutant is what runs
+    with pytest.raises(AssertionError, match=re.escape(why)):
+        CHECKS[check](repo, tmp_path / "state", ids, tmp_path)
+
+
 def test_every_check_has_a_mutant_and_every_mutant_compiles():
-    assert set(CHECKS) == {m[0] for m in MUTANTS.values()}, "a property has no mutant, or a mutant no check"
+    assert set(CHECKS) == {m[0] for m in list(MUTANTS.values()) + list(CM_MUTANTS.values())}, \
+        "a property has no mutant, or a mutant no check"
     for name in MUTANTS:
         mutant(name)
-
-
-def test_negative_control_the_code_map_without_its_left_out_total(tmp_path):
-    """The code map's half of B1: without its line for a total the reader left out (codemap._callers_line), such a
-    symbol's kept callers are lost, and check untracked-callers fails on its control."""
-    repo, ids = fixture(tmp_path)
-    cm = repo / "scripts" / "codemap.py"
-    text = cm.read_text(encoding="utf-8")
-    old = ('    if g and c.get("count") is None and isinstance(c.get("sample"), list):     # the file-pack reader\'s view'
-           ' (K2 R3)\n        return "callers in tracked files (the total is left out): %s" % (\n'
-           '            " · ".join("%s %s" % (x["name"], _where(x)) for x in c["sample"]) or "none shown")\n')
-    assert text.count(old) == 1, "INVALID: the anchor occurs %d times" % text.count(old)
-    compile(text.replace(old, ""), "codemap-mutant.py", "exec")
-    cm.write_text(text.replace(old, ""), encoding="utf-8")
-    with pytest.raises(AssertionError, match=re.escape("the control: a tracked caller or test was left out")):
-        check_untracked_callers(repo, tmp_path / "state", ids, tmp_path)
+    for name in CM_MUTANTS:
+        cm_mutant(name)
 
 
 # ---------- F1 with the post-commit patch applied, and with the real code-map refresh ----------
@@ -1753,24 +1794,24 @@ def test_negative_control_the_hook_without_the_patch_runs_no_build(tmp_path):
         patched_scenario(tmp_path, False)
 
 
+COMMITTED_READ = "    got = _committed(root, commit, [rel]).get(rel)\n"
+WORKING_READ = "    got = (None, hashlib.sha256(path.read_bytes()).hexdigest(), path.read_bytes())\n"
+
+
 @pytest.mark.skipif(not GRAFT, reason="LOUD SKIP: graft is not installed here (scripts/setup.sh installs it); this "
-                                      "test runs the real L2a refresh, which builds from graft's graph")
-@pytest.mark.parametrize("fp", ["real", "no-blob-check"])
-def test_untracked_since_build_with_the_real_code_map_refresh(tmp_path, fp):
-    """The verifier's probe_p6.py exactly: the untracked file's code pack is rebuilt by the REAL refresh
-    (`codemap.py refresh --commit … --graphs graft`, as the post-commit hook runs it) after a graft re-index. The
-    real hook shows 0 canary bytes on Edit, Read and cat; the mutant without the blob check shows the canary on all
-    three (the control: the refresh's pack carries the canary into the entry)."""
-    repo, ids = fixture(tmp_path, fp_text=None if fp == "real" else mutant(fp))
-    st, home, locks = tmp_path / "state", tmp_path / "home", tmp_path / "locks"
-    (home / ".graft").mkdir(parents=True)
+                                      "test runs the real L2a refresh after a graft re-index")
+@pytest.mark.parametrize("cm", ["real", "pack-of-the-working-copy"])
+def test_untracked_since_build_with_the_real_code_map_refresh(tmp_path, cm):
+    """The verifier's probe_p6.py, re-scoped (D-117): scripts/gamma.py, untracked by the last commit, gets a canary def,
+    graft re-indexes it, and the REAL refresh runs (`codemap.py refresh --commit … --graphs graft`, as the post-commit
+    hook runs it). The real code map writes no pack of a file with no blob in the commit (`1 untracked`), so no pack
+    holds the canary; the code map that packs the working copy (the leak control) writes it into gamma's pack. Either
+    way 0 canary bytes reach the model on Edit, Read and cat: the file packs describe the tree before the untracking
+    commit, and the record says tree."""
+    cm_text = None if cm == "real" else mutate_text(CODEMAP, COMMITTED_READ, WORKING_READ)
+    repo, ids = fixture(tmp_path, cm_text=cm_text)
+    st, locks, env = tmp_path / "state", tmp_path / "locks", graft_env(tmp_path)
     locks.mkdir()
-    # a fresh update-check answer in graft's private HOME: with none, `graft build` spawns a detached registry check
-    # that outlives the test and writes into this HOME after pytest removed it (and a later test reused the name)
-    (home / ".graft" / "update-check.json").write_text(json.dumps({"latest": None,
-                                                                   "checkedAt": int(time.time() * 1000)}))
-    env = {"PATH": "%s:/usr/bin:/bin" % os.path.dirname(GRAFT), "HOME": str(home), "DO_NOT_TRACK": "1",
-           "LANG": "C.UTF-8"}
 
     def sh(*argv):
         r = subprocess.run(list(argv), cwd=repo, env=env, capture_output=True, text=True, timeout=300)
@@ -1787,15 +1828,20 @@ def test_untracked_since_build_with_the_real_code_map_refresh(tmp_path, fp):
     sh(GRAFT, "build")
     out = sh("python3", "scripts/codemap.py", "refresh", "--commit", c9, "--lock-dir", str(locks), "--graphs", "graft",
              "--wait", "60", "--grace", "5", "--", "scripts/gamma.py")
-    assert canary in (repo / ".jev" / "codemap" / "scripts" / "gamma.py.json").read_text(), out[-300:]
-    leaked = [canary in context(run(repo, st, p)) for p in gamma_probes(repo, "rf")]
-    if fp == "real":
-        assert leaked == [False, False, False], "the untracked file's text reached the model: %s" % leaked
+    held = sorted(str(p.relative_to(repo)) for p in (repo / ".jev" / "codemap").rglob("*.json")
+                  if canary in p.read_text(encoding="utf-8"))
+    if cm == "real":
+        assert held == [] and " codemap refresh done: 1 untracked;" in out, \
+            "an untracked file's text reached a code pack: %s %s" % (held, out[-300:])
     else:
-        assert leaked == [True, True, True], "the control: without the blob check the canary reaches the model"
+        assert held == [".jev/codemap/scripts/gamma.py.json"], "the control: the working copy's pack: %s" % held
+    for p in gamma_probes(repo, "rf"):
+        ctx = context(run(repo, st, p))
+        assert canary not in ctx and ctx == "", "the untracked file's text reached the model: %r" % ctx[:80]
+        assert records(st)[-1]["skipped"] == [{"key": "file:scripts/gamma.py", "why": "tree"}], records(st)[-1]
 
 
-# ---------- round 3: B3 (the patch's own tests once it lands), B2 and B1 through the real instruments ----------
+# ---------- round 3: B3 (the patch's own tests once it lands); B2 became D-117 (a), with the real graft ----------
 
 GITNEXUS = shutil.which("gitnexus")
 CRG_FALLBACK = "/root/venv-crg/bin/code-review-graph"                 # the post-commit hook's fixed fallback path
@@ -1845,16 +1891,17 @@ def graft_env(tmp):
 
 
 @pytest.mark.skipif(not GRAFT, reason="LOUD SKIP: graft is not installed here (scripts/setup.sh installs it); this "
-                                      "test runs the real L2a refresh, which builds from graft's graph")
-@pytest.mark.parametrize("fp", ["real", "stale-symbol-graph-shown"])
-@pytest.mark.parametrize("shape", ["untracked", "tracked"])
-def test_stale_symbol_graph_with_the_real_code_map_refresh(tmp_path, shape, fp):
-    """VERIFY-K2 R2 B2, the verifier's probe_f1b.py sg-untracked and probe_f1.py sg-tracked: graft indexes a canary,
-    the file's bytes go back to the blob BLOBS.txt holds, and the REAL refresh builds a pack whose blob matches while
-    its symbols are the canary's (graft stale). untracked: scripts/gamma.py, untracked since the build; tracked: an
-    edit of scripts/alpha.py reverted by `git checkout`. The real hook shows 0 canary bytes and says stale-graph; the
-    mutant without the clause shows the canary (the control)."""
-    repo, ids = fixture(tmp_path, fp_text=None if fp == "real" else mutant(fp))
+                                      "test runs the real L2a refresh after a graft re-index")
+@pytest.mark.parametrize("cm", ["real", "symbols-from-graft"])
+def test_graft_symbols_never_reach_a_pack_with_the_real_code_map_refresh(tmp_path, cm):
+    """D-117 (a) through the real instruments (VERIFY-K2 R2 B2, the verifier's probe_f1.py sg-tracked): graft indexes
+    scripts/alpha.py with a canary def appended, the edit is undone by `git checkout`, and the REAL refresh builds
+    alpha's pack of the build's blob. Its symbols are the committed blob's own ast, so the canary graft holds is in no
+    pack and reaches the model on neither Read nor cat; the committed symbols show, and the graft section says stale.
+    The code map that takes its symbols from graft (the leak control) shows the canary. (Round 3's untracked shape went:
+    the code map writes no pack of an untracked file, test_untracked_since_build_with_the_real_code_map_refresh.)"""
+    cm_text = None if cm == "real" else mutate_text(CODEMAP, AST_SYMBOLS, "    syms = _nest(graft_syms)")
+    repo, ids = fixture(tmp_path, cm_text=cm_text)
     st, locks, env = tmp_path / "state", tmp_path / "locks", graft_env(tmp_path)
     locks.mkdir()
 
@@ -1864,35 +1911,32 @@ def test_stale_symbol_graph_with_the_real_code_map_refresh(tmp_path, shape, fp):
         return r.stdout
     sh(GRAFT, "build")
     build(repo, st)
-    rel = "scripts/gamma.py" if shape == "untracked" else "scripts/alpha.py"
-    if shape == "untracked":
-        git(repo, "rm", "-q", "--cached", rel, k=9)
-        git(repo, "commit", "-q", "-m", "gamma untracked", k=9)
-    at = git(repo, "rev-parse", "HEAD").strip()
+    rel, at = "scripts/alpha.py", git(repo, "rev-parse", "HEAD").strip()
     before = (repo / rel).read_bytes()
     canary = "cnry" + secrets.token_hex(6)
-    fn = 'def leak_%s(token="%s-arg"):\n    return token\n' % (canary, canary)
-    (repo / rel).write_text(fn if shape == "untracked" else before.decode("utf-8") + "\n\n" + fn, encoding="utf-8")
+    (repo / rel).write_text(before.decode("utf-8") + '\n\ndef leak_%s(token="%s-arg"):\n    return token\n' % (
+        canary, canary), encoding="utf-8")
     sh(GRAFT, "build")
-    if shape == "untracked":
-        (repo / rel).write_bytes(before)
-    else:
-        git(repo, "checkout", "--", rel)
+    git(repo, "checkout", "--", rel)
     assert (repo / rel).read_bytes() == before, "the bytes did not go back"
+    assert canary in sh(GRAFT, "skeleton", "--json", "--no-refresh", rel), "not the case: graft holds no canary"
     out = sh("python3", "scripts/codemap.py", "refresh", "--commit", at, "--lock-dir", str(locks), "--graphs", "graft",
              "--wait", "8", "--grace", "2", "--", rel)
     pk = json.loads((repo / ".jev" / "codemap" / (rel + ".json")).read_text(encoding="utf-8"))
-    assert canary in json.dumps(pk) and pk["instruments"]["graft"]["graph"] == "stale", out[-300:]
-    assert "\n%s\t%s\n" % (rel, pk["blob"]) in (st / "filepacks" / "BLOBS.txt").read_text(), "the blob check stops it"
-    probes = gamma_probes(repo, "sg") if shape == "untracked" else [read(repo, rel, sid="sgr"),
-                                                                    bash(repo, "cat " + rel, sid="sgb")]
-    leaked = [canary in context(run(repo, st, p)) for p in probes]
-    if fp == "real":
-        assert leaked == [False] * len(probes), "a stale symbol graph's text reached the model: %s" % leaked
-        skips = [i.get("code_skip") for r in records(st)[-len(probes):] for i in r["injected"]]
-        assert skips == ["stale-graph"] * len(probes), "the records did not say stale-graph: %s" % skips
+    assert "\n%s\t%s\n" % (rel, pk["blob"]) in (st / "filepacks" / "BLOBS.txt").read_text(), \
+        "not the case: a pack of the build's blob (only (a) keeps the canary out)"
+    ctxs = [context(run(repo, st, p)) for p in (read(repo, rel, sid="gs0"), bash(repo, "cat " + rel, sid="gs1"))]
+    if cm == "real":
+        assert canary not in json.dumps(pk) and not any(canary in c for c in ctxs), \
+            "a graph's symbol reached a pack or the model: %s" % [c[:120] for c in ctxs]
+        assert [(s["qualname"], s["start"], s["end"]) for s in pk["symbols"]] == [
+            s[:3] for s in ast_symbols(before.decode("utf-8"))] and pk["instruments"]["graft"]["graph"] == "stale", \
+            out[-300:]
+        assert all(c.startswith("codemap scripts/alpha.py — 5 symbols") for c in ctxs), \
+            "the control: the committed symbols: %s" % [c[:80] for c in ctxs]
     else:
-        assert leaked == [True] * len(probes), "the control: without the clause the canary reaches the model"
+        assert canary in json.dumps(pk) and all(canary in c for c in ctxs), \
+            "the control: the symbols from graft reach the model: %s" % [c[:120] for c in ctxs]
 
 
 def fixture_processes(tmp):
@@ -1905,6 +1949,15 @@ def fixture_processes(tmp):
         except OSError:
             pass
     return out
+
+
+def cmdline(pid):
+    """A process's command line, for a message ('' once it is gone)."""
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as f:
+            return f.read().replace(b"\0", b" ").decode("utf-8", "replace").strip()[:200]
+    except OSError:
+        return ""
 
 
 def wait_post_commit(pct, head, bound=300):
@@ -1939,189 +1992,122 @@ def wait_post_commit(pct, head, bound=300):
     return text
 
 
-# ---------- round 4 (D-115): the class test, untracked text through the derived code index, by the real hook ----------
+# ---------- K2 RE-SCOPE (D-117): the class test, a reset after a build, through the real patched hook ----------
 
-SHAPES = (("a_out", 101), ("b_in", 102), ("c_late_out", 103), ("d_late_in", 104), ("e_trk", 105), ("f_ok", 106),
-          ("g_test", 107))
-CALLER = "from alpha import %s\n\n\ndef %s():\n    return %s(2)\n"
-OUTSIDE = "import sys\nsys.path.insert(0, 'scripts')\nfrom alpha import %s\n\n\ndef %s():\n    return %s(2)\n"
-TEST = "import sys\nsys.path.insert(0, 'scripts')\nfrom alpha import %s\n\n\ndef test_%s():\n    assert %s(1) > 0\n"
-# item 2's canaries: untracked text, in no pack and no context ever; item 4's: an uncommitted edit of a tracked file
-# (NOT done 1) and a file untracked while the file-pack build is stalled (NOT done 9), in no context and not in the
-# callee's pack (a code pack of their own file, built from its working copy, holds them; the reader withholds it)
-UNTRACKED, ITEM4 = ("a", "b", "c1", "d1", "e"), ("u1", "u1t", "u9")
-# where the leak control (the blob comparison off at the builder and at the reader) must show each shape's canary
-LEAKS = {"c1-built": {"a", "b", "c1", "d1", "e", "u1", "u1t"}, "late-outside": {"d1"}, "late-track-window": {"c1"},
-         "nd9-build-stalled": {"u9"}}
-BUILDER_TIE = '    return isinstance(rec, dict) and rec.get("blob") is not None and rec.get("indexed") == rec["blob"]\n'
+RESET_WANT = {"read alpha": ("sym",), "read rst": ("new",), "read beta": ("led",), "cat alpha rst": ("sym", "new")}
+RESET_TREE = {"read alpha": ["file:scripts/alpha.py"], "read rst": ["file:scripts/rst.py"],
+              "read beta": ["file:scripts/beta.py"], "cat alpha rst": ["file:scripts/alpha.py", "file:scripts/rst.py"]}
 
 
-def class_scenario(tmp, off=False):
-    """The class of VERIFY-K2 F1, R2 B1 and R3-1 (D-115: untracked text through the derived code index), through the
-    REAL patched post-commit hook (each graph re-indexed, the code map refreshed, the file packs built) and the real
-    wrapper. scripts/alpha.py gains one callee per shape, so each shape's callers fit one sample. A canary each:
-    (a) `a`, tools/u_out.py, untracked, outside the refresh paths; `b`, scripts/u_in.py, untracked, inside them; `e`,
-    tests/test_u.py, an untracked test; (c) `d1`, tools/late_out.py's untracked era, later committed with other text
-    (R3-1's late-outside: no refresh follows); `c1`, scripts/late_in.py's untracked era, committed with other text
-    while the refresh is held behind its lock (R3-1's late-track window); NOT done 1: `u1` and `u1t`, uncommitted text
-    of a tracked caller and test; NOT done 9: `u9`, a caller file untracked while the file-pack build is held. `off`
-    turns the blob comparison off at the builder and at the reader (the leak control). Returns (seen, ctl): per
-    observation point, the canaries found in any code pack, in alpha's code pack and in any context, and the facts the
-    controls read."""
-    cm_text = None
-    if off:
-        cm_text = mutate_text(ROOT / "scripts" / "codemap.py", BUILDER_TIE, "    return True\n")
-    repo, ids = fixture(tmp, fp_text=mutant("blob-tie-off") if off else None)
-    if cm_text is not None:
-        (repo / "scripts" / "codemap.py").write_text(cm_text, encoding="utf-8")
-    st, pct = tmp / "state", tmp / "pctmp"
+def reset_scenario(tmp, fp_text=None):
+    """VERIFY-K2-R4's R4-1 through the REAL post-commit hook carrying the K2 patch (each commit's graph re-index, where
+    graft and GitNexus are off PATH the two graphs the hook finds by its fixed paths, the code-map refresh and the
+    file-pack build) and the real wrapper. c_a changes scripts/alpha.py; c_b adds a def to it, a new file scripts/rst.py
+    and a ledger line naming scripts/beta.py, a canary each (the ledger line is the P2 shape). After c_b's jobs: `git
+    reset --mixed HEAD~1` (no hook runs); c_b made again and built, then `git reset --soft HEAD~1`; c_b made a third
+    time and built, then push_clean's same-tree ref move (`git commit-tree` + `git update-ref`). Returns (seen, ctl):
+    per observation point, the probes whose context holds each canary, the bytes shown and the tree skips recorded;
+    the facts the controls read."""
+    repo, ids = fixture(tmp, fp_text=fp_text)
+    st, pct, home = tmp / "state", tmp / "pctmp", tmp / "home"
     pct.mkdir()
-    env = dict(env_for(repo, st), HOME=graft_env(tmp)["HOME"], DO_NOT_TRACK="1", AF_POST_COMMIT_TMP=str(pct))
+    home.mkdir()
+    rdv = tempfile.mkdtemp(prefix="cbmr.", dir="/tmp")     # codebase-memory's rendezvous, private too (AF-AP-251)
+    env = dict(env_for(repo, st), HOME=str(home), DO_NOT_TRACK="1", AF_POST_COMMIT_TMP=str(pct),
+               PATH="/usr/local/bin:/usr/bin:/bin", CBM_RUNTIME_DIR=rdv)
     hooks = hook_dir(tmp, True)
-    cn = {k: "%s%s" % (k, secrets.token_hex(5)) for k in UNTRACKED + ITEM4 + ("c2", "d2", "ok", "okt", "trk", "trkt")}
+    cn = {k: "%s%s" % (k, secrets.token_hex(5)) for k in ("sym", "new", "led")}
+    alpha = (repo / "scripts" / "alpha.py").read_text(encoding="utf-8") + "# rev 5\n"
+    c_b = {"scripts/alpha.py": alpha + "\n\ndef leak_%s(x):\n    return x\n" % cn["sym"],
+           "scripts/rst.py": "def rst_%s():\n    return 1\n" % cn["new"],
+           LEDGER: (repo / LEDGER).read_text(encoding="utf-8") + "**T9 HOME.** %s: a line naming scripts/beta.py\n" % (
+               cn["led"])}
     seen, ctl = {}, {}
 
-    def sh(*argv):
-        r = subprocess.run(list(argv), cwd=repo, env=env, capture_output=True, text=True, timeout=300)
-        assert r.returncode == 0, (argv, r.stdout[-300:], r.stderr[-300:])
-
-    def put(rel, text):
-        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
-        (repo / rel).write_text(text, encoding="utf-8")
-
-    def hooked(msg):
+    def hooked(files, msg):
+        for rel, text in files.items():
+            (repo / rel).write_text(text, encoding="utf-8")
+        git(repo, "add", "--", *files)                               # the named paths only, never -A
         r = subprocess.run(["git", "-c", "user.email=k2@test", "-c", "user.name=k2", "-c", "commit.gpgsign=false", "-c",
                             "core.hooksPath=%s" % hooks, "commit", "-q", "-m", msg], cwd=repo, env=env,
                            capture_output=True, text=True, timeout=120)
         assert r.returncode == 0, r.stderr
-        return git(repo, "rev-parse", "HEAD").strip()
+        head = git(repo, "rev-parse", "HEAD").strip()
+        wait_post_commit(pct, head)
+        return head
 
-    def held(name):
-        fd = os.open(pct / name, os.O_RDWR | os.O_CREAT, 0o644)
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        return fd
+    def observe(point):
+        seen[point] = {"context": {k: [] for k in cn}, "bytes": 0, "tree": {}}
+        for label, p in (("read alpha", read(repo, "scripts/alpha.py", sid=point + "-a")),
+                         ("read rst", read(repo, "scripts/rst.py", sid=point + "-r")),
+                         ("read beta", read(repo, "scripts/beta.py", sid=point + "-b")),
+                         ("cat alpha rst", bash(repo, "cat scripts/alpha.py scripts/rst.py", sid=point + "-c"))):
+            ctx = context(run(repo, st, p))
+            for k, v in cn.items():
+                if v in ctx:
+                    seen[point]["context"][k].append(label)
+            seen[point]["bytes"] += len(ctx.encode("utf-8"))
+            seen[point]["tree"][label] = [s["key"] for s in records(st)[-1]["skipped"] if s["why"] == "tree"]
+        seen[point]["context"] = {k: sorted(v) for k, v in seen[point]["context"].items()}
 
-    def logged(name, pattern, bound=300):
-        deadline = time.monotonic() + bound
-        while not re.search(pattern, (pct / name).read_text(errors="replace") if (pct / name).exists() else ""):
-            assert time.monotonic() < deadline, "no %r in %s after %d s" % (pattern, name, bound)
-            time.sleep(0.3)
-
-    def observe(point, probes):
-        packs = {p: p.read_text(encoding="utf-8") for p in (repo / ".jev" / "codemap").rglob("*.json")}
-        alpha = packs.get(repo / ".jev" / "codemap" / "scripts" / "alpha.py.json", "")
-        ctxs = {label: context(run(repo, st, p)) for label, p in probes}
-        seen[point] = {"packs": {k for k, v in cn.items() if any(v in t for t in packs.values())},
-                       "alpha": {k for k, v in cn.items() if v in alpha},
-                       "context": {k for k, v in cn.items() if any(v in c for c in ctxs.values())}}
-        return ctxs, json.loads(alpha) if alpha else {}
-
-    def edits(point, *fns):
-        return [("%s %s" % (point, fn), edit(repo, "scripts/alpha.py", "    return x + %d" % k,
-                                             sid="%s-%s" % (point, fn))) for fn, k in SHAPES if fn in fns]
+    def moved(want):
+        tree = json.loads((st / "filepacks" / "BUILD.json").read_text(encoding="utf-8"))["tree"]
+        return git(repo, "rev-parse", "HEAD").strip() == want and git(repo, "rev-parse", "HEAD^{tree}").strip() != tree
     try:
-        for argv in ([GRAFT, "build"], [GITNEXUS, "analyze", "--skip-agents-md"], [CRG, "build"]):
-            sh(*argv)
-        build(repo, st)
-        put("tools/u_out.py", OUTSIDE % ("a_out", cn["a"], "a_out"))
-        put("scripts/u_in.py", CALLER % ("b_in", cn["b"], "b_in"))
-        put("tools/late_out.py", OUTSIDE % ("c_late_out", cn["d1"], "c_late_out"))
-        put("scripts/late_in.py", CALLER % ("d_late_in", cn["c1"], "d_late_in"))
-        put("tests/test_u.py", TEST % ("g_test", cn["e"], "g_test"))
-        put("scripts/caller_trk.py", CALLER % ("e_trk", cn["trk"], "e_trk"))
-        put("tests/test_trk.py", TEST % ("e_trk", cn["trkt"], "e_trk"))
-        put("scripts/caller_ok.py", CALLER % ("f_ok", cn["ok"], "f_ok"))
-        put("tests/test_ok.py", TEST % ("f_ok", cn["okt"], "f_ok"))
-        put("scripts/alpha.py", (repo / "scripts" / "alpha.py").read_text(encoding="utf-8") + "".join(
-            "\n\ndef %s(x):\n    return x + %d\n" % s for s in SHAPES))
-        git(repo, "add", "scripts/alpha.py", "scripts/caller_trk.py", "tests/test_trk.py", "scripts/caller_ok.py",
-            "tests/test_ok.py")
-        with open(repo / "scripts" / "caller_trk.py", "a", encoding="utf-8") as f:       # NOT done 1: uncommitted
-            f.write("\n\ndef %s():\n    return e_trk(7)\n" % cn["u1"])
-        with open(repo / "tests" / "test_trk.py", "a", encoding="utf-8") as f:
-            f.write("\n\ndef test_%s():\n    assert e_trk(3) > 0\n" % cn["u1t"])
-        c1 = hooked("c1: callees and tracked callers")
-        wait_post_commit(pct, c1)
-        ctxs, pk = observe("c1-built", edits("c1", *(s for s, _ in SHAPES)) + [
-            ("c1 read caller_trk", read(repo, "scripts/caller_trk.py", sid="c1-rt"))])
-        ctl["callers"] = set(pk.get("caller_files") or ())
-        ctl["ok"] = "%s scripts/caller_ok.py:4" % cn["ok"] in ctxs["c1 f_ok"]
-        ctl["okt"] = "test_" + cn["okt"] in ctxs["c1 f_ok"]
-        put("tools/late_out.py", OUTSIDE % ("c_late_out", cn["d2"], "c_late_out"))      # R3-1 (a): late-outside
-        git(repo, "add", "tools/late_out.py")
-        c2 = hooked("c2: an outside caller tracked")
-        wait_post_commit(pct, c2)
-        observe("late-outside", edits("c2", "c_late_out"))
-        put("scripts/late_in.py", CALLER % ("d_late_in", cn["c2"], "d_late_in"))       # R3-1 (b): late-track
-        git(repo, "add", "scripts/late_in.py")
-        fd = held("codemap-refresh.lock")
-        try:
-            c3 = hooked("c3: an inside caller tracked")
-            logged("filepacks-build.log", r"filepacks build: %s " % c3[:7])
-            observe("late-track-window", edits("c3w", "d_late_in"))
-            ctl["window"] = not re.search(r"%s codemap refresh done" % c3[:7],
-                                          (pct / "codemap-refresh.log").read_text(errors="replace"))
-        finally:
-            os.close(fd)
-        wait_post_commit(pct, c3)
-        ctxs, _ = observe("late-track-refreshed", edits("c3r", "d_late_in"))
-        ctl["c2"] = "%s scripts/late_in.py:4" % cn["c2"] in ctxs["c3r d_late_in"]
-        fd = held("filepacks-build.lock")                                                # NOT done 9: stalled build
-        try:
-            with open(repo / "scripts" / "caller_ok.py", "a", encoding="utf-8") as f:
-                f.write("\n\ndef %s():\n    return f_ok(9)\n" % cn["u9"])
-            git(repo, "rm", "-q", "--cached", "scripts/caller_ok.py")
-            c4 = hooked("c4: a caller untracked")
-            logged("codemap-refresh.log", r"%s codemap refresh done" % c4[:7])
-            observe("nd9-build-stalled", edits("c4", "f_ok") + [
-                ("c4 read caller_ok", read(repo, "scripts/caller_ok.py", sid="c4-ro"))])
-            ctl["stalled"] = "\nscripts/caller_ok.py\n" in (st / "filepacks" / "TRACKED.txt").read_text()
-        finally:
-            os.close(fd)
-        wait_post_commit(pct, c4)
-        observe("nd9-built", edits("c4b", "f_ok"))
-        ctl["leftover"] = fixture_processes(tmp)
+        c_a = hooked({"scripts/alpha.py": alpha}, "c_a: alpha")
+        hooked(c_b, "c_b: the canaries")
+        observe("built")
+        git(repo, "reset", "-q", "--mixed", "HEAD~1")
+        ctl["mixed"] = moved(c_a) and "scripts/rst.py" not in git(repo, "ls-files").split("\n")
+        observe("mixed")
+        hooked(c_b, "c_b again")
+        observe("built again")
+        git(repo, "reset", "-q", "--soft", "HEAD~1")
+        ctl["soft"] = moved(c_a) and "scripts/rst.py" in git(repo, "diff", "--cached", "--name-only").split("\n")
+        observe("soft")
+        head = hooked(c_b, "c_b a third time")
+        new = git(repo, "commit-tree", "HEAD^{tree}", "-p", "HEAD~1", "-m", "rewritten", k=9).strip()
+        git(repo, "update-ref", git(repo, "symbolic-ref", "HEAD").strip(), new)
+        ctl["same-tree"] = new != head and git(repo, "rev-parse", "HEAD^{tree}") == git(repo, "rev-parse",
+                                                                                       head + "^{tree}")
+        observe("same-tree")
+        deadline = time.monotonic() + 30       # the codebase-memory index leaves a daemon that idles out in about 5 s
+        while fixture_processes(tmp) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        ctl["leftover"] = {pid: cmdline(pid) for pid in fixture_processes(tmp)}
+        ctl["cbm"] = (pct / "cbm-index.log").read_text(errors="replace") if (pct / "cbm-index.log").exists() else ""
     finally:
         for pid in fixture_processes(tmp):
             os.kill(pid, signal.SIGKILL)
+        shutil.rmtree(rdv, ignore_errors=True)
     return seen, ctl
 
 
-def mutate_text(path, old, new):
-    text = Path(path).read_text(encoding="utf-8")
-    assert text.count(old) == 1, "INVALID: the anchor occurs %d times" % text.count(old)
-    out = text.replace(old, new)
-    compile(out, str(path), "exec")
-    return out
-
-
-@pytest.mark.skipif(not (GRAFT and GITNEXUS and CRG), reason="LOUD SKIP: graft, gitnexus or code-review-graph is not "
-                    "installed here (scripts/setup.sh installs them); this test runs the real post-commit re-index")
-@pytest.mark.parametrize("variant", ["real", "blob-tie-off"])
-def test_untracked_text_never_reaches_a_pack_through_the_real_hook(tmp_path, variant):
-    """K2 round 4, items 2 to 4 (class_scenario). real: no untracked canary in any code pack or any context at any
-    point, and no NOT done 1 or 9 canary in alpha's pack or in any context; the controls: the graph named every
-    untracked caller file (alpha's caller_files), a committed caller and test show, the late-track window was real
-    (its refresh had not run) and the refreshed pack shows the committed caller, the build was really stalled.
-    blob-tie-off (the leak control): each shape's canary shows where LEAKS says."""
-    seen, ctl = class_scenario(tmp_path, off=variant != "real")
-    assert ctl["leftover"] == [], "a post-commit job outlived its lock"
-    assert ctl["window"] and ctl["stalled"], \
-        "not the shapes: the refresh had run, or the build had not stalled: %s" % ctl
+@pytest.mark.parametrize("variant", ["real", "tree-check-off"])
+def test_a_reset_shows_nothing_through_the_real_hook(tmp_path, variant):
+    """K2 RE-SCOPE, contract item 5 (reset_scenario). real: after each reset nothing reaches the model (0 bytes) and
+    each touched file's record says tree; the controls: each canary shows where RESET_WANT says after each build and
+    after the same-tree ref move, with no tree skip. tree-check-off (the leak control): each canary, the P2 ledger line
+    included, reaches the model after each reset."""
+    seen, ctl = reset_scenario(tmp_path, None if variant == "real" else mutant(variant))
+    assert ctl["leftover"] == {}, "a post-commit job, or a process it left, outlived it by 30 s: %s" % ctl["leftover"]
+    assert "different cache directory" not in ctl["cbm"], \
+        "the codebase-memory index met another daemon's rendezvous (AF-AP-251): %s" % ctl["cbm"]
+    assert ctl["mixed"] and ctl["soft"] and ctl["same-tree"], "not the shapes: %s" % ctl
+    want = {k: sorted(label for label, ks in RESET_WANT.items() if k in ks) for k in ("sym", "new", "led")}
     if variant != "real":
-        missed = {p: sorted(k - seen[p]["context"]) for p, k in LEAKS.items() if k - seen[p]["context"]}
-        assert not missed, \
-            "the control: with the blob comparison off these canaries did not reach the model: %s" % missed
+        missed = {p: seen[p]["context"] for p in ("mixed", "soft") if seen[p]["context"] != want}
+        assert not missed, "the control: with the tree check off these canaries did not reach the model: %s" % missed
         return
-    leaks = {p: {w: sorted(s[w] & set(want)) for w, want in (("packs", UNTRACKED), ("alpha", UNTRACKED + ITEM4),
-                                                            ("context", UNTRACKED + ITEM4)) if s[w] & set(want)}
-             for p, s in seen.items()}
-    assert not any(leaks.values()), "untracked or uncommitted text reached a pack or the model: %s" % {
-        p: v for p, v in leaks.items() if v}
-    assert {"tools/u_out.py", "scripts/u_in.py", "tools/late_out.py", "scripts/late_in.py", "tests/test_u.py",
-            "scripts/caller_trk.py"} <= ctl["callers"], "the graph named no untracked caller: a vacuous test: %s" % (
-        sorted(ctl["callers"]))
-    assert ctl["ok"] and ctl["okt"] and ctl["c2"], "the control: a committed caller or test was left out: %s" % ctl
+    for p in ("built", "built again"):
+        assert seen[p]["context"] == want and not any(seen[p]["tree"].values()), \
+            "the control: a committed canary was not shown after the build: %s %s" % (p, seen[p])
+    for p in ("mixed", "soft"):
+        assert seen[p]["bytes"] == 0 and not any(seen[p]["context"].values()), \
+            "a byte HEAD's tree does not hold reached the model through the real hook: %s %s" % (p, seen[p])
+        assert seen[p]["tree"] == RESET_TREE, "the record did not say tree: %s %s" % (p, seen[p]["tree"])
+    assert seen["same-tree"]["context"] == want, \
+        "the packs of HEAD's tree were not shown after a same-tree ref move: %s" % seen["same-tree"]
 
 
 # ---------- the registration, the code pack's fields, the speed ----------
@@ -2150,17 +2136,26 @@ def test_the_installer_spelling_reaches_the_model_form(tmp_path):
 
 
 def test_the_planted_code_pack_has_the_real_builders_fields(tmp_path):
-    """Drift guard: the real codemap builder (build_one, its graphs absent) writes a pack with the same fields and
-    instrument sections as the planted one, so the checks read the format the builder writes."""
+    """Drift guard: the real codemap builder (build_one, its graphs absent, the repo's own registry screen copied in)
+    writes a pack with the same fields, instrument sections, screen record and symbols (their graph data aside) as the
+    planted one, so the checks read the format the builder writes."""
     repo, ids = fixture(tmp_path)
-    planted = json.loads((repo / ".jev" / "codemap" / "scripts" / "alpha.py.json").read_text())
+    for rel in SCREENS:
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / rel, repo / rel)
+    planted = plant_code_pack(repo, "scripts/alpha.py", ids["fourth"])        # again, with the screen files here
     spec = importlib.util.spec_from_file_location("codemap_k2_drift", repo / "scripts" / "codemap.py")
     cm = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cm)
     outcome, real = cm.build_one(repo, "scripts/alpha.py", ("absent", "not in this test"), {"PATH": "/usr/bin:/bin"},
                                  ids["fourth"])
     assert outcome == "built" and set(real) == set(planted) and set(real["instruments"]) == set(planted["instruments"])
-    assert (real["blob"], real["lines"], real["schema"]) == (planted["blob"], planted["lines"], planted["schema"])
+    assert (real["blob"], real["lines"], real["schema"], real["symbols_from"]) == (
+        planted["blob"], planted["lines"], planted["schema"], planted["symbols_from"])
+    ap, pap = real["instruments"]["ap_screen"], planted["instruments"]["ap_screen"]
+    assert ap["status"] == "ok" and set(ap) == set(pap) and ap["screens"] == pap["screens"], (ap, pap)
+    bare = [[{k: v for k, v in s.items() if k != "gitnexus"} for s in pk["symbols"]] for pk in (real, planted)]
+    assert bare[0] == bare[1], bare
 
 
 def test_the_entry_stays_fast(tmp_path):

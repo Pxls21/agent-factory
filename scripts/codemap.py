@@ -4,28 +4,22 @@
 The instruments cost 0.2-4.8 s a call, so no hook can run them on an edit. They run after a commit, here, and write one
 JSON pack per code file under `.jev/codemap/<path>.json`; the PreToolUse hook (L2b) reads a pack in milliseconds.
 
-A pack describes ONE content of the file (its git blob and sha256) and holds:
-  - the file's symbols and their line spans: graft `skeleton` (code-review-graph `file_summary` for a file type graft
-    does not parse, such as shell), each with the decorators above it from the file's own AST (Python);
-  - per symbol, its direct callers (a count and up to three `file:line`, from one GitNexus Cypher per file) and
-    GitNexus's risk (`impact`, upstream, its default depth, tests excluded): the file's `impact` calls are pipelined
-    into ONE `gitnexus mcp` session per build (measured 5-6x cheaper than one CLI call per symbol, the same risk);
-  - the tests that cover the file (code-review-graph `tests_for` on the file);
-  - the registry rows the file's lines match (`scripts/ap_screen.py`, in process, with each row's message).
-Each graph section records whether that graph was built from exactly these bytes: graft, GitNexus and
-code-review-graph each keep the sha256 of every file they indexed. A missing instrument is named as missing (absent,
-no-index, n/a, error), never filled in (the NO STUBS rule). GitNexus risk UNKNOWN means it resolved no caller: the pack
-keeps it as unresolved, never as "no callers".
-
-Provenance by blob (task #353, K2 round 4, D-115): a caller or a test name is kept only when the graph that named it
-indexed exactly its file's blob in the build's commit. `provenance` records, per graph, for the file itself and each
-file its callers are in (GitNexus) and each test file (code-review-graph): `blob`, the file's blob in that commit (None
-when the commit has none: an untracked file), and `indexed`, the same blob when the graph's own record of the file is
-that blob's sha256 and each name the graph gave in the file is on its line in that blob, else None (the graph read
-other bytes: an untracked file, a working edit, nodes older than the record). A name from a file that is not so vouched
-for never enters the pack, and a callers total that counted one is left out (None); a name in the file itself also
-needs its graph fresh. The file-pack reader checks each kept name's blob against the file's blob at its own build
-(scripts/filepacks.py).
+A pack describes ONE content of the file: its blob in the build's commit, read from git, never from the working copy
+(task #353, K2 RE-SCOPE, D-117). A file with no blob there (untracked, or no commit) gets no pack, and an old pack of it
+is removed. The pack holds:
+  - the file's symbols (names, qualified names, kinds, line spans with the decorators above them, signatures), parsed
+    from that blob by Python's own `ast` (`symbols_from: "ast"`); a file in any other language has none. No symbol,
+    name, line or count comes from a graph;
+  - the registry rows the blob's lines match (`scripts/ap_screen.py`, in process, with each row's message), screened by
+    code run from bytes read once, whose blob ids the pack records (`instruments.ap_screen.screens`);
+  - the graph sections, which no reader shows any more (the lookups below render the symbols and the registry rows
+    only): per symbol its direct callers (a count and up to three `file:line`, from one GitNexus Cypher per file) and
+    GitNexus's risk (`impact`, upstream, its default depth, tests excluded; the file's calls pipelined into ONE
+    `gitnexus mcp` session per build), the tests code-review-graph's `tests_for` finds, and graft's section. Each
+    records whether its graph was built from exactly these bytes (the sha256 each graph keeps per file). A missing
+    instrument is named as missing (absent, no-index, n/a, error), never filled in (the NO STUBS rule).
+The file-pack reader (scripts/filepacks.py) shows a pack only when its blob is the file's blob at its own build and that
+build's tree is HEAD's, and the registry rows only when both screen blobs are the build's too.
 
 Usage:
   codemap.py build [--all] [PATH...]        build the packs now, from the graphs as they are
@@ -50,7 +44,7 @@ PACK_DIR = Path(".jev") / "codemap"
 SCHEMA = 1
 TEXT_CAP = 1500                     # bytes of entry text; the hook adds its label and pointer inside its 2,048
 PREFIXES = ("scripts/", "src/", "proofs/", "spikes/", "harness-ports/")
-SAMPLE = 3                          # callers and tests named per entry
+SAMPLE = 3                          # callers a symbol's GitNexus section samples
 LANG = {"py": "python", "pyi": "python", "sh": "shell", "bash": "shell", "js": "javascript", "mjs": "javascript",
         "cjs": "javascript", "jsx": "javascript", "ts": "typescript", "tsx": "typescript", "mts": "typescript",
         "cts": "typescript"}
@@ -66,8 +60,7 @@ Q_SYMBOLS = ("MATCH (n) WHERE n.filePath = $f AND label(n) IN ['Function', 'Meth
              "'Constructor'] RETURN {id: n.id, name: n.name, kind: label(n), s: n.startLine, e: n.endLine} AS row")
 Q_CALLERS = ("MATCH (a)-[r:CodeRelation]->(b) WHERE b.filePath = $f AND r.type = 'CALLS' "
              "RETURN {callee: b.id, name: a.name, kind: label(a), file: a.filePath, line: a.startLine} AS row")
-UNRESOLVED = ("unresolved, not zero: GitNexus resolved no caller outside tests; a dynamic call, getattr, a callback, "
-              "an argparse type= or a module run by path leaves no edge. Confirm with: grep -rnw '%s' .")
+SCREENS = ("scripts/ap_screen.py", ".claude/hooks/edit-snapshot.py")    # the registry screen: its code and its table
 
 
 # ---------- paths, languages, hashes ----------
@@ -495,20 +488,19 @@ def _gitnexus(gn, root, rel, sha):
             return (_is_test(c[1]), c[1] == rel, c[1], c[2] if c[2] is not None else 0, c[0])
         ordered = [{"name": n, "file": f, "line": ln} for n, f, ln in sorted(cs, key=rank)]
         rec["callers"] = {"count": len(cs), "tests": sum(_is_test(c[1]) for c in cs), "sample": ordered[:SAMPLE],
-                          "all": ordered, "files": sorted({c[1] for c in cs})}
+                          "files": sorted({c[1] for c in cs})}
         out.append(rec)
     return sec, out
 
 
-def _crg(root, rel, sha, env, want_symbols):
+def _crg(root, rel, sha, env):
     if not reads("code-review-graph", rel):
-        return {"status": "n/a", "note": "code-review-graph does not parse this file type"}, [], []
+        return {"status": "n/a", "note": "code-review-graph does not parse this file type"}, []
     exe = _which("code-review-graph", env, CRG_FALLBACK)
     if not exe:
-        return {"status": "absent", "note": "code-review-graph is not installed"}, [], []
+        return {"status": "absent", "note": "code-review-graph is not installed"}, []
     if not (Path(root) / ".code-review-graph" / "graph.db").is_file():
-        return {"status": "no-index", "note": ".code-review-graph/ holds no graph (run `code-review-graph build`)"}, \
-            [], []
+        return {"status": "no-index", "note": ".code-review-graph/ holds no graph (run `code-review-graph build`)"}, []
     indexed = stamp("code-review-graph", root, rel)
     sec = {"status": "ok", "graph": _fresh(indexed, sha), "indexed_sha256": indexed}
     target = os.path.realpath(Path(root) / rel)
@@ -527,32 +519,39 @@ def _crg(root, rel, sha, env, want_symbols):
         sec["tests_found"] = d.get("result_count", len(tests)) if d.get("status") == "ok" else 0
         if d.get("status") not in ("ok", "not_found"):
             sec["note"] = "tests_for answered %s" % d.get("status")
-        syms = []
-        if want_symbols:
-            for x in query("file_summary").get("results") or []:
-                a, b = x.get("line_start"), x.get("line_end")
-                if x.get("file_path") == target and x.get("kind") != "File" and type(a) is int and a > 0:
-                    syms.append({"name": x.get("name") or "?", "kind": (x.get("kind") or "symbol").lower(),
-                                 "start": a, "end": b if type(b) is int and b >= a else a, "signature": ""})
     except (RuntimeError, ValueError) as e:
-        return dict(sec, status="error", note=str(e)[:200]), [], []
-    return sec, [{"file": f, "line": ln, "name": n, "indirect": ind} for f, ln, n, ind in tests], syms
+        return dict(sec, status="error", note=str(e)[:200]), []
+    return sec, [{"file": f, "line": ln, "name": n, "indirect": ind} for f, ln, n, ind in tests]
 
 
 _AP = {}
 
 
+def _screen(root):
+    """(scripts/ap_screen.py as a module, edit-snapshot's AP_SCREEN rows, {path: blob id}) for `root`, once per process.
+    Each of SCREENS is read once and run from those bytes, so the blob ids recorded are the bytes that screened (the
+    file-pack reader shows a row only when both are the build's committed blobs: a row's id and message come from the
+    table, not from the file). The rows are the ones ap_screen._load_screens takes."""
+    import types
+    if root not in _AP:
+        mods, blobs = [], {}
+        for rel in SCREENS:
+            p = Path(root) / rel
+            data = p.read_bytes()
+            mod = types.ModuleType("codemap_screen_%d" % len(mods))
+            mod.__file__ = str(p)
+            exec(compile(data, str(p), "exec"), mod.__dict__)
+            mods.append(mod)
+            blobs[rel] = blob_sha(data)
+        _AP[root] = (mods[0], list(mods[1].AP_SCREEN), blobs)
+    return _AP[root]
+
+
 def _registry(root, rel, text):
     import contextlib
-    import importlib.util
     import io
     try:
-        if root not in _AP:
-            spec = importlib.util.spec_from_file_location("codemap_ap_screen", Path(root) / "scripts" / "ap_screen.py")
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            _AP[root] = (mod, mod._load_screens()[0])
-        mod, rows = _AP[root]
+        mod, rows, screens = _screen(root)
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             total = mod.screen_texts([(rel, text)], rows, "codemap", limit=10 ** 9)
@@ -571,7 +570,7 @@ def _registry(root, rel, text):
     if len(hits) != total:   # the screen counts its own hits: a printed line this parse missed is an error, not a pass
         return {"status": "error", "note": "read %d of the screen's %d hits" % (len(hits), total)}, []
     hits.sort(key=lambda h: (h["line"], h["row"]))
-    return {"status": "ok", "rows_screened": len(rows)}, hits
+    return {"status": "ok", "rows_screened": len(rows), "screens": screens}, hits
 
 
 # ---------- assembling a pack ----------
@@ -588,21 +587,38 @@ def _nest(syms):
     return out
 
 
-def _decorators(text, syms):
-    """Python: the first decorator line of each decorated def/class, from the file's own AST (graft and GitNexus spans
-    start at the `def`), so an edit on a decorator resolves to the symbol it decorates."""
+def _ast_symbols(data):
+    """The symbols of a Python file's committed bytes, from Python's own ast (K2 RE-SCOPE, D-117 condition (a)): per def
+    and class its name, qualified name, kind (class; method when its parent is a class; else function), start and end
+    lines, its first decorator's line when it has one (`from`, so an edit on a decorator resolves to the symbol it
+    decorates) and its signature (its first line, stripped, the colon dropped, at most 160 characters), in line order.
+    [] when the bytes do not parse. No def sits inside an expression, so the walk enters none: a deep expression cannot
+    exhaust the stack."""
     import ast
     try:
-        tree = ast.parse(text)
-    except (SyntaxError, ValueError):
-        return
-    first = {}
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.decorator_list:
-            first[(node.name, node.lineno)] = min(d.lineno for d in node.decorator_list)
-    for s in syms:
-        if (s["name"], s["start"]) in first:
-            s["from"] = first[(s["name"], s["start"])]
+        tree = ast.parse(data)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return []
+    lines = re.split(r"\r\n?|\n", data.decode("utf-8", "replace"))      # the line breaks Python's own lines end at
+    out = []
+
+    def walk(node, prefix, in_class):
+        for n in ast.iter_child_nodes(node):
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                s = {"name": n.name, "qualname": prefix + n.name, "kind": "class" if isinstance(n, ast.ClassDef) else (
+                    "method" if in_class else "function"), "start": n.lineno, "end": n.end_lineno,
+                     "signature": lines[n.lineno - 1].strip().rstrip(":")[:160]}
+                if n.decorator_list:
+                    s["from"] = min(d.lineno for d in n.decorator_list)
+                out.append(s)
+                walk(n, s["qualname"] + ".", isinstance(n, ast.ClassDef))
+            elif not isinstance(n, ast.expr):
+                walk(n, prefix, in_class)
+    try:
+        walk(tree, "", False)
+    except RecursionError:
+        return []
+    return sorted(out, key=lambda s: (s["start"], -s["end"], s["qualname"]))
 
 
 def _ast_starts(text):
@@ -668,8 +684,8 @@ def _head(root):
 
 def _committed(root, commit, files):
     """{path: (blob id, sha256 of the blob's bytes, the bytes)} for each of `files` that is a blob in `commit`'s tree,
-    from one `git cat-file --batch`. A path with a newline cannot be asked on a batch line, so it is never here;
-    nothing is when there is no commit, or git fails or answers short."""
+    from one `git cat-file --batch`: the bytes a pack describes (K2 RE-SCOPE, D-117). A path with a newline cannot be
+    asked on a batch line, so it is never here; nothing is when there is no commit, or git fails or answers short."""
     import subprocess
     want = sorted({f for f in files if isinstance(f, str) and f and "\n" not in f})
     if not commit or not want:
@@ -696,78 +712,15 @@ def _committed(root, commit, files):
     return out
 
 
-def _named_here(data, rel, names):
-    """True when each (name, line) a graph gave in `rel` names a definition on that line of `data`, the file's
-    committed bytes: in Python a def or class of that bare name that starts there (the bytes' own AST), in another
-    language the name as a word on that line. A module-level caller ("<module>") names no text of the file.
-
-    Why the builder reads the blob as well as the record: the record is the graph's own word, and it can be newer than
-    the graph's nodes (the lie `_moved` flags for the file itself, measured on GitNexus), and a graph can re-index
-    between its answer and the record's read. A name that is not on its line in the blob came from other bytes."""
-    text = data.decode("utf-8", "replace")
-    lines = text.split("\n")
-    defs = None
-    if LANG.get(_ext(rel)) == "python":
-        import ast
-        try:
-            defs = {(n.name, n.lineno) for n in ast.walk(ast.parse(text))
-                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
-        except (SyntaxError, ValueError):
-            return False
-    for name, line in names:
-        if name == "<module>":
-            continue
-        if not isinstance(name, str) or type(line) is not int or not 1 <= line <= len(lines):
-            return False
-        base = name.rsplit(".", 1)[-1]
-        if (defs is not None and (base, line) not in defs) or (defs is None and not re.search(
-                r"(?<![\w$])%s(?![\w$])" % re.escape(base), lines[line - 1])):
-            return False
-    return True
-
-
-def _provenance(root, rel, commit, gn_sec, gn_recs, crg_sec, tests):
-    """{"commit", graph: {file: {"blob", "indexed"}}} for the file itself and every file GitNexus names a caller in,
-    and every file code-review-graph names a test in (see the module doc): `indexed` is the blob only when the graph's
-    own record of the file (the sha256 `_fresh` reads for the file itself) is that blob's sha256 and every name the
-    graph gave in the file is on its line in the blob (`_named_here`)."""
-    named = {}
-    if gn_sec.get("status") == "ok":
-        named["gitnexus"] = {rel: set()}
-        for g in gn_recs:
-            for c in g["callers"]["all"]:
-                named["gitnexus"].setdefault(c["file"], set()).add((c["name"], c["line"]))
-    if crg_sec.get("status") == "ok":
-        named["code-review-graph"] = {}
-        for x in tests:
-            named["code-review-graph"].setdefault(x["file"], set()).add((x["name"], x["line"]))
-    committed = _committed(root, commit, {f for files in named.values() for f in files})
-    hashes = (_gitnexus_meta(root) or {}).get("fileHashes") if "gitnexus" in named else None
-    hashes = hashes if isinstance(hashes, dict) else {}
-    out = {"commit": commit}
-    for g, files in named.items():
-        out[g] = {}
-        for f in sorted(x for x in files if isinstance(x, str)):
-            blob, sha, data = committed.get(f, (None, None, None))
-            indexed = hashes.get(f) if g == "gitnexus" else stamp(g, root, f)
-            ok = blob is not None and indexed == sha and _named_here(data, f, files[f])
-            out[g][f] = {"blob": blob, "indexed": blob if ok else None}
-    return out
-
-
-def _proven(prov, graph, f):
-    """True when `graph` indexed exactly the blob `f` has in the build's commit (a name from it may enter the pack)."""
-    rec = (prov.get(graph) or {}).get(f)
-    return isinstance(rec, dict) and rec.get("blob") is not None and rec.get("indexed") == rec["blob"]
-
-
 def build_one(root, rel, gn, env, commit):
-    """Build and write one pack; returns (outcome, pack or None)."""
+    """Build and write one pack, of the file's blob in `commit` (K2 RE-SCOPE, D-117): the symbols, the registry rows
+    and the blob id all come from those bytes. Returns (outcome, pack or None); a file with no blob in `commit` gets no
+    pack ("untracked", an old pack of it removed)."""
     import time
     root = Path(root)
     path = root / rel
+    pp = pack_path(root, rel)
     if not path.is_file():
-        pp = pack_path(root, rel)
         if pp.exists():
             pp.unlink()
             return "removed", None
@@ -777,40 +730,30 @@ def build_one(root, rel, gn, env, commit):
         return "skipped", None
     t0 = time.monotonic()
     timing = {"started": round(time.time(), 3)}      # when this build began reading the graphs (the ordering tests)
-    data = path.read_bytes()
+    got = _committed(root, commit, [rel]).get(rel)
+    if got is None:                                  # no blob in the commit: nothing a pack may describe
+        if pp.exists():
+            pp.unlink()
+        return "untracked", None
+    _, sha, data = got
     text = data.decode("utf-8", "replace")
-    sha = hashlib.sha256(data).hexdigest()
 
     t = time.monotonic()
-    graft_sec, syms = _graft(root, rel, sha, env)
+    graft_sec, graft_syms = _graft(root, rel, sha, env)
     timing["graft_ms"] = round((time.monotonic() - t) * 1000)
-    t = time.monotonic()
-    crg_sec, tests, crg_syms = _crg(root, rel, sha, env, want_symbols=not syms)
-    timing["code_review_graph_ms"] = round((time.monotonic() - t) * 1000)
-    source = "graft" if syms else ("code-review-graph" if crg_syms else None)
-    syms = _nest(syms or crg_syms)
+    syms = _ast_symbols(data) if lang == "python" else []       # D-117 (a): the committed blob's own ast, no graph
     starts = _ast_starts(text) if lang == "python" else None
-    if lang == "python":
-        _decorators(text, syms)
-        if starts and source == "graft":
-            _moved(graft_sec, {s["qualname"]: s["start"] for s in syms}, starts, "graft")
+    if starts and graft_syms:
+        _moved(graft_sec, {s["qualname"]: s["start"] for s in _nest(graft_syms)}, starts, "graft")
+    t = time.monotonic()
+    crg_sec, tests = _crg(root, rel, sha, env)
+    timing["code_review_graph_ms"] = round((time.monotonic() - t) * 1000)
     t = time.monotonic()
     gn_sec, gn_recs = _gitnexus(gn, root, rel, sha)
     timing["gitnexus_ms"] = round((time.monotonic() - t) * 1000)
     if gn_recs:
         _moved(gn_sec, {g["qualname"]: g["start"] for g in _nest(gn_recs)},
                starts or {s["qualname"]: s["start"] for s in syms}, "GitNexus")
-    prov = _provenance(root, rel, commit, gn_sec, gn_recs, crg_sec, tests)       # K2 round 4 (D-115): by blob
-
-    def vouched(f, graph, sec):
-        return _proven(prov, graph, f) and (f != rel or sec.get("graph") == "fresh")
-    tests = [x for x in tests if vouched(x["file"], "code-review-graph", crg_sec)]
-    for g in gn_recs:
-        c = g["callers"]
-        kept = [x for x in c.pop("all") if vouched(x["file"], "gitnexus", gn_sec)]
-        if len(kept) < c["count"]:
-            c["count"] = c["tests"] = None                  # it counted a caller the pack does not name
-        c["sample"] = kept[:SAMPLE]
     _join(syms, gn_recs, gn_sec.get("graph") == "fresh")
     caller_files = sorted({f for g in gn_recs for f in g["callers"].get("files", ())} - {rel})
     if gn_sec.get("status") == "ok":
@@ -822,11 +765,10 @@ def build_one(root, rel, gn, env, commit):
     timing["total_ms"] = round((time.monotonic() - t0) * 1000)
     pack = {"schema": SCHEMA, "path": rel, "language": lang, "blob": blob_sha(data), "sha256": sha,
             "lines": text.count("\n") + (0 if text.endswith("\n") or not text else 1), "bytes": len(data),
-            "commit": commit, "symbols_from": source, "caller_files": caller_files, "provenance": prov,
+            "commit": commit, "symbols_from": "ast", "caller_files": caller_files,
             "instruments": {"graft": graft_sec, "gitnexus": gn_sec, "code-review-graph": crg_sec, "ap_screen": reg_sec},
             "symbols": syms, "tests": tests, "registry": registry,
             "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "timing": timing}
-    pp = pack_path(root, rel)
     pp.parent.mkdir(parents=True, exist_ok=True)
     tmp = pp.with_name(pp.name + ".%d.tmp" % os.getpid())
     tmp.write_text(json.dumps(pack, indent=1, sort_keys=True) + "\n", encoding="utf-8")
@@ -924,56 +866,6 @@ def _cap(text, cap=TEXT_CAP):
     return raw[:cap - len(tail.encode("utf-8"))].decode("utf-8", "ignore") + tail
 
 
-def _where(c):
-    return "%s:%s" % (c["file"], c["line"]) if c.get("line") else "%s (module level)" % c["file"]
-
-
-def _risk_line(s, sec):
-    g = s.get("gitnexus")
-    if sec.get("status") != "ok":
-        return "risk: none — GitNexus %s (%s)" % (sec.get("status"), sec.get("note", ""))
-    if g is None:
-        return "risk: none — this symbol is not in GitNexus's graph (graph %s)" % sec.get("graph")
-    if g.get("risk") is None:
-        return "risk: GitNexus impact failed (%s)" % g.get("risk_error", "no answer")
-    c = g.get("callers") or {}
-    if g["risk"] == "UNKNOWN":
-        line = "risk UNKNOWN — " + UNRESOLVED % s["name"]
-        if c.get("count"):
-            line += " (%d caller%s in its graph, %d in tests)" % (c["count"], "" if c["count"] == 1 else "s",
-                                                                    c.get("tests", 0))
-        return line
-    return "risk %s — GitNexus: %s impacted within 3 hops, %s direct (tests excluded)%s" % (
-        g["risk"], g.get("impacted"), g.get("direct"),
-        "; from a STALE GitNexus graph, lines may be off" if sec.get("graph") != "fresh" else "")
-
-
-def _callers_line(s):
-    g = s.get("gitnexus")
-    c = (g or {}).get("callers") or {}
-    if g and c.get("count") is None and isinstance(c.get("sample"), list):     # the file-pack reader's view (K2 R3)
-        return "callers in tracked files (the total is left out): %s" % (
-            " · ".join("%s %s" % (x["name"], _where(x)) for x in c["sample"]) or "none shown")
-    if not g or g.get("risk") == "UNKNOWN" and not c.get("count"):
-        return None                                       # UNKNOWN with none found: the risk line says unresolved
-    if not c.get("count"):
-        return "callers: no CALLS edge%s" % ("; the %s direct dependants above are imports or other relations" %
-                                              g["direct"] if g.get("direct") else "")
-    more = c["count"] - len(c["sample"])
-    return "callers %d%s: %s%s" % (c["count"], " (%d in tests)" % c["tests"] if c.get("tests") else "",
-                                    " · ".join("%s %s" % (x["name"], _where(x)) for x in c["sample"]),
-                                    " · +%d more" % more if more > 0 else "")
-
-
-def _instruments_line(pack):
-    parts = []
-    for k in GRAPHS + ("ap_screen",):
-        sec = pack["instruments"].get(k) or {}
-        st = sec.get("status")
-        parts.append("%s %s" % (k, sec.get("graph") if st in ("ok", "no-data") and sec.get("graph") else st))
-    return "instruments: " + ", ".join(parts)
-
-
 def _entry_text(pack, rel, line, end_line, stale, sym, where_rows):
     span = "%d" % line if end_line == line else "%d-%d" % (line, end_line)
     head = "codemap %s:%s — " % (rel, span)
@@ -988,26 +880,13 @@ def _entry_text(pack, rel, line, end_line, stale, sym, where_rows):
     if stale:
         lines.append("STALE: the file changed since this pack was built (blob %s); lines may have moved" %
                      pack["blob"][:7])
-    if sym is not None:
-        lines.append(_risk_line(sym, pack["instruments"].get("gitnexus") or {}))
-        cl = _callers_line(sym)
-        if cl:
-            lines.append(cl)
     if where_rows:
         lines.append("registry rows here %d: " % len(where_rows) + " · ".join(
             "%s :%d %s — %s" % (h["row"], h["line"], h["text"][:60], h["message"][:90]) for h in where_rows[:3]))
-    t = pack.get("tests") or []
-    crg = pack["instruments"].get("code-review-graph") or {}
-    if crg.get("status") == "ok":
-        lines.append("tests of the file (code-review-graph) %d%s" % (len(t), ": " + " · ".join(
-            "%s:%s %s" % (x["file"], x["line"], x["name"]) for x in t[:SAMPLE]) + (" · +%d more" % (len(t) - SAMPLE)
-                                                                                   if len(t) > SAMPLE else "")
-            if t else " (none found; a test that runs the file as a subprocess leaves no edge)"))
     others = [h for h in pack.get("registry") or [] if h not in where_rows]
     if others:
         lines.append("registry rows elsewhere in the file %d: " % len(others) + ", ".join(
             "%s :%d" % (h["row"], h["line"]) for h in others[:8]) + (" …" if len(others) > 8 else ""))
-    lines.append(_instruments_line(pack))
     return _cap("\n".join(lines))
 
 
@@ -1105,9 +984,9 @@ FILE_SYMBOLS = 8                    # symbols a file-level entry names
 def file_entry(path, line=None, end_line=None, root=None, pack=None):
     """The file-level entry of `path` from its pack, for a touch that names no one symbol (L2b, task #353: a Read, a
     Write, a shell reader, or a Read range that no one symbol holds): the symbol count and the first FILE_SYMBOLS
-    top-level symbols with their spans (with `line`: the symbols that overlap lines [line, end_line] instead), the
-    tests that cover the file, its registry rows (those in the range, with `line`) and the instruments line. A dict
-    like lookup's: `status` (file, range, miss, out-of-scope), `stale` (the working file's blob differs from the
+    top-level symbols with their spans (with `line`: the symbols that overlap lines [line, end_line] instead) and its
+    registry rows (those in the range, with `line`); no graph's callers, tests or state (K2 RE-SCOPE). A dict like
+    lookup's: `status` (file, range, miss, out-of-scope), `stale` (the working file's blob differs from the
     pack's; None when there is no pack) and `text` (at most TEXT_CAP bytes). Reads one pack (or takes `pack`, one its
     caller read) and hashes the working file: no subprocess."""
     root = Path(root or ROOT)
@@ -1147,17 +1026,9 @@ def file_entry(path, line=None, end_line=None, root=None, pack=None):
         lines.append(("symbols: " if line is None else "symbols in range: ") + " · ".join(
             "%s L%d-%d" % (s["qualname"], s.get("from", s["start"]), s["end"]) for s in shown[:FILE_SYMBOLS])
             + (" · +%d more" % (len(shown) - FILE_SYMBOLS) if len(shown) > FILE_SYMBOLS else ""))
-    t = pack.get("tests") or []
-    crg = pack["instruments"].get("code-review-graph") or {}
-    if crg.get("status") == "ok":
-        lines.append("tests of the file (code-review-graph) %d%s" % (len(t), ": " + " · ".join(
-            "%s:%s %s" % (x["file"], x["line"], x["name"]) for x in t[:SAMPLE]) + (" · +%d more" % (len(t) - SAMPLE)
-                                                                                   if len(t) > SAMPLE else "")
-            if t else " (none found; a test that runs the file as a subprocess leaves no edge)"))
     if rows:
         lines.append("registry rows %s%d: " % ("" if line is None else "in range ", len(rows)) + ", ".join(
             "%s :%d" % (h["row"], h["line"]) for h in rows[:8]) + (" …" if len(rows) > 8 else ""))
-    lines.append(_instruments_line(pack))
     return dict(res, status="file" if line is None else "range", text=_cap("\n".join(lines)))
 
 

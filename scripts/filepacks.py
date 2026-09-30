@@ -16,22 +16,28 @@ boundary (`scripts/stack.py` never matches inside `scripts/stack.py.json` or `x/
 A file that has anything gets <state>/filepacks/<path>.json, written atomically and only when its bytes change; the pack
 of a file that has nothing any more is removed. <state>/filepacks/TRACKED.txt lists the tracked files (the hook's
 boundary), <state>/filepacks/BLOBS.txt holds each one's blob id at that commit (`<path>TAB<blob>` lines, from the same
-`ls-tree`) and <state>/filepacks/BUILD.json records the SHA, the counts and the milliseconds. A named path can only be
-matched when all of its characters are path characters (PATH_RX); the tree's paths use none other (measured).
+`ls-tree`) and <state>/filepacks/BUILD.json records the SHA, its tree, the counts, the milliseconds and a random id,
+written last: a build first replaces it with a record that names no tree, so a record with a tree describes every pack
+beside it, and no two builds write the same record. A named path can only be matched when all of its characters are
+path characters (PATH_RX); the tree's paths use none other (measured).
 
 P1, `hook` (PreToolUse on Read, Edit, Write and Bash, through scripts/hook_context.py): the first time a context window
 touches a tracked file, its entry is injected (`entry`): for a code file with a code-map pack (scripts/codemap.py, L2a)
 the code part first (the enclosing symbol for an Edit, the symbols in range for a Read with offset and limit, else the
 file's own entry, each keeping the code map's STALE mark), then the pack's lines, the sources taken in turn (GROUPS),
-all cut at a line boundary within PACK_BUDGET bytes. The code part is shown only when the code-map pack's blob is the
-file's blob at the build's commit (BLOBS.txt): the code map builds a pack from the working copy, so a pack of a file
-untracked since the build, or of bytes no commit holds, would put text no commit holds in front of the model (VERIFY-K2
-F1); such a touch gets the pack's lines only, and its record says `code_skip`. It is also left out when the graph its
-symbols came from had not indexed those bytes (`stale-graph`, VERIFY-K2 R2 B2). It names a caller or a test only by
-blob (K2 round 4, D-115): the code-map pack's `provenance` must say the graph that named it indexed exactly its file's
-blob in the code map's commit, and that blob must be the file's blob in BLOBS.txt, so text a graph read from an
-untracked file, or from bytes no commit holds, never qualifies; a name in the file itself also needs its graph fresh,
-and a callers total that counted any other caller is left out (B1, R3-1: GitNexus indexes untracked files too).
+all cut at a line boundary within PACK_BUDGET bytes. Every byte shown is committed text of HEAD's tree (task #353, K2
+RE-SCOPE, D-117):
+  - nothing at all (`tree`) unless the build's tree is HEAD's, resolved once per hook call (`git rev-parse HEAD^{tree}`,
+    within HEAD_TIMEOUT; a HEAD that cannot be resolved gives nothing): the packs describe the build's commit, and git
+    moves HEAD with no hook (a reset, a checkout). Trees, not commits: scripts/push_clean.sh moves the branch to a
+    commit with the same tree and no hook runs, and the packs still describe that tree. The record is read again
+    after the parts, and a record that changed in between (a build in flight) gives nothing;
+  - the code part only when the code-map pack's blob is the file's blob at the build's commit (BLOBS.txt; else `blob`,
+    VERIFY-K2 F1) and its symbols are that blob's own ast (`symbols_from: "ast"`; else `symbols`: a pack of an older
+    code map took its symbols from a graph), with its registry rows only when the screen that found them ran from the
+    build's committed blobs (codemap.SCREENS; else the rows are left out). The code part names no caller, no test and
+    no graph's state: that surface went with the re-scope (it carried VERIFY-K2's class for four rounds).
+A touch whose code part is left out gets the pack's lines only, and its record says `code_skip`.
 
 A Bash call touches the files named as arguments of a reader command word (READERS) at a command position, as the
 System-1 hook's shell parser finds them: quoted text, heredoc bodies and comments are data; a nested shell's script
@@ -49,18 +55,19 @@ Once per window: `file:<path>` (Read, Write, Bash; an Edit sets it too) and `sym
 inject) and PACK_WINDOW_MAX a window. `hook --reset` (SessionStart) has the System-1 reset's semantics: a compaction
 forgets the compacted window, a resume or a clear every window of its session, and a marker idle 7 days goes.
 
-Boundary: only files tracked at the last build (TRACKED.txt, one exact line per path). A path outside the root or with a
-`..` component and an untracked file give nothing. A pack that is itself a symbolic link gives nothing (`link`), and so
-does a code pack whose directory resolves outside .jev/codemap (`unreadable`) or a pack whose directory resolves
-outside <state>/filepacks (`link`); a directory link that stays inside them, a linked .jev/codemap and a linked
-<state>/filepacks are followed, since the state is trusted (VERIFY-K2 F6). A working file that is not a regular file
-gives no code part. Advisory, never a gate: every path exits 0 and prints nothing on an error; a decision or an error
-is one JSON line in <state>/filepacks.jsonl (the System-1 record shape: keys, bytes, sha, why; never the tool input).
-Off switch: the file <state>/filepacks-off (a dangling link counts; the reset still runs). A call that names no tracked
-file, or that comes before the first build, logs nothing and writes no marker. What a call does write (VERIFY-K2 F12):
-a payload that is not JSON logs one line, creating <state> when it is missing; the first call with <state> present
-caches the System-1 hook's bytecode under <state>/pycache; the import of scripts/codemap.py caches its bytecode in
-scripts/__pycache__, which git ignores.
+Boundary: only files tracked at the last build (TRACKED.txt, one exact line per path), and only while that build's tree
+is HEAD's. A path outside the root or with a `..` component and an untracked file give nothing. A pack that is itself a
+symbolic link gives nothing (`link`), and so does a code pack whose directory resolves outside .jev/codemap
+(`unreadable`) or a pack whose directory resolves outside <state>/filepacks (`link`); a directory link that stays inside
+them, a linked .jev/codemap and a linked <state>/filepacks are followed, since the state is trusted (VERIFY-K2 F6). A
+working file that is not a regular file gives no code part. Advisory, never a gate: every path exits 0 and prints
+nothing on an error; a decision or an error is one JSON line in <state>/filepacks.jsonl (the System-1 record shape:
+keys, bytes, sha, why; never the tool input). Off switch: the file <state>/filepacks-off (a dangling link counts; the
+reset still runs). A call that names no tracked file, or that comes before the first build, logs nothing and writes no
+marker; one while the build's tree is not HEAD's logs its files as skipped (`tree`) and writes no marker. What a call
+does write (VERIFY-K2 F12): a payload that is not JSON logs one line, creating <state> when it is missing; the first
+call with <state> present caches the System-1 hook's bytecode under <state>/pycache; the import of scripts/codemap.py
+caches its bytecode in scripts/__pycache__, which git ignores.
 
 `replay` runs the main loop's recorded tool calls through the hook's planner, window by window (split at the compaction
 boundaries), with the seen keys in memory, never the live markers. It reads only compaction boundaries and tool_use
@@ -110,6 +117,8 @@ SNIPPET = 240                        # characters
 HEADLINE = 160                       # characters
 GROUPS = ("ledger", "incidents", "decisions", "briefs", "skills", "commits")   # the order an entry takes them in
 GIT_TIMEOUT = 300
+HEAD_TIMEOUT = 2                     # seconds the hook waits for `git rev-parse HEAD^{tree}` (a few ms when it answers)
+OBJECT_RX = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")      # a git object id (SHA-1 or SHA-256)
 STALE_MARK = "STALE: the file changed"     # the code map's own freshness mark, in each of its entries
 
 # A path token: a maximal run of path characters that holds a "." or a "/". The lookbehind starts a match only at the
@@ -462,8 +471,8 @@ def targets(tool, ti, cwd, root=ROOT):
 # ---------------------------------------------------------------- the reader
 
 class Packs:
-    """The packs one hook call or one replay reads: the tracked list, the blob ids and the build's SHA, each read
-    once."""
+    """The packs one hook call or one replay reads: the tracked list, the blob ids, the build's record and whether its
+    tree is HEAD's, each read once."""
 
     def __init__(self, root=ROOT, state=None):
         self.root = Path(root)
@@ -471,7 +480,9 @@ class Packs:
         self.dir = self.state / "filepacks"
         self._tracked = None
         self._blobs = None
-        self._commit = None
+        self._record = None
+        self._raw = None
+        self._current = None
 
     def built(self):
         """True once a build wrote TRACKED.txt (a link or another kind of file raises)."""
@@ -498,18 +509,58 @@ class Packs:
         j = self._blobs.find(b"\n", i + len(key)) if i >= 0 else -1
         return self._blobs[i + len(key):j].decode("ascii", "replace") if j >= 0 else None
 
-    def commit(self):
-        if self._commit is None:
+    def record(self):
+        """BUILD.json: the build's commit, its tree and its counts; {} when it is missing or unreadable (a build in
+        flight has replaced it with a record that names no tree). Its bytes are kept for `still`."""
+        if self._record is None:
             try:
-                self._commit = str(json.loads(s1().read_regular(str(self.dir / "BUILD.json")))["commit"])[:7]
-            except (OSError, ValueError, KeyError, TypeError):
-                self._commit = "?"
-        return self._commit
+                self._raw = s1().read_regular(str(self.dir / "BUILD.json"))
+                rec = json.loads(self._raw)
+            except (OSError, ValueError):
+                rec = None
+            self._record = rec if isinstance(rec, dict) else {}
+        return self._record
+
+    def still(self):
+        """True when BUILD.json still holds the bytes `record` read. A build replaces it before it changes any pack
+        and ends with a record no other build writes (its id), so the same bytes mean that no build ran while the
+        parts were read (D-117 (b))."""
+        self.record()
+        try:
+            return self._raw is not None and s1().read_regular(str(self.dir / "BUILD.json")) == self._raw
+        except OSError:
+            return False
+
+    def commit(self):
+        c = self.record().get("commit")
+        return c[:7] if isinstance(c, str) else "?"
+
+    def current(self):
+        """True when the build's tree is HEAD's (K2 RE-SCOPE, D-117 condition (b)): BUILD.json's `tree` equals
+        `HEAD^{tree}`, resolved once per Packs (one hook call). False when the build recorded no tree (a build from
+        before this check) or HEAD cannot be resolved (no repository, an unborn branch, a git error or timeout)."""
+        if self._current is None:
+            want, got = self.record().get("tree"), _rev(self.root, "HEAD^{tree}")
+            self._current = isinstance(want, str) and OBJECT_RX.fullmatch(want) is not None and got == want
+        return self._current
 
     def shown(self, path):
         """A pack's path as the entry names it: repo-relative when it is inside the root."""
         p = str(path)
         return p[len(str(self.root)) + 1:] if p.startswith(str(self.root) + os.sep) else p
+
+
+def _rev(root, name):
+    """`git rev-parse --verify -q NAME` in `root`: the object id, or None when git cannot resolve it (no repository, an
+    unborn branch, an error) or does not answer within HEAD_TIMEOUT seconds."""
+    import subprocess
+    try:
+        r = subprocess.run(["git", "rev-parse", "--verify", "-q", name], cwd=root, capture_output=True,
+                           stdin=subprocess.DEVNULL, timeout=HEAD_TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = r.stdout.decode("ascii", "replace").strip()
+    return out if r.returncode == 0 and OBJECT_RX.fullmatch(out) else None
 
 
 class PackError(Exception):
@@ -570,51 +621,26 @@ def _p2_lines(rel, packs):
     return out
 
 
-def _committed_only(pack, rel, packs, graphs):
-    """The code pack as the model may see it, changed in place: provenance by blob (task #353, K2 round 4, D-115; the
-    class of VERIFY-K2 F1, R2 B1 and R3-1: untracked text through the derived code index). A caller or a test stays
-    only when the pack's `provenance` (scripts/codemap.py) says the graph that named it indexed exactly its file's blob
-    in the code map's commit, and that blob is the file's blob at this build (BLOBS.txt): a file untracked then has no
-    blob, and bytes the graph read that no commit holds are no blob. A name in `rel` itself also needs its graph fresh
-    (a stale graph's names from this file can come from other bytes). A symbol's callers total stands when every file
-    the file's callers are in, and the file itself, is vouched for that way and GitNexus is fresh; otherwise it is left
-    out (None): the pack samples three callers, so a recount is not exact. A pack with no provenance shows no names."""
-    fresh = {g: (graphs.get(g) or {}).get("graph") == "fresh" for g in ("gitnexus", "code-review-graph")}
-    prov = pack.get("provenance") if isinstance(pack.get("provenance"), dict) else {}
-
-    def proven(f, graph):                            # "a\nb" would match two BLOBS.txt lines
-        rec = prov.get(graph).get(f) if isinstance(prov.get(graph), dict) and isinstance(f, str) else None
-        return (isinstance(rec, dict) and "\n" not in f and isinstance(rec.get("blob"), str)
-                and rec.get("indexed") == rec["blob"] and rec["blob"] == packs.blob(f))
-
-    def keep(x, graph):
-        f = x.get("file") if isinstance(x, dict) else None
-        return proven(f, graph) and (f != rel or fresh[graph])
-
-    pack["tests"] = [x for x in pack.get("tests") or [] if keep(x, "code-review-graph")]
-    files = pack.get("caller_files")
-    all_kept = fresh["gitnexus"] and isinstance(files, list) and all(proven(f, "gitnexus") for f in files + [rel])
-    for s in pack.get("symbols") or []:
-        c = (s.get("gitnexus") or {}).get("callers") if isinstance(s, dict) else None
-        if not isinstance(c, dict):
-            continue
-        sample = c.get("sample") or []
-        kept = [x for x in sample if keep(x, "gitnexus")]
-        if not all_kept or len(kept) < len(sample):
-            c["count"] = c["tests"] = None              # it counted a caller the model is not shown
-        c["sample"] = kept
+def _screened(pack, packs):
+    """True when the code-map pack's registry rows came from the build's committed screen: the code map records the blob
+    id of each file of the screen it ran (codemap.SCREENS, the screen's code and its table, whose row ids and messages
+    the rows carry), and each must be that file's blob at the build (BLOBS.txt)."""
+    ins = pack.get("instruments")
+    sec = ins.get("ap_screen") if isinstance(ins, dict) else None
+    screens = sec.get("screens") if isinstance(sec, dict) else None
+    return isinstance(screens, dict) and all(isinstance(screens.get(p), str) and screens[p] == packs.blob(p)
+                                             for p in codemap().SCREENS)
 
 
 def _code_part(rel, ti, packs):
     """(status, text, symbol, stale, skip) of the code map's entry for this touch; status None when there is none, and
-    skip "blob" when the code-map pack does not describe the file's blob at the build's commit (VERIFY-K2 F1: the code
-    map builds from the working copy, so its pack can hold text no commit holds), "stale-graph" when the graph its
-    symbols came from had not indexed those bytes (VERIFY-K2 R2 B2: then the symbols can be another content's). The
-    pack is read once, here, cut to the callers and tests its provenance vouches for (_committed_only) and handed to
-    the reader, so the pack checked is the pack shown. An Edit placed in one symbol gives that symbol's entry (a
-    module-level one `<module>`); an Edit that cannot be placed gives the file's entry. A Read with offset and limit
-    gives the enclosing symbol's entry, or the symbols in range when no one symbol holds the range. PackError when the
-    pack exists and cannot be used."""
+    skip "blob" when the code-map pack does not describe the file's blob at the build's commit (VERIFY-K2 F1: then its
+    text is not the build's), "symbols" when its symbols are not that blob's own ast (a pack of an older code map took
+    them from a graph, D-117 (a)). Its registry rows are left out unless the screen that found them ran from the build's
+    committed blobs (_screened). The pack is read once, here, and handed to the reader, so the pack checked is the pack
+    shown. An Edit placed in one symbol gives that symbol's entry (a module-level one `<module>`); an Edit that cannot
+    be placed gives the file's entry. A Read with offset and limit gives the enclosing symbol's entry, or the symbols in
+    range when no one symbol holds the range. PackError when the pack exists and cannot be used."""
     cm = codemap()
     root = packs.root
     path = cm.pack_path(root, rel)
@@ -642,11 +668,10 @@ def _code_part(rel, ti, packs):
         raise PackError("corrupt")
     if pack["blob"] != packs.blob(rel):
         return None, "", None, None, "blob"
-    graphs = pack.get("instruments") if isinstance(pack.get("instruments"), dict) else {}
-    src = pack.get("symbols_from")
-    if (src is not None or pack.get("symbols")) and (graphs.get(src) or {}).get("graph") != "fresh":
-        return None, "", None, None, "stale-graph"      # VERIFY-K2 R2 B2: symbols of bytes the blob may not hold
-    _committed_only(pack, rel, packs, graphs)
+    if pack.get("symbols_from") != "ast":
+        return None, "", None, None, "symbols"          # D-117 (a): only the committed blob's own ast names symbols
+    if not _screened(pack, packs):
+        pack["registry"] = []                           # a row id or message the build's screen does not hold
 
     def use(r):
         if r["status"] in ("out-of-scope", "miss"):
@@ -672,20 +697,25 @@ def _code_part(rel, ti, packs):
 
 
 def entry(rel, tool_input, budget=PACK_BUDGET, *, packs=None, p2=True):
-    """What the hook injects for one touch of the tracked file `rel`: the code part (see _code_part), then the pack's
-    lines (unless `p2` is false), cut at a line boundary within `budget` bytes. A stale code part is never shown without
-    its STALE mark: when the mark does not fit, nothing is. Returns {text, symbol (an Edit's), code (the code part's
-    status or None), stale, skip (why the code part was left out: blob, F1; stale-graph, B2), lines, cut, error (why
-    nothing: link, unreadable, corrupt or gone)}."""
+    """What the hook injects for one touch of the tracked file `rel`: nothing unless the build's tree is HEAD's and its
+    record is unchanged once the parts are read (skip "tree", D-117 (b)); else the code part (see _code_part), then the
+    pack's lines (unless `p2` is false), cut at a line boundary within `budget` bytes. A stale code part is never shown
+    without its STALE mark: when the mark does not fit, nothing is. Returns {text, symbol (an Edit's), code (the code
+    part's status or None), stale, skip (tree: why nothing; blob or symbols: why the code part was left out), lines,
+    cut, error (why nothing: link, unreadable, corrupt or gone)}."""
     packs = packs or Packs()
     ti = tool_input if isinstance(tool_input, dict) else {}
     res = {"text": "", "symbol": None, "code": None, "stale": None, "skip": None, "lines": 0, "cut": 0, "error": None}
+    if not packs.current():
+        return dict(res, skip="tree")                    # D-117 (b): the packs describe a tree that is not HEAD's
     try:
         status, text, sym, stale, skip = _code_part(rel, ti, packs)
         lines = text.split("\n") if text else []
         lines += _p2_lines(rel, packs) if p2 else []
     except PackError as e:
         return dict(res, error=e.why)
+    if not packs.still():
+        return dict(res, skip="tree")                    # a build began while the parts were read: they may be its
     kept, used = [], 0
     for ln in lines:
         cost = len(ln.encode("utf-8")) + (1 if kept else 0)
@@ -985,7 +1015,7 @@ def _clean(pdir, keep):
 
 def build(root=ROOT, state=None, sha=None):
     """Build every pack at one commit: `sha`, else HEAD resolved once here (AF-AP-175). One build at a time (a lock in
-    <state>). Returns the BUILD.json record."""
+    <state>). Returns the BUILD.json record (the commit, its tree, the counts)."""
     import fcntl
     t0 = time.monotonic()
     root = Path(root)
@@ -1004,6 +1034,7 @@ def _build(root, state, sha, t0):
         sha = _git(root, "rev-parse", "--verify", "HEAD^{commit}").decode("ascii").strip()
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("not a full commit id: %r" % sha[:80])
+    tree = _git(root, "rev-parse", "--verify", sha + "^{tree}").decode("ascii").strip()    # the reader's check (D-117)
     tracked, blobs = [], []                              # one ls-tree: the paths and each blob id
     for item in _git(root, "ls-tree", "-r", "-z", sha).decode("utf-8", "replace").split("\0"):
         meta, tab, p = item.partition("\t")                # "<mode> <type> <object>\t<path>"
@@ -1065,6 +1096,8 @@ def _build(root, state, sha, t0):
              for p, by in kept.items() if p != "BUILD"}      # a root file named BUILD would be BUILD.json
     pdir = state / "filepacks"
     os.makedirs(pdir, mode=0o700, exist_ok=True)
+    _write(str(pdir / "BUILD.json"), (json.dumps({"schema": SCHEMA, "commit": sha, "building": True}, sort_keys=True)
+                                      + "\n").encode("utf-8"))      # no tree while the packs change (D-117 (b))
     removed = _clean(pdir, set(packs))
     written = failed = 0
     sys1 = s1()
@@ -1083,8 +1116,9 @@ def _build(root, state, sha, t0):
             failed += 1                                  # a path the pack tree cannot hold: that file goes without
     _write(str(pdir / "BLOBS.txt"), ("\n" + "\n".join(blobs) + "\n").encode("utf-8"))
     _write(str(pdir / "TRACKED.txt"), ("\n" + "\n".join(tracked) + "\n").encode("utf-8"))
-    rec = {"schema": SCHEMA, "commit": sha, "tracked": len(tracked), "files": len(packs), "written": written,
-           "removed": removed, "failed": failed, "missing": missing, "ms": round((time.monotonic() - t0) * 1000)}
+    rec = {"schema": SCHEMA, "commit": sha, "tree": tree, "tracked": len(tracked), "files": len(packs),
+           "written": written, "removed": removed, "failed": failed, "missing": missing,
+           "ms": round((time.monotonic() - t0) * 1000), "id": os.urandom(8).hex()}   # this build's own (Packs.still)
     _write(str(pdir / "BUILD.json"), (json.dumps(rec, sort_keys=True) + "\n").encode("utf-8"))
     return rec
 

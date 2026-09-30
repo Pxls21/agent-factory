@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-30 14:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 14:2xZ): eeeaf5c (transcript digests) after 6466ec6 (the live-state block) and ebc45c5 (the retro). The scrubber lane's PIN stays 631dc86.**
+- **RUNNING (as of 14:2xZ):** ONE lane: the scrubber's option A (task #321, D-117) as the PC lane `SCRUB2-A-brief.md--631dc86` on the raw local Qwen id; sandbox poller pid 7289. LANDED in the commit after this block's writing: K2 RE-SCOPE (task #353), GATED-PENDING-VERIFY; report `tasks/briefs/jev-trim/K2-RS-report.md`; the hook is NOT registered (the owner's call after the verify). NEXT: VERIFY-K2-RS (the round-4 verifier resumed, agent a5f4b238ed9d44435, once the landing's CI passes); the option A hand-back, then its verify; then VERIFY-JEV-RELAY (task #373) and gitleaks' library pass (task #403).
+
 **2026-09-30 14:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 14:0xZ): f4738cd (transcript digests) after ebc45c5 (the retro: AF-AP-251, the cbm lesson in `code-intel-trio` and `env-tool-quirks`, task #405 registered) and 56d77dd (the R1-F3 test fix; CI run #1186 passed on it). The lanes' PIN stays 631dc86.**
 - **RUNNING (as of 14:0xZ):** the same TWO lanes as the block below. (1) The scrubber's option A (task #321) on the PC, poller pid 7289, no failed call since the re-attach. (2) K2 RE-SCOPE (task #353): the builder has written `tasks/briefs/jev-trim/K2-RS.patch` (untracked until its hand-back) and is finishing. NEXT: K2's hand-back, its landing and its verify; the option A hand-back, then its verify.

@@ -1,8 +1,8 @@
 diff --git a/scripts/hooks/post-commit b/scripts/hooks/post-commit
-index 09b3b0b..0fffc6a 100755
+index 09b3b0b..004992c 100755
 --- a/scripts/hooks/post-commit
 +++ b/scripts/hooks/post-commit
-@@ -172,6 +172,21 @@ case "$cmsg" in launched*)
+@@ -172,6 +172,24 @@ case "$cmsg" in launched*)
    ) 8>"$T/codemap-refresh.lock" >>"$T/codemap-refresh.log" 2>&1 </dev/null & ;;
  esac
  
@@ -10,8 +10,11 @@ index 09b3b0b..0fffc6a 100755
 +# every tracked file (the lines of the ledger, the decision log, the incident log, nine skills and the briefs that
 +# name it, and its last commit subjects), in the background: niced, one build at a time (a blocking flock on
 +# $T/filepacks-build.lock queues a later commit's build behind this one), never blocking or failing the commit. Every
-+# commit changes a source (the commit list at least), so every commit launches one. One line per commit in
-+# $T/filepacks-build.log says whether it launched or why not; the build adds its result line.
++# commit changes a source (the commit list at least), so every commit launches one. The build records its commit and
++# that commit's tree (BUILD.json), and the file-pack hook shows nothing while HEAD's tree is another (D-117: after a
++# reset or a checkout, or before this build is done), so this hook lands with or before the hook's registration, and
++# one build at HEAD writes TRACKED.txt, BLOBS.txt and BUILD.json before any session loads that hook. One line per
++# commit in $T/filepacks-build.log says whether it launched or why not; the build adds its result line.
 +if [ -f "$REPO_ROOT/scripts/filepacks.py" ]; then fmsg="launched"; else fmsg="none: scripts/filepacks.py is absent"; fi
 +printf '%s %s filepacks build %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(git rev-parse --short HEAD)" "$fmsg" \
 +  >>"$T/filepacks-build.log"
