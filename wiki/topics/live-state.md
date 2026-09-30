@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-30 15:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 15:3xZ): d649df0 (transcript digests) after 2df97aa (the K2 RE-SCOPE landing, task #353, GATED-PENDING-VERIFY; CI run #1189 passed). The commits of this block's writing follow.**
+- **RUNNING (as of 15:3xZ):** no PC lane: the scrubber's option A lane was stopped at 15:29:40Z (D-118, task #321 parked). THE OWNER'S DECISION NEEDED: the harness's auto-mode classifier refused the relay's first command as Data Exfiltration (15:31:14Z), so the switch-on (task #406, the pruner on OpenJev through the relay) and VERIFY-JEV-RELAY wait. NEXT: VERIFY-K2-RS (the round-4 verifier resumed, agent a5f4b238ed9d44435) and the pruner's lower floor (task #408, a sandbox build lane), once this block's commits are on origin.
+
 **2026-09-30 15:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 15:0xZ): d649df0 (transcript digests) after 2df97aa (the K2 RE-SCOPE landing, task #353, GATED-PENDING-VERIFY; its CI run #1189 in progress at writing). The scrubber lane's PIN stays 631dc86.**
 - **RUNNING (as of 15:0xZ):** ONE lane: the scrubber's option A (task #321, D-117) as the PC lane `SCRUB2-A-brief.md--631dc86` on the raw local Qwen id; sandbox poller pid 7289. OPEN QUESTION to the owner (the ledger's 15:0xZ entry): does the first live Jev decision (task #406, the pruner on OpenJev through the relay) go ahead of the rest of the Jev backlog? NEXT, once CI #1189 passes: VERIFY-K2-RS (the round-4 verifier resumed, agent a5f4b238ed9d44435) and VERIFY-JEV-RELAY moved up beside the scrubber (task #373; a fresh sandbox verifier; the scrubber a black box); then the option A hand-back and its verify; then task #403.
