@@ -26,6 +26,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 from pathlib import Path
@@ -2766,13 +2767,26 @@ def test_cbms_unmapped_if_is_the_binarys_own_not_indexed_error(tmp_path):
     at run time (the binary's strings hold the bare text and a `{"error":"project not found"}`, not this line), so
     the oracle is a run, not the message table: a private HOME and cache, and a project name no store holds (a search
     writes nothing to any store). Mutant: a marker the binary never prints, such as `"error": "` with a space (the
-    step would read FAILED)."""
+    step would read FAILED).
+
+    The rendezvous is private too (R1-F3, issue #89): the binary keeps one daemon per account in CBM_RUNTIME_DIR
+    (default /tmp/cbm-daemon-<uid>), and while any daemon on another cache lives there, a call on this private cache
+    fails with "the active account daemon uses a different cache directory" (measured 2026-09-30 beside the MCP
+    server's daemon: 1 failed in 1.85 s). A private CBM_RUNTIME_DIR also keeps this test's own daemon from blocking
+    another caller's. The directory is short and under /tmp, not tmp_path: its socket path must fit in 108 bytes
+    (a 125-byte one gave "secure CLI coordination could not be created (endpoint)")."""
     home = tmp_path / "home"
     cache = home / ".cache" / "codebase-memory-mcp"
     cache.mkdir(parents=True)
-    env = {**os.environ, "HOME": str(home), "CBM_CACHE_DIR": str(cache), "XDG_CACHE_HOME": str(home / ".cache")}
-    r = subprocess.run([cbm_binary(), "cli", "search_graph", "--project", "ls-b12-r1-no-such-project", "--query",
-                        "stack runner"], cwd=str(tmp_path), env=env, capture_output=True, text=True, timeout=120)
+    runtime = tempfile.mkdtemp(prefix="cbmr.", dir="/tmp")
+    env = {**os.environ, "HOME": str(home), "CBM_CACHE_DIR": str(cache), "XDG_CACHE_HOME": str(home / ".cache"),
+           "CBM_RUNTIME_DIR": runtime}
+    try:
+        r = subprocess.run([cbm_binary(), "cli", "search_graph", "--project", "ls-b12-r1-no-such-project", "--query",
+                            "stack runner"], cwd=str(tmp_path), env=env, capture_output=True, text=True, timeout=120)
+    finally:
+        shutil.rmtree(runtime, ignore_errors=True)
+    assert "different cache directory" not in r.stderr, r.stderr   # the rendezvous was not private
     assert r.returncode == 1 and UNMAPPED_385["cbm.search"][0] in r.stderr, r.stdout + r.stderr
     assert '{"error":"project not found or not indexed",' in r.stderr and r.stdout == ""
 
