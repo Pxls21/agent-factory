@@ -24,6 +24,9 @@ version = 1
 
 [tools]
 code-review-graph = ["~/venv-crg/bin/code-review-graph", "/root/venv-crg/bin/code-review-graph", "code-review-graph"]
+# The home path first, where scripts/jev_context.py's default_tools finds it (the code-intel-trio skill names
+# /root/.local/bin); then the PATH. A step's program resolves here before it runs; missing, it reads unmapped.
+codebase-memory-mcp = ["~/.local/bin/codebase-memory-mcp", "codebase-memory-mcp"]
 
 # ---------------------------------------------------------------------------------------------------------------- harvest
 [stacks.harvest]
@@ -530,3 +533,191 @@ group = 1
 timeout = 60
 cap_lines = 20
 ok_rc = [0, 75]
+
+# -------------------------------------------------------------------------------------------------------------------- cbm
+# task #385 (D-113, D-114): codebase-memory's search_graph, the tool name a literal (the same CLI runs
+# index_repository, delete_project and manage_adr; no box reaches them). Measured 2026-09-30 on this tree: rc 0 and a
+# `results:` table of at most 50 rows (55 lines, 5,651 bytes, about 4 s); rc 0 and `results: 0` for no match; rc 1 and
+# {"error":"project not found or not indexed",...} on stderr where the project has no index (a fresh HOME, or a clone
+# at another path, whose slug differs), which reads unmapped. The CLI starts a temporary daemon in its own session: it
+# outlived the CLI by 0.44 to 0.48 s, and by 11.6 to 13.4 s when the CLI's process group was killed (a step's timeout),
+# out of the runner's reach (it kills the step's own group).
+[stacks.cbm]
+summary = "codebase-memory's graph search (project home-user-agent-factory): ranked symbols with their file and lines"
+replaces = "a hand codebase-memory-mcp cli search_graph call"
+outward = false
+rated = true
+body = "q"   # a box's body: the search text
+
+[stacks.cbm.params.q]
+type = "text"
+required = true
+
+[[stacks.cbm.steps]]
+id = "search"
+argv = ["codebase-memory-mcp", "cli", "search_graph", "--project", "home-user-agent-factory", "--query", "{q}"]
+group = 1
+timeout = 120
+cap_lines = 60
+unmapped_if = "project not found or not indexed"
+tool = "codebase-memory"
+
+# ---------------------------------------------------------------------------------------------------------------- changes
+# task #385: GitNexus's detect-changes (CLAUDE.md's GitNexus block: analyze graph changes before committing). One step
+# per scope, so --base-ref reaches compare only: `when` matches one value. Measured 2026-09-30: rc 0 and `No changes
+# detected.` or a report led by `Changes: N files, M symbols`. When the result is partial (a graph query failed) or its
+# listing capped, the CLI's FIRST line says so (`PARTIAL RESULT: ...`, `LISTING CAPPED: ...`), and it exits 1 on
+# partial, 0 on capped (output() in its dist/cli/tool.js): headline puts that first line in the print's header, where
+# the print cap never cuts it. compare without base: rc 1 `Error: base_ref is required for "compare" scope`. No runner
+# (no global gitnexus, npx, pnpm or bunx): rc 1 `gitnexus runner: could not launch ...`, which reads unmapped; a tree
+# with no .gitnexus/run.cjs reads unmapped too (the runner's script check).
+[stacks.changes]
+summary = "GitNexus detect-changes: the changed symbols and the flows they touch, for all, staged or unstaged changes or since a base"
+replaces = "the hand detect-changes call before a commit: node .gitnexus/run.cjs detect-changes --scope all --repo ."
+outward = false
+notes = ["`No changes detected.` covers only symbols the index holds; a `PARTIAL RESULT` or `LISTING CAPPED` header line is not a clean check."]
+
+[stacks.changes.params.scope]
+type = "choice"
+choices = ["all", "staged", "unstaged", "compare"]
+default = "all"
+
+# text, not word: a ref holds '/' or '~' (origin/main, HEAD~3), which the word type refuses. The text type refuses a
+# leading '-', which matters here: GitNexus puts the ref into `git diff` before -U0 with no `--` (its
+# buildDetectChangesDiffArgs), where a value such as --output=<file> would be an option.
+[stacks.changes.params.base]
+type = "text"
+
+[[stacks.changes.steps]]
+id = "all"
+argv = ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "all", "--repo", "."]
+group = 1
+timeout = 120
+headline = true
+unmapped_if = "gitnexus runner: could not launch"
+tool = "gitnexus"
+when = { scope = "all" }
+
+[[stacks.changes.steps]]
+id = "staged"
+argv = ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "staged", "--repo", "."]
+group = 1
+timeout = 120
+headline = true
+unmapped_if = "gitnexus runner: could not launch"
+tool = "gitnexus"
+when = { scope = "staged" }
+
+[[stacks.changes.steps]]
+id = "unstaged"
+argv = ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "unstaged", "--repo", "."]
+group = 1
+timeout = 120
+headline = true
+unmapped_if = "gitnexus runner: could not launch"
+tool = "gitnexus"
+when = { scope = "unstaged" }
+
+[[stacks.changes.steps]]
+id = "compare"
+argv = ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "compare", "{base?:--base-ref}", "--repo", "."]
+group = 1
+timeout = 120
+headline = true
+unmapped_if = "gitnexus runner: could not launch"
+tool = "gitnexus"
+when = { scope = "compare" }
+
+# -------------------------------------------------------------------------------------------------------------------- why
+# task #385: scripts/why.sh, the chronology from primary sources (git log, git log -L for a function, the last change's
+# full message, the markdown files under docs/INCIDENT-LOG.md, docs/research/findings/ and wiki/ that name the file or
+# the function, and gitnexus impact when a function is given and a gitnexus CLI is on the PATH). Two steps, as fn is
+# set or not: why.sh takes the function as its second positional argument, which {fn?:FLAG} cannot write. Measured
+# 2026-09-30: rc 0 (about 35 lines); a path git has no commit for exits 128 (`fatal: ambiguous argument ''`); a
+# function that git log -L cannot find falls back to the file's history (rc 0).
+[stacks.why]
+summary = "a file's or a function's chronology: its commits, the last change's full message, the docs that name it"
+replaces = "bash scripts/why.sh <file> [<fn>] by hand"
+outward = false
+rated = true
+
+[stacks.why.params.file]
+type = "path"
+required = true
+
+[stacks.why.params.fn]
+type = "symbol"
+
+[[stacks.why.steps]]
+id = "file"
+argv = ["bash", "scripts/why.sh", "{file}"]
+group = 1
+timeout = 120
+cap_lines = 60
+when = { fn = "" }
+
+[[stacks.why.steps]]
+id = "function"
+argv = ["bash", "scripts/why.sh", "{file}", "{fn}"]
+group = 1
+timeout = 120
+cap_lines = 60
+when = { fn = "*" }
+
+# ----------------------------------------------------------------------------------------------------------------- locate
+# task #385: scripts/jev_locate.py in its plain order. --order lexical and --no-jev-log pin what its defaults do on
+# 2026-09-30, as the find stack pins chat_find.py: no model call (KC-J1; D-077), no line in jev.py's call log.
+# Measured 2026-09-30: rc 0 and a pack of about 30 lines (4.5 KB) that names the instruments that answered; a --in path
+# that does not exist exits 64. No unmapped_if: its registry and quirk instruments answer in every checkout of this
+# repo (docs/INCIDENT-LOG.md and CLAUDE.md are tracked), so its pack never says `answered: none`; with every code-intel
+# tool missing it answered 3 of 8 (registry, quirks, git-log), and the pack lists the rest as unmapped. Its
+# codebase-memory instrument starts the temporary daemon the cbm stack's note describes.
+[stacks.locate]
+summary = "a bug text to the files, lines and records to read: jev_locate.py's eight instruments, plain lexical order"
+replaces = "graft ask, GitNexus query and context, codebase-memory, code-review-graph, rg, the AF-AP rows, the quirk lines and git log -S, one by one"
+outward = false
+rated = true
+body = "q"   # a box's body: the bug text (an error line, a failing test's output, a sentence)
+
+[stacks.locate.params.q]
+type = "text"
+required = true
+
+# --in: graft and rg look under this path only
+[stacks.locate.params.scope]
+type = "path"
+
+[[stacks.locate.steps]]
+id = "pack"
+argv = ["python3", "scripts/jev_locate.py", "--order", "lexical", "--no-jev-log", "{scope?:--in}", "{q}"]
+group = 1
+timeout = 120
+
+# --------------------------------------------------------------------------------------------------------------- fix-echo
+# task #385: scripts/jev_echo.py in its plain order, after a fix: the lines the diff's code hunks remove are the
+# defect, and rg (their tokens and shapes) and graft find other sites that look like them, the fixed site excluded.
+# --order lexical and --no-jev-log as for locate (KC-J1; D-077). Measured 2026-09-30: rc 0 and a pack of about 20
+# lines; a diff that is neither a readable patch file nor a commit git can show exits 64. With rg and graft both
+# unavailable it exits 0 with `answered: none` and no site, so that line reads unmapped; so does a diff that removes no
+# code line (`nothing to echo`), where no instrument runs.
+[stacks.fix-echo]
+summary = "after a fix: other sites like the lines it removed, from jev_echo.py (rg and graft) in the plain lexical order"
+replaces = "the bug-echo lookup of a fix's removed lines by hand: rg for their tokens and shapes, graft ask"
+outward = false
+rated = true
+notes = ["`fix-echo` reads unmapped when no instrument answered: rg and graft missing, or a diff that removes no code line."]
+
+# path, not text or word: a commit id (0de29b2, HEAD~1, origin/main) passes the path checks as a name inside the tree,
+# and a patch file must lie inside the tree and off the deny list (text would let a patch path name any file on the
+# box, which jev_echo.py opens and reads); word refuses the '/' of a patch path or of a remote ref.
+[stacks.fix-echo.params.diff]
+type = "path"
+required = true
+
+[[stacks.fix-echo.steps]]
+id = "sites"
+argv = ["python3", "scripts/jev_echo.py", "--diff", "{diff}", "--order", "lexical", "--no-jev-log"]
+group = 1
+timeout = 120
+unmapped_if = "answered: none"
+tool = "rg-and-graft"

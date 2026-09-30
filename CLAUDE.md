@@ -373,10 +373,12 @@ AF-AP registry) · `ctx` (graft skeletons and ask, GitNexus impact, code-review-
 `impact` (GitNexus impact, code-review-graph callers and tests, ripwire edit-check) · `review` (sentrux, ripwire's
 test gate, the pyflakes delta, the AP screen) · `gate` (every test that names a path, plus ripwire's linked tests) ·
 `echo` (a pattern across the code roots, the incident log, the AP screen) · `premise` (tracked, sha256, lines, last
-commit) · `harvest` (a finished lane's models, refusals, hand-back, report) · `ci` (the stage0-ci verdict). Task #385
-adds five, each listed here when built: codebase-memory, GitNexus detect-changes, `why.sh`, `jev_locate`, `jev_echo`
-(plain order; no stack calls a model, KC-J1). Load `box-and-labels` before writing a box or choosing a label, and
-`label-authoring` before adding one; the box is on since 2026-09-30 (LS-B11; the off switch is the file `.jev/req-off`).
+commit) · `harvest` (a finished lane's models, refusals, hand-back, report) · `ci` (the stage0-ci verdict) · `cbm`
+(codebase-memory's graph search) · `changes` (GitNexus detect-changes: all, staged, unstaged, or since a base) · `why`
+(`why.sh`: a file's or a function's chronology) · `locate` (`jev_locate`: a bug text to the files and records to read) ·
+`fix-echo` (`jev_echo`: the sites like a fix's removed lines); `locate` and `fix-echo` run the plain order (no stack
+calls a model, KC-J1). Load `box-and-labels` before writing a box or choosing a label, and `label-authoring` before
+adding one; the box is on since 2026-09-30 (LS-B11; the off switch is the file `.jev/req-off`).
 
 **Pipeline order is load-bearing: interview → SEED → task-breakdown → build.** To-dos come FROM
 the seed.

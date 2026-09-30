@@ -36,10 +36,18 @@ skill holds the details.
 | `premise` | per file: tracked or not, sha256, line count, the last commit | `files` | none | no |
 | `harvest` | a finished lane: its served models and refusal stops, its hand-back, the report linted and hashed | `agent`, `report` | none | no |
 | `ci` | the branch's stage0-ci verdict through `scripts/ci_gate.py` | `branch` | none | no |
+| `cbm` | codebase-memory's graph search (`search_graph`, project `home-user-agent-factory`): ranked symbols, file and lines | `q` | `q` | yes |
+| `changes` | GitNexus detect-changes for one scope (`all` by default; `compare` takes `base`), its first line in the header | `scope`, `base` | none | no |
+| `why` | `scripts/why.sh`: a file's or a function's commits, the last change's full message, the docs that name it | `file`, `fn` | none | yes |
+| `locate` | `scripts/jev_locate.py` (plain order): a bug text to the files, lines and records to read, from eight instruments | `q`, `scope` | `q` | yes |
+| `fix-echo` | `scripts/jev_echo.py` (plain order): the sites that look like the lines a fix removed (rg and graft) | `diff` (a commit or a patch file) | none | yes |
 
-Task #385 (backlog) adds five labels: codebase-memory, GitNexus detect-changes, `scripts/why.sh`,
-`scripts/jev_locate.py` and `scripts/jev_echo.py`, the two Jev tools in their plain order (no stack calls a model,
-KC-J1, D-077). Each new label gets a row here and a word in CLAUDE.md's labels line (D-114).
+Task #385 (LS-B12) added the last five. `locate` and `fix-echo` run the Jev tools in their plain order (`--order
+lexical --no-jev-log`: no stack calls a model, KC-J1, D-077). `changes` runs one step per scope, so `base` reaches
+`compare` only; a `PARTIAL RESULT` (its exit is 1) or `LISTING CAPPED` line in its header is not a clean check, and
+`No changes detected.` covers only the symbols the index holds. `cbm`'s CLI starts a temporary codebase-memory daemon
+in its own session, which outlives the step by about half a second (about 12 s after a timeout), out of the runner's
+reach. `fix-echo` reads unmapped when no instrument answered, a diff that removes no code line included.
 
 ## The box (LS-B11; the full grammar is the THE BOX section of `scripts/ls_req.py`'s docstring)
 

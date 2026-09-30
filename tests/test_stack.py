@@ -19,6 +19,7 @@ import fcntl
 import hashlib
 import importlib.util
 import json
+import mmap
 import os
 import re
 import shlex
@@ -1051,7 +1052,8 @@ def real(tmp_path, *args, timeout=300):
 
 
 NOTES = {   # issue #80's pre-wiring list (VERIFY-LS-B9 round 3), each under its stack, and the round-4 brief's eighth;
-            # the gate's second and harvest's first are amended for round 4's R3-F1 and R3-F3 fixes (the report says how)
+            # the gate's second and harvest's first are amended for round 4's R3-F1 and R3-F3 fixes (the report says how);
+            # changes' and fix-echo's are task #385's (LS-B12: how to read their output)
     "harvest": ["On a resumed lane, check the `report:` line: the report window opens at the resume message, so no "
                 "earlier round's text is this round's report (R3-F3).",
                 "`report=` names an existing file to lint and hash; the hand-back itself is saved under the run "
@@ -1062,20 +1064,25 @@ NOTES = {   # issue #80's pre-wiring list (VERIFY-LS-B9 round 3), each under its
     "ctx": ["`ctx` does not show a missing ripwire as unmapped (F-6)."],
     "review": ["`review mode=save` overwrites the shared sentrux baseline (F-5).",
                "`review`'s sentrux section is advisory; `tool exit N` is the only sign of a failed run."],
+    "changes": ["`No changes detected.` covers only symbols the index holds; a `PARTIAL RESULT` or `LISTING CAPPED` "
+                "header line is not a clean check."],
+    "fix-echo": ["`fix-echo` reads unmapped when no instrument answered: rg and graft missing, or a diff that removes "
+                 "no code line."],
 }
+WAVE1 = ["harvest", "gate", "ctx", "impact", "find", "premise", "echo", "review", "ci"]
+NEW_LABELS = ["cbm", "changes", "why", "locate", "fix-echo"]      # task #385 (LS-B12), after wave 1 in the registry
 
 
-def test_list_prints_one_line_per_wave1_stack_and_its_notes_under_it(tmp_path):
-    """Round 4 item 6: each note under the stack it concerns. Mutants: the notes not printed; a stack's notes printed
-    before its own line (under the stack above)."""
+def test_list_prints_one_line_per_stack_and_its_notes_under_it(tmp_path):
+    """Round 4 item 6: each note under the stack it concerns; LS-B12: wave 1's nine, then task #385's five. Mutants: the
+    notes not printed; a stack's notes printed before its own line (under the stack above)."""
     r = real(tmp_path, "list")
     assert r.returncode == 0, r.stderr
     lines = r.stdout.splitlines()
-    assert [line.split()[0] for line in lines if not line.startswith(" ")] == [
-        "harvest", "gate", "ctx", "impact", "find", "premise", "echo", "review", "ci"]
+    assert [line.split()[0] for line in lines if not line.startswith(" ")] == WAVE1 + NEW_LABELS
     assert "gate  paths=<paths> [mode=plan|run] [runs=1|2] [graph=yes|no] [max_files=<int>]  — " in r.stdout
     assert sorted(line.split()[0] for line in lines if line.endswith(" · rated")) == [
-        "ctx", "echo", "find", "impact", "review"]
+        "cbm", "ctx", "echo", "find", "fix-echo", "impact", "locate", "review", "why"]
     under, label = {}, None
     for line in lines:
         if line.startswith(" "):
@@ -1274,15 +1281,16 @@ def test_explain_names_a_stacks_body_and_only_when_it_has_one(tmp_path):
     assert r.returncode == 0 and '["a b"]' in r.stdout, r.stdout
 
 
-def test_the_registry_names_a_body_for_find_ctx_and_echo_only():
+def test_the_registry_names_a_body_for_find_ctx_echo_cbm_and_locate_only():
     """LS-B11 item 4, pinned: find and ctx name q (a question in prose), echo names pattern (a search pattern); no
-    other stack has one free-text parameter a person writes as prose or a pattern (ci's branch is a name). Mutant: a
-    body line dropped from or added to scripts/stacks.toml."""
+    other stack has one free-text parameter a person writes as prose or a pattern (ci's branch is a name). LS-B12
+    (task #385): cbm's q (a search text) and locate's q (a bug text); changes, why and fix-echo take a choice, a ref, a
+    path or a symbol. Mutant: a body line dropped from or added to scripts/stacks.toml."""
     mod = load_stack("stack_body_registry")
     _tools, stacks = mod.load_registry(str(ROOT / "scripts" / "stacks.toml"))
     assert {label: st.body for label, st in stacks.items()} == {
         "harvest": None, "gate": None, "ctx": "q", "impact": None, "find": "q", "premise": None, "echo": "pattern",
-        "review": None, "ci": None}
+        "review": None, "ci": None, "cbm": "q", "changes": None, "why": None, "locate": "q", "fix-echo": None}
 
 
 def test_premise_runs_on_this_tree(tmp_path):
@@ -2410,7 +2418,7 @@ def test_catalog_is_a_heading_the_list_and_one_line_on_ratings_under_4000_charac
     lines = r.stdout.split("\n")
     assert lines[0] == CATALOG_HEAD
     assert "\n".join(lines[1:-2]) + "\n" == listed.stdout
-    assert lines[-2] == CATALOG_RATE % "ctx, impact, find, echo, review"
+    assert lines[-2] == CATALOG_RATE % "ctx, impact, find, echo, review, cbm, why, locate, fix-echo"
     assert lines[-1] == "" and len(r.stdout) < 4000
     assert not (tmp_path / "log").exists()
 
@@ -2471,3 +2479,420 @@ def test_catalog_turns_an_unexpected_error_into_one_line(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mod, "list_lines", boom)
     assert mod.catalog(str(ROOT / "scripts" / "stacks.toml")) == "stacks: no catalog (RuntimeError: boom second line)\n"
+
+
+# ---------- task #385 (LS-B12): five more labels ----------
+# cbm, changes, why, locate and fix-echo (D-113, D-114; tasks/briefs/labeling/LS-B12-brief.md). Every step's interface
+# was measured by hand on this tree on 2026-09-30 (the lane's report): the pins below are those measured forms.
+
+REGISTRY = ROOT / "scripts" / "stacks.toml"
+NEEDS_NODE = pytest.mark.skipif(shutil.which("node") is None,
+                                reason="node is not installed: the changes stack's steps run node .gitnexus/run.cjs")
+
+
+def bin_dir(path, **programs):
+    """A PATH directory that holds only the named programs, each a symlink to the real one."""
+    path.mkdir(parents=True)
+    for name, target in programs.items():
+        (path / name).symlink_to(target)
+    return path
+
+
+def run_env(tmp_path, tree, env, *args, timeout=300):
+    """The committed registry run on a tree, with these environment variables changed for the runner and its steps."""
+    return subprocess.run([PY, str(STACK), "--tree", str(tree), "--log-dir", str(tmp_path / "log"), *map(str, args)],
+                          cwd=str(tree), capture_output=True, text=True, timeout=timeout, env={**os.environ, **env})
+
+
+def cbm_binary():
+    """The codebase-memory binary by the registry's own rule ([tools]: ~/.local/bin, then the PATH), or None.
+    os.path.exists, not Path.exists: a /root path raises PermissionError from Path.exists for a non-root user (CI)."""
+    for c in (os.path.expanduser("~/.local/bin/codebase-memory-mcp"), shutil.which("codebase-memory-mcp")):
+        if c and os.path.exists(c) and os.access(c, os.X_OK):
+            return c
+    return None
+
+
+def gitnexus_runner_source():
+    """The real GitNexus runner: this tree's .gitnexus/run.cjs (written by `gitnexus analyze`), else the installed
+    package's hooks/claude/resolve-analyze-cmd.cjs, the file analyze copies there (its dist/cli/ai-context.js); None
+    where neither exists (CI)."""
+    cands = [ROOT / ".gitnexus" / "run.cjs"]
+    gn = shutil.which("gitnexus")
+    if gn:
+        cands.append(Path(os.path.realpath(gn)).parents[2] / "hooks" / "claude" / "resolve-analyze-cmd.cjs")
+    return next((c for c in cands if os.path.isfile(c)), None)
+
+
+UNMAPPED_385 = {   # step: (unmapped_if, tool), the text its tool prints where it cannot answer (measured 2026-09-30)
+    "cbm.search": ("project not found or not indexed", "codebase-memory"),
+    "changes.all": ("gitnexus runner: could not launch", "gitnexus"),
+    "changes.staged": ("gitnexus runner: could not launch", "gitnexus"),
+    "changes.unstaged": ("gitnexus runner: could not launch", "gitnexus"),
+    "changes.compare": ("gitnexus runner: could not launch", "gitnexus"),
+    "why.file": (None, None),
+    "why.function": (None, None),
+    "locate.pack": (None, None),
+    "fix-echo.sites": ("answered: none", "rg-and-graft"),
+}
+
+
+def test_the_committed_registry_loads_with_fourteen_stacks_and_the_catalog_shows_all(tmp_path):
+    """Items 6 and 8: the committed registry loads with wave 1's nine stacks, then task #385's five; the new ones are
+    rated as the brief says (changes is a check, like ci); each step reads unmapped on its tool's own text where it has
+    one (locate has none: its registry and quirk instruments answer in every checkout, so its pack never says
+    `answered: none`); the two Jev tools run in their plain order (--order lexical, --no-jev-log: KC-J1, D-077); and
+    the SessionStart catalog shows all fourteen under 4,000 characters. Mutants: a new stack dropped; unmapped_if
+    deleted from a step; --order lexical or --no-jev-log dropped from locate or fix-echo; changes marked rated."""
+    mod = load_stack("ls_b12_registry")
+    _tools, stacks = mod.load_registry(str(REGISTRY))
+    assert list(stacks) == WAVE1 + NEW_LABELS
+    assert {label: stacks[label].rated for label in NEW_LABELS} == {
+        "cbm": True, "changes": False, "why": True, "locate": True, "fix-echo": True}
+    assert {"%s.%s" % (label, st.id): (st.unmapped_if, st.tool) for label in NEW_LABELS
+            for st in stacks[label].steps} == UNMAPPED_385
+    for label, script in (("locate", "scripts/jev_locate.py"), ("fix-echo", "scripts/jev_echo.py")):
+        [step] = stacks[label].steps
+        words = [e[1] for e in step.elems if e[0] == "lit"]
+        assert words[:2] == ["python3", script] and "--no-jev-log" in words, words
+        assert words[words.index("--order") + 1] == "lexical", words
+    r = real(tmp_path, "catalog")
+    assert r.returncode == 0 and len(r.stdout) < mod.CATALOG_CAP and "not shown" not in r.stdout, r.stdout
+    assert [ln.split()[0] for ln in r.stdout.splitlines()[1:-1] if not ln.startswith(" ")] == WAVE1 + NEW_LABELS
+
+
+EXPLAIN_385 = {   # case: (label, tokens, the plan)
+    "cbm": ("cbm", ["q=stack runner"], """\
+explain cbm — codebase-memory's graph search (project home-user-agent-factory): ranked symbols with their file and lines
+tree {TREE} · HEAD {HEAD}
+params: q='stack runner'
+body: q {BODYNOTE}
+<run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+group 1
+  search: codebase-memory-mcp cli search_graph --project home-user-agent-factory --query 'stack runner' (timeout 120 s)
+"""),
+    "changes": ("changes", [], """\
+explain changes — GitNexus detect-changes: the changed symbols and the flows they touch, for all, staged or unstaged changes or since a base
+tree {TREE} · HEAD {HEAD}
+params: scope=all
+<run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+group 1
+  all: node .gitnexus/run.cjs detect-changes --scope all --repo . (timeout 120 s, headline)
+  staged: not selected (when scope=staged)
+  unstaged: not selected (when scope=unstaged)
+  compare: not selected (when scope=compare)
+"""),
+    "changes-staged-with-base": ("changes", ["scope=staged", "base=main"], """\
+explain changes — GitNexus detect-changes: the changed symbols and the flows they touch, for all, staged or unstaged changes or since a base
+tree {TREE} · HEAD {HEAD}
+params: scope=staged base=main
+<run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+group 1
+  all: not selected (when scope=all)
+  staged: node .gitnexus/run.cjs detect-changes --scope staged --repo . (timeout 120 s, headline)
+  unstaged: not selected (when scope=unstaged)
+  compare: not selected (when scope=compare)
+"""),
+    "changes-unstaged": ("changes", ["scope=unstaged"], """\
+explain changes — GitNexus detect-changes: the changed symbols and the flows they touch, for all, staged or unstaged changes or since a base
+tree {TREE} · HEAD {HEAD}
+params: scope=unstaged
+<run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+group 1
+  all: not selected (when scope=all)
+  staged: not selected (when scope=staged)
+  unstaged: node .gitnexus/run.cjs detect-changes --scope unstaged --repo . (timeout 120 s, headline)
+  compare: not selected (when scope=compare)
+"""),
+    "changes-compare": ("changes", ["scope=compare", "base=origin/main"], """\
+explain changes — GitNexus detect-changes: the changed symbols and the flows they touch, for all, staged or unstaged changes or since a base
+tree {TREE} · HEAD {HEAD}
+params: scope=compare base=origin/main
+<run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+group 1
+  all: not selected (when scope=all)
+  staged: not selected (when scope=staged)
+  unstaged: not selected (when scope=unstaged)
+  compare: node .gitnexus/run.cjs detect-changes --scope compare --base-ref origin/main --repo . (timeout 120 s, headline)
+"""),
+    "why": ("why", ["file=scripts/why.sh"], """\
+explain why — a file's or a function's chronology: its commits, the last change's full message, the docs that name it
+tree {TREE} · HEAD {HEAD}
+params: file=scripts/why.sh
+<run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+group 1
+  file: bash scripts/why.sh scripts/why.sh (timeout 120 s)
+  function: not selected (when fn=*)
+"""),
+    "why-fn": ("why", ["file=scripts/stack.py", "fn=cap_lines"], """\
+explain why — a file's or a function's chronology: its commits, the last change's full message, the docs that name it
+tree {TREE} · HEAD {HEAD}
+params: file=scripts/stack.py fn=cap_lines
+<run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+group 1
+  file: not selected (when fn='')
+  function: bash scripts/why.sh scripts/stack.py cap_lines (timeout 120 s)
+"""),
+    "locate": ("locate", ["q=a step past its timeout"], """\
+explain locate — a bug text to the files, lines and records to read: jev_locate.py's eight instruments, plain lexical order
+tree {TREE} · HEAD {HEAD}
+params: q='a step past its timeout'
+body: q {BODYNOTE}
+<run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+group 1
+  pack: python3 scripts/jev_locate.py --order lexical --no-jev-log 'a step past its timeout' (timeout 120 s)
+"""),
+    "locate-scope": ("locate", ["q=a step past its timeout", "scope=scripts"], """\
+explain locate — a bug text to the files, lines and records to read: jev_locate.py's eight instruments, plain lexical order
+tree {TREE} · HEAD {HEAD}
+params: q='a step past its timeout' scope=scripts
+body: q {BODYNOTE}
+<run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+group 1
+  pack: python3 scripts/jev_locate.py --order lexical --no-jev-log --in scripts 'a step past its timeout' (timeout 120 s)
+"""),
+    "fix-echo": ("fix-echo", ["diff=0de29b2"], """\
+explain fix-echo — after a fix: other sites like the lines it removed, from jev_echo.py (rg and graft) in the plain lexical order
+tree {TREE} · HEAD {HEAD}
+params: diff=0de29b2
+<run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+group 1
+  sites: python3 scripts/jev_echo.py --diff 0de29b2 --order lexical --no-jev-log (timeout 120 s)
+"""),
+    "fix-echo-patch": ("fix-echo", ["diff=tasks/briefs/labeling/LS-B12.patch"], """\
+explain fix-echo — after a fix: other sites like the lines it removed, from jev_echo.py (rg and graft) in the plain lexical order
+tree {TREE} · HEAD {HEAD}
+params: diff=tasks/briefs/labeling/LS-B12.patch
+<run> = {LOG}/s-<UTC yyyymmddTHHMMSSZ>-<6 hex>
+group 1
+  sites: python3 scripts/jev_echo.py --diff tasks/briefs/labeling/LS-B12.patch --order lexical --no-jev-log (timeout 120 s)
+"""),
+}
+
+
+@pytest.mark.parametrize("case", sorted(EXPLAIN_385))
+def test_explain_of_each_task_385_stack_is_pinned(tmp_path, case):
+    """Item 8: the reviewed plan of each new stack, pinned. Each argv is the form measured by hand against the
+    instrument's own usage (codebase-memory's `cli` usage, detect-changes --help, why.sh's usage line, the argparse of
+    jev_locate.py and jev_echo.py). Runs anywhere: explain runs nothing and writes no record. Mutants: a wrong flag;
+    --base-ref passed with a scope other than compare; a headline dropped; {file} and {fn} swapped."""
+    label, tokens, expected = EXPLAIN_385[case]
+    r = real(tmp_path, "explain", label, *tokens)
+    assert r.returncode == 0, r.stderr
+    for key, value in (("{TREE}", str(ROOT)), ("{LOG}", str(tmp_path / "log")),
+                       ("{HEAD}", git(ROOT, "rev-parse", "HEAD")[:12]), ("{BODYNOTE}", BODY_NOTE)):
+        expected = expected.replace(key, value)
+    assert r.stdout == expected
+    assert not (tmp_path / "log").exists()
+
+
+REFUSALS_385 = [   # (label, tokens, the exact refusal): a value outside its parameter's type
+    ("cbm", ["q=--project=other"], "q=--project=other refused: '--project=other' begins with '-' (option injection)"),
+    ("changes", ["scope=head"], "scope=head refused: 'head' is not one of all|staged|unstaged|compare"),
+    ("changes", ["scope=compare", "base=--output=/tmp/x"],
+     "base=--output=/tmp/x refused: '--output=/tmp/x' begins with '-' (option injection)"),
+    ("why", ["file=../elsewhere.py"], "file=../elsewhere.py refused: '../elsewhere.py' is outside the tree {TREE}"),
+    ("why", ["file=scripts/stack.py", "fn=cap-lines"],
+     "fn=cap-lines refused: 'cap-lines' is not a valid symbol ([A-Za-z_][A-Za-z0-9_.:]{0,127})"),
+    ("locate", ["q=who kills a step", "scope=/etc"], "scope=/etc refused: '/etc' is outside the tree {TREE}"),
+    ("fix-echo", ["diff=fix.env"], "diff=fix.env refused: 'fix.env' is on the deny list (*.env)"),
+    ("fix-echo", ["diff=/etc/passwd"], "diff=/etc/passwd refused: '/etc/passwd' is outside the tree {TREE}"),
+]
+
+
+@pytest.mark.parametrize("label, tokens, message", REFUSALS_385,
+                         ids=["cbm-dash", "changes-scope", "changes-base-dash", "why-outside", "why-fn-symbol",
+                              "locate-scope-outside", "fix-echo-deny-list", "fix-echo-outside"])
+def test_each_new_stack_refuses_a_value_outside_its_type_before_any_step(tmp_path, label, tokens, message):
+    """Item 8, a negative control per new stack: the exact refusal, exit 2, nothing run and no record written; each pins
+    a parameter's TYPE. fix-echo's diff is a path: a patch path stays inside the tree and off the deny list (as text,
+    jev_echo.py would open any file on the box it names). changes' base, like every type, refuses a leading '-':
+    GitNexus puts the ref into `git diff` with no `--`, where --output=<file> is an option. why's fn is a symbol, and
+    locate's scope a path. The positive controls are the explain cases above. Mutants: diff, file, fn or scope given
+    the text type (the value passes and the step runs)."""
+    r = real(tmp_path, label, *tokens)
+    assert (r.returncode, r.stdout) == (2, ""), r.stdout + r.stderr
+    assert r.stderr == "stack: %s\n" % message.replace("{TREE}", str(ROOT))
+    assert not (tmp_path / "log").exists()
+
+
+ARGV_PY = "import json, sys\nprint(json.dumps(sys.argv[1:]))\n"
+
+
+def test_cbm_reads_unmapped_when_its_binary_is_missing_and_runs_the_home_copy_first(tmp_path):
+    """Item 8: the real cbm stack with its binary out of reach, faked as the missing-instrument tests fake one: HOME
+    names an empty directory (the [tools] entry's ~/.local/bin candidate) and PATH holds git alone. The step reads
+    unmapped and the run exits 1 (runs anywhere, CI included). Then a tiny real program at
+    $HOME/.local/bin/codebase-memory-mcp that prints its arguments: the [tools] entry runs it before any PATH lookup,
+    with the stack's exact arguments. Mutants: the [tools] entry removed (the home copy is never found: unmapped); an
+    unmapped step counted as ok (exit 0)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    env = {"HOME": str(home), "PATH": str(bin_dir(tmp_path / "bin", git=shutil.which("git")))}
+    r = run_env(tmp_path, ROOT, env, "cbm", "q=stack runner")
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert " · exit 1 — required, not ok: search\n" in r.stdout
+    assert "\n## search · unmapped — codebase-memory-mcp unavailable\n" in r.stdout
+    [step] = records(tmp_path / "log")[-1]["steps"]
+    assert (step["id"], step["status"], step["rc"]) == ("search", "unmapped", None)
+    fake = home / ".local" / "bin" / "codebase-memory-mcp"
+    fake.parent.mkdir(parents=True)
+    fake.write_text("#!%s\n%s" % (PY, ARGV_PY))
+    fake.chmod(0o755)
+    r = run_env(tmp_path, ROOT, env, "cbm", "q=stack runner")
+    assert r.returncode == 0, r.stdout + r.stderr
+    [step] = records(tmp_path / "log")[-1]["steps"]
+    assert (step["argv"][0], step["status"]) == (str(fake), "ok")
+    assert json.loads(Path(step["out"]).read_text()) == [
+        "cli", "search_graph", "--project", "home-user-agent-factory", "--query", "stack runner"]
+
+
+@pytest.mark.skipif(cbm_binary() is None, reason="codebase-memory-mcp is not installed (CI has none): the oracle for "
+                    "cbm's unmapped_if is the binary's own message table")
+def test_cbms_unmapped_if_is_a_message_the_installed_binary_holds():
+    """The oracle for cbm's unmapped_if is the binary itself: measured 2026-09-30 (0.10.8), a project with no index
+    exits 1 with {"error":"project not found or not indexed",...} on stderr, and the text is in the binary's message
+    table. Mutant: the text changed to one the binary never prints (the step would read FAILED, never unmapped)."""
+    with open(cbm_binary(), "rb") as fh, mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+        assert mm.find(UNMAPPED_385["cbm.search"][0].encode()) >= 0
+
+
+@NEEDS_NODE
+def test_changes_reads_unmapped_in_a_tree_without_the_gitnexus_runner(tmp_path):
+    """A tree `gitnexus analyze` never ran in has no .gitnexus/run.cjs: each scope's step reads unmapped by the
+    runner's script check, and the run exits 1 (runs anywhere node is, CI included). Mutant: an unmapped step counted
+    as ok (exit 0)."""
+    tree = make_tree(tmp_path / "t")
+    for scope in ("all", "staged", "unstaged", "compare"):
+        r = run_env(tmp_path, tree, {"GIT_CEILING_DIRECTORIES": str(tmp_path)}, "changes", "scope=" + scope)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "\n## %s · unmapped — .gitnexus/run.cjs unavailable\n" % scope in r.stdout, r.stdout
+
+
+def runner_tree(tmp_path, *programs):
+    """A tree holding the real GitNexus runner, and a PATH of node, git and the named programs alone."""
+    tree = make_tree(tmp_path / "t")
+    (tree / ".gitnexus").mkdir()
+    shutil.copyfile(gitnexus_runner_source(), tree / ".gitnexus" / "run.cjs")
+    found = {name: shutil.which(name) for name in ("node", "git") + programs}
+    return tree, {"PATH": str(bin_dir(tmp_path / "bin", **found)), "GIT_CEILING_DIRECTORIES": str(tmp_path)}
+
+
+NEEDS_RUNNER = pytest.mark.skipif(shutil.which("node") is None or gitnexus_runner_source() is None,
+                                  reason="no GitNexus runner here (CI has no GitNexus): the test runs the real run.cjs")
+
+
+@NEEDS_RUNNER
+def test_changes_reads_unmapped_when_the_gitnexus_runner_cannot_launch(tmp_path):
+    """The real runner (.gitnexus/run.cjs) with PATH holding node and git alone: it finds no gitnexus, pnpm, bunx or
+    npx and prints `gitnexus runner: could not launch ...` (exit 1), which each scope's step reads as unmapped.
+    Mutant: unmapped_if deleted from any one scope's step (that scope reads FAILED)."""
+    tree, env = runner_tree(tmp_path)
+    for scope in ("all", "staged", "unstaged", "compare"):
+        r = run_env(tmp_path, tree, env, "changes", "scope=" + scope)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "\n## %s · unmapped — gitnexus unavailable\n" % scope in r.stdout, r.stdout
+        assert "gitnexus runner: could not launch `npx`" in r.stdout
+
+
+@NEEDS_RUNNER
+@pytest.mark.skipif(shutil.which("gitnexus") is None, reason="gitnexus is not installed: the control needs it to run")
+def test_changes_reads_failed_when_gitnexus_itself_fails(tmp_path):
+    """The control of the test above: with gitnexus on PATH too, the runner launches it, and it fails on its own (this
+    tree has no index: `Repository "." not found`, exit 1). That reads FAILED, not unmapped: the unmapped_if text
+    matches the runner's launch failure only. Mutant: an unmapped_if broad enough to take gitnexus's own error."""
+    tree, env = runner_tree(tmp_path, "gitnexus")
+    r = run_env(tmp_path, tree, env, "changes")
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "\n## all · FAILED · rc 1 · " in r.stdout and 'Repository "." not found' in r.stdout, r.stdout
+    assert "could not launch" not in r.stdout
+
+
+# transcript_export.py is the scrubber jev_context.py imports: without it the pack withholds every snippet
+ECHO_SCRIPTS = ("jev_echo.py", "jev_locate.py", "jev_context.py", "transcript_export.py")
+DEFECT = "    return compute_total_ls_b12(raw_rows_ls_b12)\n"
+
+
+def echo_tree(tmp_path):
+    """A git tree holding the real scripts/jev_echo.py, the two modules it imports and the scrubber; a commit that adds
+    one defect line in two files, then a fix commit that changes it in one: the line that fix removes is the defect."""
+    tree = make_tree(tmp_path / "t")
+    (tree / "scripts").mkdir()
+    for name in ECHO_SCRIPTS:
+        shutil.copyfile(ROOT / "scripts" / name, tree / "scripts" / name)
+    (tree / "scripts" / "fixed.py").write_text("def total(rows):\n" + DEFECT)
+    (tree / "scripts" / "other.py").write_text("def other(rows):\n" + DEFECT)
+    git(tree, "add", ".")
+    git(tree, "commit", "-q", "--no-verify", "-m", "the defect, twice")
+    (tree / "scripts" / "fixed.py").write_text("def total(rows):\n    return compute_total_ls_b12(checked_ls_b12(rows))\n")
+    git(tree, "commit", "-q", "-a", "--no-verify", "-m", "the fix, once")
+    return tree
+
+
+def echo_env(tmp_path, *programs):
+    found = {"git": shutil.which("git"), "python3": PY, **{name: shutil.which(name) for name in programs}}
+    return {"PATH": str(bin_dir(tmp_path / "bin", **found)), "GIT_CEILING_DIRECTORIES": str(tmp_path)}
+
+
+def test_fix_echo_reads_unmapped_when_neither_rg_nor_graft_answers(tmp_path):
+    """The real jev_echo.py, in a tree of its own, with PATH holding git and python3 alone and no graft/INDEX.md: no
+    instrument answers, it exits 0 with `answered: none`, and the step reads unmapped, the run exit 1 (runs anywhere,
+    CI included). A diff that removes no code line (the commit that only adds) reads unmapped too: nothing ran.
+    Mutant: unmapped_if deleted from fix-echo's step (both read ok: a hollow ok)."""
+    tree = echo_tree(tmp_path)
+    env = echo_env(tmp_path)
+    r = run_env(tmp_path, tree, env, "fix-echo", "diff=HEAD")
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "\n## sites · unmapped — rg-and-graft unavailable\n" in r.stdout
+    assert "\nanswered: none\n" in r.stdout and "unmapped — graft unavailable (graft/INDEX.md absent)" in r.stdout
+    [step] = records(tmp_path / "log")[-1]["steps"]
+    assert (step["status"], step["rc"]) == ("unmapped", 0)
+    r = run_env(tmp_path, tree, env, "fix-echo", "diff=HEAD~1")
+    assert r.returncode == 1 and "\n## sites · unmapped — rg-and-graft unavailable\n" in r.stdout, r.stdout
+    assert "nothing to echo: the diff removes no code line" in r.stdout
+
+
+@NEEDS_RG
+def test_fix_echo_lists_the_other_site_when_rg_answers(tmp_path):
+    """The positive control of the test above, the same tree with rg on PATH: rg-token answers, the step is ok, and the
+    other site that holds the removed line (scripts/other.py:2) is listed while the fixed site is only named as such
+    (its hunk's lines on the new side, 1-2: `git show -U3` carries the `def` line as context)."""
+    tree = echo_tree(tmp_path)
+    r = run_env(tmp_path, tree, echo_env(tmp_path, "rg"), "fix-echo", "diff=HEAD")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "\n## sites · ok · rc 0 · " in r.stdout and "\nanswered: rg-token\n" in r.stdout, r.stdout
+    assert "\ndefect (removed): %s\n" % DEFECT.strip() in r.stdout, r.stdout
+    items = [ln for ln in r.stdout.splitlines() if re.match(r"[0-9]+\. ", ln)]
+    assert any(" scripts/other.py:2 — " in ln and ln.endswith(DEFECT.strip()) for ln in items), items
+    assert not any("scripts/fixed.py" in ln for ln in items), items
+    assert "\nfixed site: scripts/fixed.py:1-2\n" in r.stdout
+
+
+def why_chronology(text):
+    """The commit lines of why.sh's edit-chronology section."""
+    body = text.split(" max) ──\n", 1)[1].split("── reasoning record", 1)[0]
+    return [ln for ln in body.split("\n") if ln.strip()]
+
+
+def git_log(*args):
+    """git's own log, in the environment why.sh runs in (the oracle: no GIT_ENV override)."""
+    return subprocess.run(["git", "-C", str(ROOT), "log", "-n", "12", "--format=%h %ad %s", "--date=short", *args],
+                          capture_output=True, text=True, timeout=60, check=True).stdout.splitlines()
+
+
+def test_why_runs_on_this_tree_and_its_chronology_is_gits_own(tmp_path):
+    """The real why stack on the real tree, each step: the file's chronology is git's own log of the file, and with fn
+    the function's (git log -L, as why.sh runs it); the oracle is git, run here. Mutants: {file} and {fn} swapped (a
+    path named cap_lines has no commit: why.sh exits 128); the function step run with fn unset."""
+    r = real(tmp_path, "why", "file=scripts/premise_block.sh")
+    assert r.returncode == 0, r.stdout + r.stderr
+    [step] = records(tmp_path / "log")[-1]["steps"]
+    text = Path(step["out"]).read_text()
+    assert step["id"] == "file" and text.startswith("══ WHY: scripts/premise_block.sh ══\n"), text[:200]
+    assert why_chronology(text) == git_log("--", "scripts/premise_block.sh") != []
+    r = real(tmp_path, "why", "file=scripts/stack.py", "fn=cap_lines")
+    assert r.returncode == 0, r.stdout + r.stderr
+    [step] = records(tmp_path / "log")[-1]["steps"]
+    text = Path(step["out"]).read_text()
+    assert step["id"] == "function" and text.startswith("══ WHY: scripts/stack.py :: cap_lines ══\n"), text[:200]
+    assert why_chronology(text) == git_log("-L", ":cap_lines:scripts/stack.py", "--no-patch") != []

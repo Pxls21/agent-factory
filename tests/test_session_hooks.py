@@ -473,7 +473,8 @@ def test_the_installed_catalog_command_prints_the_catalog_under_4000_characters(
                             text=True, timeout=60)
     assert (r.returncode, r.stderr, listed.returncode) == (0, "", 0)
     assert r.stdout.startswith("Stacks (scripts/stacks.toml): ") and listed.stdout in r.stdout
-    assert r.stdout.splitlines()[-1].startswith("Ratings, the content stacks only (ctx, impact, find, echo, review)")
+    assert r.stdout.splitlines()[-1].startswith(
+        "Ratings, the content stacks only (ctx, impact, find, echo, review, cbm, why, locate, fix-echo)")
     assert len(r.stdout) < 4000
 
 
