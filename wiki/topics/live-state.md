@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-30 21:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 21:4xZ): 47443f9; CI run #1195 passed on d2e69c6, the K2-FU landing (task #420). The repack record (D-121) and the verifier's dispatch ride the next push.**
+- **RUNNING (as of 21:4xZ):** VERIFY-K2 round 6 (task #353: the resumed adversarial-verifier on Opus 5.5, in its own worktree at PIN d2e69c6), the narrow re-check of the K2 follow-ups; and the Jev relay (pid 6662, 127.0.0.1:47430). The repack is done (D-121): `.git` 615M to 69M, the hook's cold grep walk 83.25 s to 1.39 s; `gc.auto` stays 0, and task #422 holds the durable choice. Next: harvest the verifier, then the owner's yes to register K2 (item 13 of `tasks/briefs/jev-trim/VERIFY-K2-RS-report.md`).
+
 **2026-09-30 20:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 20:4xZ): 1ff748b; CI run #1194 runs on 910dbd6. The retro bake (session-continuity) and the K2-FU landing (task #420) ride the next push.**
 - **RUNNING (as of 20:4xZ):** the Jev relay (pid 6662, 127.0.0.1:47430). The K2-FU lane is home, and its patch lands GATED-PENDING-VERIFY (`tasks/briefs/jev-trim/K2-FU-report.md`, with the coordinator's review C1 to C6). Next: the push once CI reports; the K2 verifier's narrow re-check of the landed patch; then the owner's yes to register K2 (the must-hold list is item 13 of `tasks/briefs/jev-trim/VERIFY-K2-RS-report.md`); then the repack (D-121).
