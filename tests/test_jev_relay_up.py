@@ -40,7 +40,9 @@ def health(port):
 @pytest.fixture
 def env_file(tmp_path):
     p = tmp_path / "api.env"
-    p.write_text("TYPESAFE_API_KEY=sk-codiv-%s\nTYPESAFE_BASE_URL=https://api.example.invalid\n" % os.urandom(20).hex())
+    # A fake key with no vendor prefix: the relay needs 8 characters (jev_relay.py's read_env_file), and a literal prefix
+    # in committed text trips the known-value check's windows over the real key file.
+    p.write_text("TYPESAFE_API_KEY=fake-%s\nTYPESAFE_BASE_URL=https://api.example.invalid\n" % os.urandom(20).hex())
     return p
 
 
