@@ -189,6 +189,27 @@ def test_merge_keeps_foreign_keys_and_hooks_and_remove_restores_them(tmp_path):
     assert install(target, "--check").returncode == 1
 
 
+def test_the_repo_output_style_is_set_at_the_root_and_an_own_style_is_kept(tmp_path):
+    """Task #440: a /home/user-rooted session loaded no output style (LS-AUDIT 3.2). The installer writes the repo's
+    own style (the owner's default, CLAUDE.md) where the root sets none, keeps a style the root sets, and --remove
+    takes out only the repo's. Mutants: setdefault replaced by an overwrite; the remove guard dropped; the style not
+    written at all."""
+    style = json.loads((ROOT / ".claude" / "settings.json").read_text())["outputStyle"]
+    assert style == "Attention-kind"
+    target = tmp_path / "settings.json"
+    assert install(target).returncode == 0
+    assert json.loads(target.read_text())["outputStyle"] == style
+    assert install(target, "--check").returncode == 0
+    without = json.loads(target.read_text())
+    del without["outputStyle"]
+    target.write_text(json.dumps(without))
+    assert install(target, "--check").returncode == 1                   # a missing style is stale, like a hook
+    own = tmp_path / "own.json"
+    own.write_text(json.dumps({"outputStyle": "Spartan"}))
+    assert install(own).returncode == 0 and json.loads(own.read_text())["outputStyle"] == "Spartan"
+    assert install(own, "--remove").returncode == 0 and json.loads(own.read_text()) == {"outputStyle": "Spartan"}
+
+
 def test_an_unreadable_file_is_refused_and_left_alone(tmp_path):
     target = tmp_path / "settings.json"
     for bad in ("{not json", "[1, 2]"):

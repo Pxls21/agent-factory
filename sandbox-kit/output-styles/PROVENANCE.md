@@ -15,3 +15,9 @@ in settings.json. Relationship to house rules: these govern chat FORMAT; CLAUDE.
 honey levers + the STE100 writing rule govern content density. They compose — answer
 first, short sentences, bold the load-bearing terms, length only where the work is the
 deliverable.
+
+Local change (agent-factory, 2026-10-01, task #440; the owner's D-101 item 3 and D-123 step 3): each style ends with a
+`## Labels` section (run a step as its stack label, name a repeated sequence in the retro, keep the machine lines apart
+from the answer). The upstream text above it is unchanged. A session rooted above the repo (the cloud default,
+`/home/user`) reads its settings there, so `scripts/install_session_hooks.py` sets the repo's `outputStyle` at that root
+when the root sets none (task #440); before that, such a session loaded no output style (LS-AUDIT 3.2).

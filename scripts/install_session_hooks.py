@@ -15,8 +15,11 @@ timeout: it writes the harness task list from the ledger. It never blocks (never
 
 `scripts/stack.py catalog` (LS-B9 round 4, D-103) is registered on SessionStart for start, resume and compact, with a
 30-second timeout: the stack catalog (a heading line, `stack.py list`, one line on ratings) under 4,000 characters,
-since the harness shows only a 2,000-character preview of a hook text over 10,000 (AF-AP-183). This session loads no
-output style, so this line does the style's job (LS-DESIGN v2 §6, LS-B6). When the catalog cannot be built it prints
+since the harness shows only a 2,000-character preview of a hook text over 10,000 (AF-AP-183). Such a session loaded
+no output style, so this line did the style's job (LS-DESIGN v2 §6, LS-B6); it stays. Since task #440 the repo's
+`outputStyle` (its `.claude/settings.json`; the owner's default, Attention-kind) is also written at the session root
+when the root sets none, and `--remove` takes it out only when it is still the repo's; a style the root already sets
+is kept. A style takes effect when Claude Code next starts. When the catalog cannot be built it prints
 ONE line naming why, and the command exits 0 always: stack.py catches its own failures, and a python3 that cannot run
 at all ends in the echo.
 
@@ -142,6 +145,15 @@ def _without(entry: object, ours) -> object:
     return dict(entry, hooks=kept) if kept else None
 
 
+def repo_style(root: Path):
+    """The repo's own output style (`outputStyle` in its `.claude/settings.json`), or None."""
+    try:
+        style = json.loads((root / ".claude" / "settings.json").read_text(encoding="utf-8")).get("outputStyle")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return style if isinstance(style, str) and style else None
+
+
 def merged(current: dict, root: Path, remove: bool) -> dict:
     marker = f"{shlex.quote(str(root))}/.claude/hooks/"  # as the commands spell it (VERIFY-COORD-0924 F-L1-1)
     sync_marker = f"{shlex.quote(str(root))}/scripts/task_sync.py"
@@ -167,6 +179,11 @@ def merged(current: dict, root: Path, remove: bool) -> dict:
         out["hooks"] = hooks
     else:
         out.pop("hooks", None)
+    style = repo_style(root)   # task #440: a style the root already sets is the owner's choice and stays
+    if style is not None and remove and out.get("outputStyle") == style:
+        out.pop("outputStyle")
+    elif style is not None and not remove:
+        out.setdefault("outputStyle", style)
     return out
 
 

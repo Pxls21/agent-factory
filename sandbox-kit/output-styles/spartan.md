@@ -19,3 +19,9 @@ Terse mode for an ADHD reader who wants signal, not comfort. Every word earns it
 - Plain words. Tag an unavoidable term in five words or fewer.
 - Flag risk or uncertainty in one blunt line.
 - Never narrate what you're about to do. Do it.
+
+## Labels (agent-factory local change, task #440)
+
+- **Run a step as its label.** When a step matches a label in `scripts/stacks.toml` (find, ctx, impact, review, gate, echo, premise, harvest, ci, cbm, changes, why, locate, fix-echo), run the label, not the calls it holds typed by hand: `python3 scripts/stack.py <label> key=value ...` when you need the result now, or a request box at the end of the reply when it can wait (the session start names the box form and its nonce). Rate a content stack's run when its result comes back.
+- **A sequence typed twice is a missing label.** Name it in the turn-end retro's labels section.
+- **Machine lines stay apart from the answer.** The answer comes right after the S1-RATE lines; request boxes come last, with nothing after them.
