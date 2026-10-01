@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-01 21:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 21:0xZ): 3f9d0321, the retro of the AF-AP-257 batch (two lessons baked: a display prefix is part of the key and a value check sees only its own machine's keys; a bridge guard's name appears nowhere in the launching command; task #457 registered as backlog), after dd14c6c2 (AF-AP-257: the OmniRoute key's piece out of the tree; R3's report; the SGLang brief). CI runs on 3f9d0321.**
+- **LIVE, RUNNING, HELD, WAITING ON THE OWNER and NEXT (as of 21:0xZ):** as in the block below.
+
 **2026-10-01 20:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 20:3xZ): this block's commit (AF-AP-257: the OmniRoute key's 12-character piece out of the tree; R3's report; the SGLang brief), after a0697cf2 (D-127, the S3-5-VIEW brief).**
 - **LIVE (as of 20:3xZ):** as in the block below. **RUNNING:** S3-5-VIEW (task #444, a sandbox code-implementer; fixtures only); SGLANG-EVIDENCE (task #454, a sandbox evidence-gatherer; web sources only). **HELD:** both PC exports (`/home/rocco/jev-data/session-export-2026-10-01` and `-2026-09-25-r1`): each holds 14 lines with the OmniRoute key's first 12 characters (AF-AP-257). **WAITING ON THE OWNER:** rotate the OmniRoute `hermes` key, or rewrite the branch's history. **NEXT:** S3-5-VIEW's landing and its real run; SGLANG-EVIDENCE's harvest, then the verdict and the A/B design; task #456; then task #441, task #448.
