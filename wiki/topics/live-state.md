@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-01 00:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 00:1xZ): f93bf77f; CI run #1200 (records and one skill line) is running. K2's registration (D-122, task #353) is committed with this block and rides the next push.**
+- **LANDED (as of 00:1xZ):** K2 (task #353): the file-pack hook is registered (PreToolUse on Read, Edit, Write and Bash; a reset at SessionStart), and the post-commit hook builds the packs. The hook shows nothing until a build of HEAD's tree exists. Next: the user-scope install, `codemap.py build --all` and `filepacks.py build` at HEAD, and a smoke. Off switch: `.jev/filepacks-off` (it stops injection, not builds). **RUNNING:** the Jev relay (pid 722, 127.0.0.1:47430).
+
 **2026-09-30 23:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 23:4xZ): 47507288. The round-6 records commit and a retro record (task #429 registered, backlog) ride the next push.**
 - **HOME (as of 23:4xZ):** VERIFY-K2 round 6 (task #353): MERGE-READY-WITH-FOLLOWUPS for registering K2 at d2e69c6 with its two patches, blockers none; report of record `tasks/briefs/jev-trim/VERIFY-K2-R6-report.md`, follow-ups task #428 (backlog). **RUNNING:** the Jev relay (pid 722 since the 23:22:40Z restart, 127.0.0.1:47430). Next: the owner's yes to register K2.

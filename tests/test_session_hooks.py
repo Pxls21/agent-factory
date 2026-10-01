@@ -1,11 +1,12 @@
 """scripts/hook_context.py and scripts/install_session_hooks.py (task #214, AF-AP-172).
 
 hook_context turns a hook's plain stdout into additionalContext (the only PreToolUse/PostToolUse output the model reads,
-measured live 2026-09-24); install_session_hooks registers 13 project hooks for a session rooted above the repo
+measured live 2026-09-24); install_session_hooks registers 15 project hooks for a session rooted above the repo
 (task_sync.py, LS-B7, on Stop and SessionStart with a 30-second timeout; its own behavior is tests/test_task_sync.py's;
 the stack catalog, LS-B9 round 4, on SessionStart for start, resume and compact; its text is tests/test_stack.py's;
 the chat form, LS-B10, scripts/ls_req.py on UserPromptSubmit, Stop and SessionStart, last in each list; its behavior is
-tests/test_ls_req.py's).
+tests/test_ls_req.py's; the file packs, K2, scripts/filepacks.py on PreToolUse and SessionStart; its behavior is
+tests/test_filepacks.py's).
 The end-to-end tests run the INSTALLED command strings through a shell, so a quoting or path defect fails here.
 Since S1-RATE (task #295) the wrapper stamps what it hands the model: a first line `[S1 <id> <source>]` and a last line
 that asks for the score. `unstamp` checks both against literals (tests/test_s1_rate.py holds the stamp's own tests), and
@@ -28,6 +29,7 @@ MARKER = f"{ROOT}/.claude/hooks/"
 SYNC = f"{ROOT}/scripts/task_sync.py"
 CATALOG = f"{ROOT}/scripts/stack.py catalog"
 REQ = f"{ROOT}/scripts/ls_req.py"
+FILEPACKS = f"{ROOT}/scripts/filepacks.py"
 STAMP = re.compile(r"\[S1 (s1-[0-9a-f]{8}) ([A-Za-z0-9_.-]+)\]")
 REQUEST = ('Begin your next text with "S1-RATE {id} rel=R use=U" (+ a note <=120 chars: why, if a 0), one line per '
            'unscored injection. rel 0 unrelated,1 same area not this step,2 relevant to this step,3 governs it; '
@@ -117,34 +119,41 @@ def test_real_edit_snapshot_screen_reaches_the_model_form():
 
 # ---- install_session_hooks.py ----
 
-def test_fresh_install_registers_and_prints_13_hooks(tmp_path):
-    """13 hooks since LS-B10, and the installer says so: its install line prints the count and --help states it, both
-    counted from what it registers, never a literal, and the help names no other count (VERIFY-LS-B10 F10). Mutants:
-    the old literal 8 in either line; a count of the events (5) in place of the hooks; a count written into the
-    docstring's first line ("eight", or a 13 that the next hook would make stale)."""
+def test_fresh_install_registers_and_prints_15_hooks(tmp_path):
+    """15 hooks since K2 (LS-B10's three and K2's two, each family counted through hook_count), and the installer says
+    so: its install line prints the count and --help states it, both counted from what it registers, never a literal,
+    and the help names no other count (VERIFY-LS-B10 F10). Mutants: the old literal 8 in either line; a count of the
+    events (5) in place of the hooks; a count written into the docstring's first line ("eight", or a 15 that the next
+    hook would make stale)."""
     target = tmp_path / ".claude" / "settings.json"
+    mine = ish.our_hooks(ROOT)
+    family = {name: ish.hook_count({ev: [g for g in groups if key in g["hooks"][0]["command"]]
+                                    for ev, groups in mine.items()}) for name, key in (("ls_req", REQ),
+                                                                                       ("filepacks", FILEPACKS))}
+    assert (family, ish.hook_count(mine)) == ({"ls_req": 3, "filepacks": 2}, 15), (family, ish.hook_count(mine))
     r = install(target)
-    assert r.returncode == 0 and "installed 13 in" in r.stdout
+    assert r.returncode == 0 and "installed 15 in" in r.stdout
     hooks = json.loads(target.read_text())["hooks"]
     assert sorted(hooks) == ["PostToolUse", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"]
     cmds = {ev: [h["command"] for e in v for h in e["hooks"]] for ev, v in hooks.items()}
-    assert {ev: len(c) for ev, c in cmds.items()} == {"PostToolUse": 1, "PreToolUse": 2, "SessionStart": 4, "Stop": 3,
+    assert {ev: len(c) for ev, c in cmds.items()} == {"PostToolUse": 1, "PreToolUse": 3, "SessionStart": 5, "Stop": 3,
                                                       "UserPromptSubmit": 3}
     assert f"installed {sum(map(len, cmds.values()))} in" in r.stdout     # the count printed is the count written
     h = install(tmp_path / "help.json", "--help")
-    assert h.returncode == 0 and "It registers 13 hooks." in " ".join(h.stdout.split()), h.stdout
+    assert h.returncode == 0 and "It registers 15 hooks." in " ".join(h.stdout.split()), h.stdout
     assert not (tmp_path / "help.json").exists()
     said = re.findall(r"\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|"
                       r"fifteen)\b", " ".join(h.stdout.split()).lower())
-    assert said == ["13"], said                    # no written count beside the counted one (F10: it said eight)
-    assert all(MARKER in c or SYNC in c or CATALOG in c or REQ in c for cs in cmds.values() for c in cs)
+    assert said == ["15"], said                    # no written count beside the counted one (F10: it said eight)
+    assert all(MARKER in c or SYNC in c or CATALOG in c or REQ in c or FILEPACKS in c for cs in cmds.values()
+               for c in cs)
     assert cmds["SessionStart"][1].endswith(f"python3 {SYNC} --hook session-start")       # LS-B7: after the others
     assert CATALOG in cmds["SessionStart"][2]                                              # LS-B9 round 4: after it
     assert cmds["Stop"][1].endswith(f"python3 {SYNC} --hook stop")
     assert "hook_context.py PostToolUse --" in cmds["PostToolUse"][0]
     assert "hook_context.py PreToolUse --" in cmds["PreToolUse"][0]
     assert hooks["PostToolUse"][0]["matcher"] == "Edit|Write|Read"
-    assert [e["matcher"] for e in hooks["PreToolUse"]] == ["Grep|Bash", "Write|Edit|Bash"]
+    assert [e["matcher"] for e in hooks["PreToolUse"]] == ["Grep|Bash", "Write|Edit|Bash", "Read|Edit|Write|Bash"]
     assert "/.claude/hooks/search-intercept.py" in cmds["PreToolUse"][0]
     # system1-context (S1-L1): the tool event and the prompt event, both through the wrapper; wiki-context through the
     # wrapper too since D-095, so its excerpt carries the S1-RATE stamp
@@ -230,6 +239,7 @@ def _fake_repo(tmp_path, hook_scripts=True, wrapper=True, stop_rc=0):
         (repo / ".claude" / "hooks" / "turn-retro-gate.sh").write_text(f"echo retro >&2; exit {stop_rc}\n")
         for name in ("wiki-context.py", "edit-snapshot.py", "search-intercept.py", "system1-context.py"):
             (repo / ".claude" / "hooks" / name).write_text("import os; print('ran from', os.getcwd())\n")
+        (repo / "scripts" / "filepacks.py").write_text("import os; print('ran from', os.getcwd())\n")
     if wrapper:
         (repo / "scripts" / "hook_context.py").write_bytes(WRAP.read_bytes())
     return repo
@@ -241,7 +251,7 @@ def _sh(cmd, stdin="{}", cwd="/", env=None):
 
 def test_every_installed_command_fails_open_when_the_repo_is_absent(tmp_path):
     cmds = _all_commands(tmp_path / "no-such-repo")
-    assert len(cmds) == 13
+    assert len(cmds) == 15
     for ev, cmd in cmds:
         r = _sh(cmd)
         assert (r.returncode, r.stdout) == (0, ""), (ev, r.returncode, r.stdout, r.stderr)
@@ -250,8 +260,8 @@ def test_every_installed_command_fails_open_when_the_repo_is_absent(tmp_path):
 def test_wrapped_commands_fail_open_when_the_wrapper_is_absent(tmp_path):
     repo = _fake_repo(tmp_path, wrapper=False)
     wrapped = [(ev, cmd) for ev, cmd in _all_commands(repo) if "hook_context.py" in cmd]
-    assert sorted(ev for ev, _ in wrapped) == ["PostToolUse", "PreToolUse", "PreToolUse", "UserPromptSubmit",
-                                               "UserPromptSubmit"]    # wiki-context wrapped too since D-095
+    assert sorted(ev for ev, _ in wrapped) == ["PostToolUse", "PreToolUse", "PreToolUse", "PreToolUse",
+                                               "UserPromptSubmit", "UserPromptSubmit"]    # wiki-context since D-095
     for ev, cmd in wrapped:
         r = _sh(cmd)
         assert (r.returncode, r.stdout) == (0, ""), (ev, r.returncode, r.stderr)
@@ -304,7 +314,7 @@ def test_a_repo_path_that_needs_quoting_stays_idempotent_and_removable(tmp_path)
     foreign = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo other"}]}]}}
     once = ish.merged(foreign, root, remove=False)
     assert ish.merged(once, root, remove=False) == once
-    assert sum(len(v) for v in once["hooks"].values()) == 14
+    assert sum(len(v) for v in once["hooks"].values()) == 16
     assert ish.merged(once, root, remove=True) == foreign
 
 
@@ -380,7 +390,7 @@ def test_the_task_sync_hooks_are_installed_with_a_30_second_timeout(tmp_path):
     others = [h for v in hooks.values() for g in v for h in g["hooks"]
               if "task_sync.py" not in h["command"] and "stack.py catalog" not in h["command"]
               and "ls_req.py" not in h["command"]]
-    assert len(others) == 7 and all("timeout" not in h for h in others)
+    assert len(others) == 9 and all("timeout" not in h for h in others)
 
 
 def test_the_installed_task_sync_commands_run_against_a_temp_repo(tmp_path):
@@ -676,3 +686,61 @@ def test_the_retro_gate_defers_while_this_stop_answers_chat_form_requests(tmp_pa
     _text_record(tx, "REQ %s r2 premise files=scripts/stack.py" % nonce, 3)
     r = run_gate(json.dumps(base))
     assert r.returncode == 2 and "TURN-END RETRO" in r.stderr and sent.read_text().strip() == head
+
+
+# ---- K2 (task #353, D-106): the file packs, scripts/filepacks.py, on PreToolUse (last) and SessionStart ----
+
+FILEPACKS_PRE = (f"[ -f {FILEPACKS} ] && [ -f {ROOT}/scripts/hook_context.py ] || exit 0; cd {ROOT} || exit 0; "
+                 f"python3 {ROOT}/scripts/hook_context.py PreToolUse -- python3 {FILEPACKS} hook")
+FILEPACKS_RESET = f"[ -f {FILEPACKS} ] || exit 0; cd {ROOT} || exit 0; python3 {FILEPACKS} hook --reset"
+
+
+def test_the_file_pack_hooks_are_installed_before_the_chat_form(tmp_path):
+    """One group on PreToolUse, last, matcher Read|Edit|Write|Bash, through the wrapper; one on SessionStart with no
+    matcher (every source), after the catalog and before LS-B10's group, which stays last; neither has a timeout; the
+    commands pinned; a second install changes nothing. Mutants: the reset after the chat form's group (it would no
+    longer be last); a matcher on the reset (a resume or a clear missed); the tool hook unwrapped."""
+    target = tmp_path / "settings.json"
+    assert install(target).returncode == 0
+    hooks = json.loads(target.read_text())["hooks"]
+    pre = [g for g in hooks["PreToolUse"] if FILEPACKS in g["hooks"][0]["command"]]
+    assert len(pre) == 1 and hooks["PreToolUse"][-1] == pre[0] and pre[0]["matcher"] == "Read|Edit|Write|Bash"
+    assert pre[0]["hooks"] == [{"type": "command", "command": FILEPACKS_PRE}]
+    start = [g["hooks"][0]["command"] for g in hooks["SessionStart"]]
+    assert start.index(FILEPACKS_RESET) == len(start) - 2 and REQ in start[-1] and CATALOG in start[-3], start
+    [g] = [g for g in hooks["SessionStart"] if g["hooks"][0]["command"] == FILEPACKS_RESET]
+    assert "matcher" not in g and g["hooks"] == [{"type": "command", "command": FILEPACKS_RESET}]
+    assert sorted(ev for ev, v in hooks.items() for g in v for h in g["hooks"] if FILEPACKS in h["command"]) == [
+        "PreToolUse", "SessionStart"]
+    before = target.read_bytes()
+    r = install(target)
+    assert r.returncode == 0 and "unchanged" in r.stdout and target.read_bytes() == before
+
+
+def test_the_repo_settings_register_the_file_pack_hooks():
+    """The repo's own .claude/settings.json (its commands spell $CLAUDE_PROJECT_DIR): the same two groups, the tool hook
+    last on PreToolUse and the reset right before the chat form's last group, no timeout, the commands the file-pack
+    tests run (tests/test_filepacks.py REG_PRE and REG_RESET)."""
+    hooks = json.loads((ROOT / ".claude" / "settings.json").read_text())["hooks"]
+    last = hooks["PreToolUse"][-1]
+    assert last["matcher"] == "Read|Edit|Write|Bash" and last["hooks"] == [{"type": "command", "command": (
+        "[ -f $CLAUDE_PROJECT_DIR/scripts/filepacks.py ] && [ -f $CLAUDE_PROJECT_DIR/scripts/hook_context.py ] || "
+        "exit 0; python3 $CLAUDE_PROJECT_DIR/scripts/hook_context.py PreToolUse -- python3 "
+        "$CLAUDE_PROJECT_DIR/scripts/filepacks.py hook")}]
+    reset = hooks["SessionStart"][-2]
+    assert "matcher" not in reset and reset["hooks"] == [{"type": "command", "command": (
+        "[ -f $CLAUDE_PROJECT_DIR/scripts/filepacks.py ] || exit 0; python3 "
+        "$CLAUDE_PROJECT_DIR/scripts/filepacks.py hook --reset")}]
+    assert sum("filepacks.py" in h["command"] for ev in hooks for g in hooks[ev] for h in g["hooks"]) == 2
+
+
+def test_an_older_filepacks_spelling_is_replaced_on_install(tmp_path):
+    """K2 (task #353): the merge rule names `<repo>/scripts/filepacks.py` as ours, so a changed command replaces the
+    old one instead of running the hook twice. Mutant: the filepacks marker left out of the merge rule."""
+    target = tmp_path / "settings.json"
+    old = {"type": "command", "command": f"python3 {FILEPACKS} hook --an-older-spelling"}
+    target.write_text(json.dumps({"hooks": {"PreToolUse": [{"matcher": "Read", "hooks": [old]}]}}))
+    assert install(target).returncode == 0
+    cmds = [h["command"] for g in json.loads(target.read_text())["hooks"]["PreToolUse"] for h in g["hooks"]]
+    assert sum(FILEPACKS in c for c in cmds) == 1 and old["command"] not in cmds, "an older filepacks spelling stayed"
+    assert install(target, "--check").returncode == 0

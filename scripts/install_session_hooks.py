@@ -28,6 +28,12 @@ blocking feedback; 300-second timeout, over its 240-second round budget) and on 
 directly, not through hook_context.py: it prints its own hookSpecificOutput JSON, and a Stop round outlasts the
 wrapper's 55-second limit. While `<repo>/.jev/req-off` exists every subcommand exits 0 at once.
 
+scripts/filepacks.py (K2, task #353, D-106) is registered twice: PreToolUse on Read, Edit, Write and Bash through the
+wrapper, last in its list (the first time a context window touches a tracked file, its context pack), and SessionStart
+with no matcher, before the chat form's group (`hook --reset`: a compaction forgets the compacted window, a resume or a
+clear every window of its session). Neither has a timeout: the hook reads its stdin within 2 s and exits 0 on every
+path.
+
 The tool hooks run through scripts/hook_context.py: edit-snapshot prints plain text, which the wrapper turns into
 additionalContext the model reads (the Codex and Hermes adapters parse that plain text); search-intercept (task #228,
 PreToolUse on Grep and Bash) answers a semantic search or stops a known Bash quirk with exit 2 and its text on stderr,
@@ -38,11 +44,11 @@ that match the prompt, beside wiki-context); session-start.sh resets its once-pe
 the wrapper too since D-095, so its excerpt carries the S1-RATE stamp and score request like every other injection.
 
 Merge rule, hook by hook: an install replaces every hook whose command names `<repo>/.claude/hooks/`,
-`<repo>/scripts/task_sync.py`, `<repo>/scripts/stack.py catalog` or `<repo>/scripts/ls_req.py` (an older spelling of
-ours included); --remove takes
-out only our exact current commands. A foreign hook in the same group as one of ours
-stays, in that group with its matcher (S1-L1-R1 F19); every other key and entry in the file is kept. An existing file
-that is not a JSON object is refused (exit 1), never overwritten.
+`<repo>/scripts/task_sync.py`, `<repo>/scripts/stack.py catalog`, `<repo>/scripts/ls_req.py` or
+`<repo>/scripts/filepacks.py` (an older spelling of ours included); --remove takes out only our exact current
+commands. A foreign hook in the same group as one of ours stays, in that group with its matcher (S1-L1-R1 F19); every
+other key and entry in the file is kept. An existing file that is not a JSON object is refused (exit 1), never
+overwritten.
 
 The count of hooks an install registers is counted from our_hooks() (hook_count), never written as a literal: --help
 states it and the install line prints it (VERIFY-LS-B10 F10: a literal count went stale when the chat form's hooks
@@ -88,11 +94,15 @@ def our_hooks(root: Path) -> dict:
         "scripts/stack.py",
         f'python3 {r}/scripts/stack.py catalog || echo "stacks: no catalog (scripts/stack.py catalog exited $?)"'),
         "timeout": 30}]}
+    filepacks = {"matcher": "Read|Edit|Write|Bash", "hooks": [{"type": "command", "command": guarded(
+        "scripts/filepacks.py", f"{wrap} PreToolUse -- python3 {r}/scripts/filepacks.py hook", True)}]}
+    filepacks_reset = {"hooks": [{"type": "command", "command": guarded(
+        "scripts/filepacks.py", f"python3 {r}/scripts/filepacks.py hook --reset")}]}
 
     return {
         "SessionStart": [{"hooks": [{"type": "command", "command": guarded(
             ".claude/hooks/session-start.sh", f"CLAUDE_PROJECT_DIR={r} bash {r}/.claude/hooks/session-start.sh")}]},
-            task_sync("session-start"), catalog, req("session-start", 30)],
+            task_sync("session-start"), catalog, filepacks_reset, req("session-start", 30)],
         "UserPromptSubmit": [{"hooks": [{"type": "command", "command": guarded(
             ".claude/hooks/wiki-context.py", f"{wrap} UserPromptSubmit -- python3 {r}/.claude/hooks/wiki-context.py",
             True)}]},
@@ -107,7 +117,8 @@ def our_hooks(root: Path) -> dict:
             True)}]},
             {"matcher": "Write|Edit|Bash", "hooks": [{"type": "command", "command": guarded(
                 ".claude/hooks/system1-context.py", f"{wrap} PreToolUse -- python3 {r}/.claude/hooks/system1-context.py",
-                True)}]}],
+                True)}]},
+            filepacks],
         "Stop": [{"hooks": [{"type": "command", "command": guarded(
             ".claude/hooks/turn-retro-gate.sh", f"bash {r}/.claude/hooks/turn-retro-gate.sh")}]},
             task_sync("stop"), req("stop", 300)],
@@ -136,10 +147,12 @@ def merged(current: dict, root: Path, remove: bool) -> dict:
     sync_marker = f"{shlex.quote(str(root))}/scripts/task_sync.py"
     catalog_marker = f"{shlex.quote(str(root))}/scripts/stack.py catalog"
     req_marker = f"{shlex.quote(str(root))}/scripts/ls_req.py"
+    filepacks_marker = f"{shlex.quote(str(root))}/scripts/filepacks.py"
     mine = our_hooks(root)
     exact = {h["command"] for groups in mine.values() for g in groups for h in g["hooks"]}
     ours = exact.__contains__ if remove else (
-        lambda c: c in exact or marker in c or sync_marker in c or catalog_marker in c or req_marker in c)
+        lambda c: c in exact or marker in c or sync_marker in c or catalog_marker in c or req_marker in c
+        or filepacks_marker in c)
     out = dict(current)
     hooks = dict(out.get("hooks") or {})
     for event in sorted(set(hooks) | set(mine)):
