@@ -11,6 +11,9 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-01 19:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 19:0xZ): c0f87ffc (the R3 brief), after the landing 5cf654e5 (the session export's known-value pass and the R2 follow-ups, task #439; CI run #1214 passed), GATED-PENDING-VERIFY.**
+- **LIVE (as of 19:0xZ):** as in the block below. **RUNNING:** VERIFY-SESSION-EXPORT-R3 (the original verifier, resumed on `tasks/briefs/jev-laya/VERIFY-SESSION-EXPORT-R3-brief.md`, PIN 5cf654e5). **HELD:** the re-made 2026-10-01 export (the coordinator's scratch, made at the PIN through the pass: gate total 0, the 16-form check NO HIT, 56 occurrences of the codiv key's windows cut), until the verifier's verdict; the older export (it holds one 11-character piece of the key) is deleted after the harvest. **NEXT:** the harvest; the ship and the PC-side check; then task #444 (measured: all 1,091 injection ids of the frozen S1 build are in the export's stream), task #441, task #448.
 **2026-10-01 18:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 18:1xZ): 0e540894 (the R2 harvest and its report pushed). Landing with this block: the session export's known-value pass and the R2 follow-ups (task #439), GATED-PENDING-VERIFY.**
 - **LIVE (as of 18:1xZ):** as in the block below (the Attention-kind style, pruner change 4, the relay, pid 21231). **HELD:** the 2026-10-01 export, until the re-export through the pass. **NEXT:** the push, CI, the original verifier on this landing (VERIFY-SESSION-EXPORT-R3), the real export with `--known-values default --mark-own-canaries`, the check, the ship and the PC-side check; then task #444, task #441, task #448.
