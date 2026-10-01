@@ -703,6 +703,17 @@ def test_strict_pass_keeps_only_an_exact_committed_run():
     assert [strict(text, keep=COMMITTED) for text, _ in rows] == [want for _, want in rows]
 
 
+def test_a_token_like_name_before_a_committed_run_is_kept_up_to_11_characters():
+    # R2-F-9 (VERIFY-SESSION-EXPORT-R2, mutants F2, F3 and F5): R1-F-1's boundary. A NAME with a letter and a digit glued by
+    # `=` to a committed run stays at 11 characters and is redacted at 12; 12 letters with no digit stay.
+    strict = getattr(MOD, "scrub_strict")
+    tok = "ZQfake0committed0fixture0token0v1"
+    rows = (("x QZ7name7x9a=" + tok + " y\n", "x QZ7name7x9a=" + tok + " y\n"),         # 11 characters
+            ("x QZ7name7x9ab=" + tok + " y\n", "x " + R + " y\n"),                      # 12
+            ("x QZnameletter=" + tok + " y\n", "x QZnameletter=" + tok + " y\n"))       # 12, no digit
+    assert [strict(text, keep=COMMITTED) for text, _ in rows] == [want for _, want in rows]
+
+
 def test_run_shapes_are_the_rules_own_shapes():
     # the set session_export.py builds uses the opaque rule's own pattern, the key-run rule's and the token-line class
     shapes = getattr(MOD, "RUN_SHAPES")

@@ -475,7 +475,8 @@ def _key(where):
 
 
 def _export(tree, out, key, *extra, jobs=2):
-    return _run("export", "--root", tree, "--out", out, "--jobs", jobs, "--key", key, "--repo", REPO["path"], *extra)
+    return _run("export", "--root", tree, "--out", out, "--jobs", jobs, "--key", key, "--repo", REPO["path"],
+                "--known-values", "key-only", *extra)
 
 
 def _say(text, C):
@@ -593,7 +594,7 @@ def test_the_canaries_show_when_the_protections_are_off(tmp_path, se, monkeypatc
     monkeypatch.setattr(se, "SECRET_PATH", re.compile(r"(?!)"))          # every spelling of a secret path goes through it
     out = tmp_path / "out"
     rc = se.main(["export", "--root", str(tree), "--out", str(out), "--jobs", "1", "--key", str(key_path),
-                  "--repo", str(REPO["path"])])
+                  "--repo", str(REPO["path"]), "--known-values", "key-only"])
     shown, expected = _leaks(_blob(out), C), sorted(set(C) - NEVER_READ)
     assert rc == 3 and shown == expected
     gate = _manifest(out)["gate"]
@@ -1167,7 +1168,8 @@ def test_an_offsets_rerun_reads_the_commit_its_manifest_names(tmp_path, se):
     key_path, key = _key(tmp_path)
 
     def run(out, *extra):
-        return _run("export", "--root", tree, "--out", out, "--jobs", 1, "--key", key_path, "--repo", repo, *extra)
+        return _run("export", "--root", tree, "--out", out, "--jobs", 1, "--key", key_path, "--repo", repo,
+                    "--known-values", "key-only", *extra)
     r1 = run(tmp_path / "o1")
     assert r1.returncode == 0, r1.stderr[-2000:]
     (repo / "docs" / "zq-9.md").write_text(UNCOMMITTED_NAME + "\n")               # HEAD moves: it now holds the name
@@ -1189,15 +1191,16 @@ def test_a_repo_git_cannot_read_refuses_and_a_copy_outside_git_exempts_nothing(t
     key_path, key = _key(tmp_path)
     for i, extra in enumerate((["--repo", tree], ["--repo", REPO["path"], "--commit", "0" * 40])):
         out = tmp_path / ("bad%d" % i)
-        r = _run("export", "--root", tree, "--out", out, "--jobs", 1, "--key", key_path, *extra)
+        r = _run("export", "--root", tree, "--out", out, "--jobs", 1, "--key", key_path, "--known-values", "key-only",
+                 *extra)
         assert (r.returncode, "committed runs" in r.stderr, out.exists()) == (2, True, False), r.stderr[-500:]
     copy = tmp_path / "copy" / "scripts"
     copy.mkdir(parents=True)
     for f in ("session_export.py", "transcript_export.py"):
         shutil.copy(ROOT / "scripts" / f, copy / f)
     r = subprocess.run([sys.executable, str(copy / "session_export.py"), "export", "--root", str(tree), "--out",
-                        str(tmp_path / "o"), "--jobs", "1", "--key", str(key_path)], capture_output=True, text=True,
-                       timeout=600)
+                        str(tmp_path / "o"), "--jobs", "1", "--key", str(key_path), "--known-values", "key-only"],
+                       capture_output=True, text=True, timeout=600)
     assert r.returncode == 0 and "no run is exempt" in r.stdout, r.stdout[-2000:] + r.stderr[-2000:]
     assert _manifest(tmp_path / "o")["repo"] is None
     assert _events(tmp_path / "o")["-mv/mv.jsonl"][1]["text"] == "[opaque:%s] FAILED\n" % _hmac12(key, COMMITTED_NAME)
@@ -1276,7 +1279,7 @@ def test_marked_canaries_become_markers_and_are_counted(tmp_path, se):
 
     def run(out, *extra):
         return _run("export", "--root", tree, "--out", tmp_path / out, "--jobs", 1, "--key", key_path, "--repo",
-                    REPO["path"], *extra)
+                    REPO["path"], "--known-values", "key-only", *extra)
     plain, marked = run("o1"), run("o2", "--mark-own-canaries")
     rerun = run("o3", "--offsets", tmp_path / "o2" / "manifest.json")
     said = [_say(r.stdout + r.stderr, C) for r in (plain, marked, rerun)]
@@ -1315,7 +1318,8 @@ def test_only_an_exact_committed_run_stays_raw(tmp_path, se):
              ("prefix", "Q" + COMMITTED_NAME), ("swapcase", COMMITTED_NAME.swapcase()), ("glued", COMMITTED_NAME + "-tail"))
     tree = _one_call_tree(tmp_path, "mv", "".join("%s %s\n" % f for f in forms))
     key_path, key = _key(tmp_path)
-    r = _run("export", "--root", tree, "--out", tmp_path / "o", "--jobs", 1, "--key", key_path, "--repo", REPO["path"])
+    r = _run("export", "--root", tree, "--out", tmp_path / "o", "--jobs", 1, "--key", key_path, "--repo", REPO["path"],
+             "--known-values", "key-only")
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
     want = "".join("%s %s\n" % (k, v if k == "exact" else "[opaque:%s]" % _hmac12(key, v)) for k, v in forms)
     assert _events(tmp_path / "o")["-mv/mv.jsonl"][1]["text"] == want
@@ -1357,3 +1361,273 @@ def test_repo_runs_leave_out_the_chat_digests(tmp_path, se):
     assert {tag: "%s_%s" % (UNCOMMITTED_NAME, tag) in runs for tag in "abcd"} == \
         {"a": False, "b": False, "c": True, "d": True}
     assert COMMITTED_NAME in runs
+
+
+# Task #439, the repair after VERIFY-SESSION-EXPORT-R2 (tasks/briefs/jev-laya/VERIFY-SESSION-EXPORT-R2-report.md): the
+# known-value pass, the marking guard (R2-F-1, R2-F-2, R2-F-8) and R2-I-15. Every value is FAKE and built here; a failure
+# names values, never prints one.
+KV_TOKEN = "Zq4fK9Tbn" + "Q7wX3kPm2Lr8Vd5Hs6Jy1Gc"      # 32 characters (under the opaque rule's 40); its 9th is `n`
+KV_HOST = "zq-fake-host-0001.example.invalid"
+KV_URL = "https://%s/v1" % KV_HOST
+KV_WHOLE = {"url": KV_URL, "host": KV_HOST}                  # known whole only: not token-like
+
+
+def _kv_leaks(blob):
+    """Names of the FAKE values in blob: the token whole or by any 8-character window, the URL and its host whole."""
+    hit = [n for n, v in KV_WHOLE.items() if v in blob]
+    return sorted(hit + (["token"] if any(KV_TOKEN[i:i + 8] in blob for i in range(len(KV_TOKEN) - 7)) else []))
+
+
+def _kv_tree(tmp_path):
+    """One transcript holding the FAKE values: the token whole, an 11-character piece (4 windows), 7 characters after a
+    newline (a window only in the JSON line: `\\n` gives its `n`), a 12-character piece in the raw `model` field and
+    between two non-ASCII letters, the URL and its host whole, and a 7-character piece alone (no window: it stays)."""
+    t = Tape(tmp_path / "proj")
+    t.call("toolu_fake_k1", "Bash", {"command": "echo one"})
+    t.result("toolu_fake_k1", "holds %s end\n" % KV_TOKEN, is_error=False)
+    t.owner("a piece %s ok" % KV_TOKEN[5:16])
+    t.call("toolu_fake_k2", "Bash", {"command": "echo two"})
+    t.result("toolu_fake_k2", "line one\n%s tail\n" % KV_TOKEN[9:16], is_error=False)
+    t.assistant([{"type": "text", "text": "ok"}], stop="end_turn", model="m-" + KV_TOKEN[:12])
+    t.call("toolu_fake_k3", "Bash", {"command": "echo three"})
+    t.result("toolu_fake_k3", "%s%s%s and %s and %s and %s\n" % (chr(0xE9), KV_TOKEN[16:28], chr(0xFC), KV_URL, KV_HOST,
+                                                                 KV_TOKEN[20:27]), is_error=False)
+    t.write(tmp_path / "tree" / "-kv" / "kv.jsonl")
+    env = tmp_path / "fake.env"
+    env.write_text("ZQ_FAKE_TOKEN=%s\nZQ_FAKE_URL=%s\n" % (KV_TOKEN, KV_URL))
+    return tmp_path / "tree", env
+
+
+def _kv_check(env, out):
+    """The independent instrument: scripts/known_values_check.py over an export, with the FAKE env file."""
+    return subprocess.run([sys.executable, str(ROOT / "scripts" / "known_values_check.py"), "--env-file", str(env),
+                           str(out)], capture_output=True, text=True, timeout=300)
+
+
+def test_known_values_leave_the_export_whole_and_by_window(tmp_path, se):
+    # the 2026-10-01 export held 4 windows of a real key in a shape the scrubber lacks: each FAKE value here is in no
+    # shape the scrubber knows, and the pass takes each, whole or by window, out of every field; the line stays JSON; a
+    # 7-character piece stays; the manifest names the forms and the counts; the gate's own value count and
+    # known_values_check.py find nothing
+    tree, env = _kv_tree(tmp_path)
+    assert all(v in se.scrub_payload("holds %s end" % v) for v in (KV_TOKEN, KV_URL))      # the premise: no shape takes them
+    # a fixed FAKE key, not init-key's: in about one random key in four the base64 form holds no `+` or `/`, so its url
+    # forms are the same values and are kept once (a value met twice keeps its first row)
+    key_path = _key_file(tmp_path, bytes(range(224, 256)))
+    out = tmp_path / "o"
+    r = _run("export", "--root", tree, "--out", out, "--jobs", 1, "--key", key_path, "--repo", REPO["path"],
+             "--known-values", "key-only", "--known-env-file", env)
+    said = r.stdout + r.stderr
+    assert (r.returncode, _kv_leaks(said)) == (0, []), said[-3000:] if not _kv_leaks(said) else "withheld"
+    assert _kv_leaks(_blob(out)) == []
+    ev = _events(out)["-kv/kv.jsonl"]
+    texts = [e["text"] for e in ev if e["kind"] in ("tool_result", "text") and e["role"] in ("tool", "owner")]
+    assert texts == ["holds <redacted> end\n", "a piece <redacted> ok", "line one<redacted> tail\n",
+                     "%s<redacted>%s and <redacted> and <redacted> and %s\n" % (chr(0xE9), chr(0xFC), KV_TOKEN[20:27])]
+    assert [e["model"] for e in ev if (e["model"] or "").startswith("m-")] == ["m-<redacted>"]
+    m = _manifest(out)
+    assert m["known_values"]["mode"] == "key-only" and m["known_values"]["env_files"] == ["fake.env"]
+    assert m["known_values"]["names"] == sorted(["fake.env:ZQ_FAKE_TOKEN value", "fake.env:ZQ_FAKE_URL value",
+                                                 "fake.env:ZQ_FAKE_URL host"] + ["pseudonym-key " + f for f in (
+                                                     "hex", "HEX", "base64", "base64-nopad", "base64url", "base64url-nopad")])
+    red = m["totals"]["values_redacted"]
+    assert sorted(red) == ["fake.env:ZQ_FAKE_TOKEN value", "fake.env:ZQ_FAKE_URL host", "fake.env:ZQ_FAKE_URL value"]
+    assert all(v > 0 for v in red.values()) and m["totals"]["shapes_redacted"] == {}
+    assert (m["gate"]["values"], m["gate"]["total"], m["gate"]["bad_lines"]) == ({}, 0, 0)
+    kv = _kv_check(env, out)
+    assert (kv.returncode, "NO HIT" in kv.stdout) == (0, True), kv.stdout[-1500:] + kv.stderr[-500:]
+
+
+def test_without_the_pass_the_gate_and_the_check_find_them(tmp_path, se, monkeypatch):
+    # negative control: with redact_values a no-op, the same tree's export holds every value, its gate counts each
+    # (exit 3) and known_values_check.py finds them (exit 3), so the test above can fail
+    tree, env = _kv_tree(tmp_path)
+    key_path, _ = _key(tmp_path)
+    out = tmp_path / "o"
+    monkeypatch.setattr(se, "redact_values", lambda raw, found: (raw, {}))
+    rc = se.main(["export", "--root", str(tree), "--out", str(out), "--jobs", "1", "--key", str(key_path), "--repo",
+                  str(REPO["path"]), "--known-values", "key-only", "--known-env-file", str(env)])
+    m = _manifest(out)
+    assert (rc, sorted(m["gate"]["values"])) == (3, ["fake.env:ZQ_FAKE_TOKEN value", "fake.env:ZQ_FAKE_URL host",
+                                                    "fake.env:ZQ_FAKE_URL value"])
+    assert m["totals"]["values_redacted"] == {} and _kv_leaks(_blob(out)) == ["host", "token", "url"]
+    kv = _kv_check(env, out)
+    lines = re.findall(r"^(\S+ \S+) whole=(\d+) windows=(\d+)/\d+$", kv.stdout, re.M)
+    # the gate counts what the check counts: each value's whole occurrences plus its distinct windows (the token: 1 + 25)
+    assert (kv.returncode, m["gate"]["values"]) == (3, {n: int(w) + int(s) for n, w, s in lines if int(w) + int(s)})
+    assert m["gate"]["values"]["fake.env:ZQ_FAKE_TOKEN value"] == 1 + len(KV_TOKEN) - 7
+
+
+def test_the_known_values_mode_is_required_and_a_named_env_file_must_hold_one(tmp_path, se):
+    # --known-values has no default (the real export reads the real sources, a test none); an --known-env-file that is
+    # missing or holds no value refuses before any output (exit 2)
+    tree = _one_call_tree(tmp_path, "mv", "ok\n")
+    key_path, _ = _key(tmp_path)
+    (tmp_path / "empty.env").write_text("# no value\nZQ_SHORT=abc\n")
+    cases = ([], ["--known-values", "key-only", "--known-env-file", tmp_path / "empty.env"],
+             ["--known-values", "key-only", "--known-env-file", tmp_path / "missing.env"])
+    got = []
+    for i, extra in enumerate(cases):
+        out = tmp_path / ("o%d" % i)
+        r = _run("export", "--root", tree, "--out", out, "--jobs", 1, "--key", key_path, "--repo", REPO["path"], *extra)
+        got.append((r.returncode, out.exists(), "--known-values" in r.stderr if i == 0 else "no value" in r.stderr))
+    assert got == [(2, False, True)] * 3, got
+
+
+def test_the_default_set_is_the_chat_exports_and_four_variables(se, monkeypatch):
+    # `default` hands transcript_export.known_values exactly these sources (read nothing here: the reader is replaced);
+    # `key-only` hands it none; either way the table starts with the key's six printed forms
+    seen = []
+    monkeypatch.setattr(se, "known_values", lambda sources: seen.append(tuple(sources)) or [])
+    key = bytes(range(224, 256))            # its base64 holds `+` and `/`, so the url forms differ (a value met twice is kept once)
+    forms = [row[1] for row in se.value_table(key, "default")]
+    assert seen == [(("env-file", str(ROOT / ".pc-bridge.env"), ()), ("env-file", "/root/.codiv/api.env", ("TYPESAFE_BASE_URL",)),
+                     ("raw-file", "/root/.config/session-export/pseudonym.key", ()), ("env", "GH_TOKEN", ()),
+                     ("env", "GITHUB_TOKEN", ()), ("env", "AWS_ACCESS_KEY_ID", ()), ("env", "AWS_SECRET_ACCESS_KEY", ()),
+                     ("env", "CLOUDSDK_AUTH_ACCESS_TOKEN", ()), ("env", "CLAUDE_CODE_MESSAGING_TOKEN", ()))]
+    assert forms == ["hex", "HEX", "base64", "base64-nopad", "base64url", "base64url-nopad"]
+    seen.clear()
+    assert len(se.value_table(key, "key-only")) == 6 and seen == []
+
+
+def test_the_key_forms_are_the_checks_raw_forms(se):
+    # the pass and known_values_check.py know the key by the same forms and the same window
+    spec = importlib.util.spec_from_file_location("known_values_check_under_test", ROOT / "scripts" / "known_values_check.py")
+    kv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(kv)
+    key = bytes(range(32))
+    assert [(f, v, w) for _, f, v, w in se.key_values(key)] == [(f, v, kv._windows(v)) for f, v, _ in kv._raw_forms(key)]
+    assert se.KV_WINDOW == kv.WINDOW and all(w for _, _, w in kv._raw_forms(key))
+
+
+def test_redact_values_keeps_the_line_json(se):
+    # the pass works on the written bytes: a window glued to an escape's letter takes the whole escape; one inside a
+    # \u escape too; a value that starts inside a UTF-8 character takes the whole character; touching spans merge; a value
+    # in a key or a number refuses (ValueOutsideString), never a broken line
+    token = KV_TOKEN.encode()
+    found = se.value_needles([("t", "v", token, se._windows(token))])
+    line = lambda obj: json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode()      # noqa: E731
+    out, hits = se.redact_values(line({"text": "a\n" + KV_TOKEN[9:16] + " b"}), found)
+    assert (out, hits) == (line({"text": "a<redacted> b"}), {"t v": 1})
+    hexv = b"001bcafe12345678"
+    out, _ = se.redact_values(line({"text": "x" + chr(0x1B) + "cafe1234 y"}), se.value_needles([("h", "v", hexv, se._windows(hexv))]))
+    assert out == line({"text": "x<redacted> y"})
+    out, _ = se.redact_values(line({"text": "z" + chr(0xE9) + "abcdefgh1 z"}), {b"\xa9abcdefgh1": [("u", -1)]})
+    assert out == line({"text": "z<redacted> z"})
+    out, _ = se.redact_values(line({"text": KV_TOKEN[:8] + KV_TOKEN[24:] + "|" + KV_TOKEN[10:20]}), found)
+    assert out == line({"text": "<redacted>|<redacted>"})          # two touching windows, then three overlapping
+    for bad in (line({KV_TOKEN[:12]: 1}), b'{"line":12345678}'):
+        with pytest.raises(se.ValueOutsideString):
+            se.redact_values(bad, se.value_needles([("t", "v", token + b"12345678", se._windows(token + b"12345678"))]))
+
+
+def _w_key(se, canary):
+    """A FAKE key whose standard base64 form starts with `w` (the last character of every `_z` canary), and the D1 text
+    (VERIFY-SESSION-EXPORT-R2): `k <canary><the form after its first character>`, which the scrub leaves as it is."""
+    for i in range(100000):
+        key = hashlib.sha256(b"zq w key %d" % i).digest()
+        form = base64.b64encode(key).decode()
+        text = "k %s%s\n" % (canary, form[1:])
+        if form[0] == "w" and se.scrub_payload(text) == text:
+            return key, text
+    raise AssertionError("no such key in 100000 tries")
+
+
+def _key_file(where, key):
+    path = pathlib.Path(where) / "wcfg" / "pseudonym.key"
+    path.parent.mkdir(mode=0o700)
+    path.write_bytes(key)
+    path.chmod(0o600)
+    return path
+
+
+def test_a_key_form_glued_to_a_canary_never_ships(tmp_path, se, monkeypatch):
+    # R2-F-1 and R2-F-8: a canary whose last character starts the key's b64 form. With the pass (the real code) the
+    # form's every window leaves the export, marked or not, and the manifest names the form; the canary loses that
+    # character, so it is a FAKE value's piece, not marked and not counted. Without the pass (a no-op, in process), the
+    # marking would cut the form's first character, so the line stays unmarked (canaries_unmarked 1) and the export's gate
+    # counts the whole form (pseudonym-key-b64 1, mutant K6's miss) and the canary, and its value count sees the form
+    C = se.CANARIES
+    key, text = _w_key(se, C["orphan"])
+    key_path = _key_file(tmp_path, key)
+    tree = _one_call_tree(tmp_path, "mv", text)
+    forms = [v.decode() for _, _, v, _ in se.key_values(key)]
+    leaks = lambda blob: [f for f in forms if any(f[i:i + 8] in blob for i in range(len(f) - 7))]       # noqa: E731
+    for i, extra in enumerate(([], ["--mark-own-canaries"])):
+        out = tmp_path / ("o%d" % i)
+        r = _run("export", "--root", tree, "--out", out, "--jobs", 1, "--key", key_path, "--repo", REPO["path"],
+                 "--known-values", "key-only", *extra)
+        m = _manifest(out)
+        assert (r.returncode, leaks(_blob(out)), m["gate"]["total"]) == (0, [], 0), (i, r.stdout[-1500:])
+        assert m["totals"]["values_redacted"].get("pseudonym-key base64", 0) > 0 and m["totals"]["canaries_unmarked"] == 0
+    monkeypatch.setattr(se, "redact_values", lambda raw, found: (raw, {}))
+    out = tmp_path / "o2"
+    rc = se.main(["export", "--root", str(tree), "--out", str(out), "--jobs", "1", "--key", str(key_path), "--repo",
+                  str(REPO["path"]), "--known-values", "key-only", "--mark-own-canaries"])
+    m = _manifest(out)
+    assert (rc, m["gate"]["canaries"]["pseudonym-key-b64"], m["gate"]["canaries"]["orphan"]) == (3, 1, 1)
+    assert (m["totals"]["canaries_unmarked"], m["totals"]["canaries_marked"]) == (1, {})
+    assert m["gate"]["values"].get("pseudonym-key base64", 0) > 0
+
+
+def test_marking_never_hides_a_shape_in_a_raw_field(tmp_path, se):
+    # R2-F-2 (the report's D2): a denial kind (written unscrubbed) holding `Bearer <canary><FAKE secret>`. The bearer rule's
+    # match runs through the canary; marking it would end the match at the marker, so the line stays unmarked and the
+    # gate counts the bearer shape and the canary (exit 3). Control: the same canary alone in that field is marked (exit 0)
+    C = se.CANARIES
+    got = []
+    for i, denial in enumerate(("Bearer %s%s" % (C["orphan"], "Zq7x" * 6), "plain %s" % C["orphan"])):
+        t = Tape(tmp_path / "proj")
+        t.call("toolu_fake_d1", "Bash", {"command": "echo"})
+        t.result("toolu_fake_d1", "denied\n", is_error=True, denial=denial)
+        t.write(tmp_path / ("tree%d" % i) / "-mv" / "mv.jsonl")
+        key_path, _ = _key(tmp_path / ("k%d" % i))
+        out = tmp_path / ("o%d" % i)
+        r = _run("export", "--root", tmp_path / ("tree%d" % i), "--out", out, "--jobs", 1, "--key", key_path, "--repo",
+                 REPO["path"], "--known-values", "key-only", "--mark-own-canaries")
+        m = _manifest(out)
+        got.append((r.returncode, m["gate"]["patterns"]["bearer"], m["gate"]["canaries"]["orphan"],
+                    m["totals"]["canaries_unmarked"], m["totals"]["canaries_marked"]))
+    assert got == [(3, 1, 1, 1, {}), (0, 0, 0, 0, {"orphan": 1})], got
+
+
+def test_a_counted_shape_the_pass_cuts_stays_counted(tmp_path, se):
+    # a denial kind (written unscrubbed) holding `Bearer <FAKE known value>`: the gate counts the bearer shape; the pass
+    # takes the value out (no window of it is written), and the count it took off the line stays in the gate
+    # (shapes_redacted), so the export still exits 3. Control: the same text in a result (scrubbed) loses the value to the
+    # bearer rule first; the pass finds nothing and the export exits 0
+    got = []
+    for i, where in enumerate(("denial", "result")):
+        t = Tape(tmp_path / "proj")
+        t.call("toolu_fake_b1", "Bash", {"command": "echo"})
+        if where == "denial":
+            t.result("toolu_fake_b1", "denied\n", is_error=True, denial="Bearer " + KV_TOKEN)
+        else:
+            t.result("toolu_fake_b1", "Bearer %s\n" % KV_TOKEN, is_error=False)
+        t.write(tmp_path / ("tree%d" % i) / "-mv" / "mv.jsonl")
+        env = tmp_path / ("fake%d.env" % i)
+        env.write_text("ZQ_FAKE_TOKEN=%s\n" % KV_TOKEN)
+        key_path, _ = _key(tmp_path / ("k%d" % i))
+        out = tmp_path / ("o%d" % i)
+        r = _run("export", "--root", tmp_path / ("tree%d" % i), "--out", out, "--jobs", 1, "--key", key_path, "--repo",
+                 REPO["path"], "--known-values", "key-only", "--known-env-file", env)
+        m = _manifest(out)
+        got.append((r.returncode, _kv_leaks(_blob(out)), m["totals"]["shapes_redacted"].get("bearer", 0) > 0,
+                    m["gate"]["shapes_redacted"] == m["totals"]["shapes_redacted"],
+                    sorted(m["totals"]["values_redacted"])))
+    assert got == [(3, [], True, True, ["fake0.env:ZQ_FAKE_TOKEN value"]), (0, [], False, True, [])], got
+
+
+def test_a_lone_surrogate_in_a_denial_kind_becomes_a_question_mark(tmp_path, se):
+    # R2-I-15: the record's toolDenialKind is written through _fix like every other string; a lone surrogate stopped the
+    # export (UnicodeEncodeError, exit 1) before
+    t = Tape(tmp_path / "proj")
+    t.call("toolu_fake_s1", "Bash", {"command": "echo"})
+    t.result("toolu_fake_s1", "denied\n", is_error=True, denial="zq" + chr(0xD800) + "kind")
+    t.write(tmp_path / "tree" / "-mv" / "mv.jsonl")
+    key_path, _ = _key(tmp_path)
+    r = _run("export", "--root", tmp_path / "tree", "--out", tmp_path / "o", "--jobs", 1, "--key", key_path, "--repo",
+             REPO["path"], "--known-values", "key-only")
+    assert r.returncode == 0, r.stderr[-2000:]
+    assert [e["outcome"]["denial_kind"] for e in _events(tmp_path / "o")["-mv/mv.jsonl"] if e["kind"] == "tool_result"] \
+        == ["zq?kind"]

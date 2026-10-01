@@ -63,7 +63,7 @@ def export(tmp_path_factory):
     assert r.returncode == 0, r.stderr[-2000:]
     out = base / "export"
     r = subprocess.run([sys.executable, tool, "export", "--root", str(tree), "--out", str(out), "--jobs", "1",
-                        "--key", str(key)], capture_output=True, text=True, timeout=300)
+                        "--key", str(key), "--known-values", "key-only"], capture_output=True, text=True, timeout=300)
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
     m = json.loads((out / "manifest.json").read_text())
     big = [s for s in m["sources"] if s["output"] == BIG][0]

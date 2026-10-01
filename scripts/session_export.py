@@ -63,13 +63,25 @@ is not one), each test canary and the key's printed forms; it prints counts only
 AF-AP-213; an --offsets rerun takes the mode its manifest names) first turns each whole test canary into
 `[canary:<name>]` and counts it per source, because the input holds the transcripts of the lanes that built this tool.
 
+Known values (task #439, after VERIFY-SESSION-EXPORT-R2): the rules know secret SHAPES, and the 2026-10-01 export held 4
+windows of a real key in a shape they lack. Before marking, every event's JSON line loses each known value, whole or by
+any 8-byte window of a token-like one (known_values_check.py's count, on the bytes it reads), to `<redacted>`.
+--known-values is required: `default` reads the chat export's sources and EXTRA_ENV in process, `key-only` none of them;
+either way the pseudonym key's printed forms are known; --known-env-file adds an env file. The gate counts the values
+again in the written lines and a gate count the pass took off a line, and the marking leaves a line unmarked when it
+would take a gate count away (R2-F-1, R2-F-2). The manifest names the forms; nothing prints a value.
+
 usage: session_export.py init-key [--key PATH]
-       session_export.py export --out DIR [--root DIR] [--offsets MANIFEST] [--jobs N] [--key PATH] [--archive-dir DIR]
-                                [--repo DIR] [--commit REV] [--mark-own-canaries]
+       session_export.py export --out DIR --known-values {default,key-only} [--known-env-file PATH] [--root DIR]
+                                [--offsets MANIFEST] [--jobs N] [--key PATH] [--archive-dir DIR] [--repo DIR]
+                                [--commit REV] [--mark-own-canaries]
        session_export.py gate DIR [--jobs N] [--key PATH]      (reads the committed runs of the repo DIR/manifest.json names)
-exit:  0 done and the gate found nothing; 2 bad input (usage, no sources, a used out dir, a missing or loose key, an input or
-       archive changed under its offset, a --repo or commit git cannot read); 3 the gate found a secret shape or a canary
-       (the manifest records it; ship_to_pc.py refuses it). Standard library and git only. It never prints transcript text.
+exit:  0 done and the gate found nothing; 2 bad input (usage, no sources, a used out dir, a missing or loose key, a
+       known-value source present but unreadable or an --known-env-file with no value, a known value outside a string
+       value, an input or archive changed under its offset, a --repo or commit git cannot read); 3 the gate found a secret
+       shape, a canary or a known value (the manifest records it; ship_to_pc.py refuses it). Standard library and git
+       only. It never prints transcript text or a known value. The standalone gate counts no known value (the export and
+       known_values_check.py do).
 """
 import argparse
 import base64
@@ -91,7 +103,8 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
-from transcript_export import PAYLOAD_PATTERNS, RUN_SHAPES, SECRET_PATTERNS, scrub_payload, scrub_strict  # noqa: E402
+from transcript_export import (KNOWN_VALUE_SOURCES, PAYLOAD_PATTERNS, RUN_SHAPES, SECRET_PATTERNS,  # noqa: E402
+                               KnownValueRefusal, known_values, scrub_payload, scrub_strict)
 
 PROJECTS = "/root/.claude/projects"
 KEY_PATH = "/root/.config/session-export/pseudonym.key"
@@ -140,6 +153,13 @@ PATTERN_NAMES = ("private-key", "private-key-malformed", "credential", "bearer",
                  "credentials", "sk-key", "github-token", "google-key", "slack-token", "bridge-link", "opaque-run",
                  "bridge-host", "bearer-tail", "basic-auth", "escaped-credential", "url-password", "bearer-lower", "curl-user",
                  "pass-name", "url-token-user")
+# The known-value pass (task #439, after VERIFY-SESSION-EXPORT-R2). The scrubber and the gate know secret SHAPES, and the
+# 2026-10-01 export held 4 windows of a real key in a shape they lack. `--known-values default` reads the chat export's
+# sources (transcript_export.KNOWN_VALUE_SOURCES) and EXTRA_ENV, the variables the 2026-10-01 check also read;
+# `key-only` reads none of them (the tests: they open no real secret). Either way the pseudonym key's forms are known.
+EXTRA_ENV = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "CLOUDSDK_AUTH_ACCESS_TOKEN", "CLAUDE_CODE_MESSAGING_TOKEN")
+KV_WINDOW = 8                   # known_values_check.py's WINDOW (a test holds them equal)
+KV_MARK = b"<redacted>"         # the scrubber's own mark: no rule changes it, so the gate counts nothing in it
 
 
 def _z(tag):
@@ -309,6 +329,120 @@ def key_forms(key):
     """The printed forms of the key the gate must never find in an export."""
     return {"pseudonym-key-hex": key.hex(), "pseudonym-key-HEX": key.hex().upper(),
             "pseudonym-key-b64": base64.b64encode(key).decode(), "pseudonym-key-b64url": base64.urlsafe_b64encode(key).decode()}
+
+
+def default_sources():
+    """`--known-values default`: the chat export's sources, then EXTRA_ENV. Read when the export runs, never at import."""
+    return tuple(KNOWN_VALUE_SOURCES) + tuple(("env", name, ()) for name in EXTRA_ENV)
+
+
+def _windows(value):
+    return sorted({value[i:i + KV_WINDOW] for i in range(len(value) - KV_WINDOW + 1)})
+
+
+def key_values(key):
+    """The pseudonym key's printed forms as known values: known_values_check.py's raw forms (hex, HEX, base64 and
+    base64url, with and without padding), each whole and by its windows."""
+    b64, b64u = base64.b64encode(key), base64.urlsafe_b64encode(key)
+    forms = (("hex", key.hex().encode()), ("HEX", key.hex().upper().encode()), ("base64", b64),
+             ("base64-nopad", b64.rstrip(b"=")), ("base64url", b64u), ("base64url-nopad", b64u.rstrip(b"=")))
+    return [("pseudonym-key", form, value, _windows(value)) for form, value in forms]
+
+
+def value_table(key, mode, env_files=()):
+    """[(label, form, value, windows)]: the key's printed forms; with mode "default", each present source of
+    default_sources(); then each --known-env-file's NAME=value lines. transcript_export.known_values reads them in
+    process, as known_values_check.py does (a token-like value is also known by each 8-byte window; a missing default
+    source is skipped with one line on stderr). A value met twice keeps its first row. KnownValueRefusal on a source that
+    is present but cannot be read, and on an --known-env-file that is missing or holds no value."""
+    rows = key_values(key) + (known_values(default_sources()) if mode == "default" else [])
+    for p in env_files:
+        got = known_values((("env-file", p, ()),))
+        if not got:
+            raise KnownValueRefusal(["--known-env-file %s is missing or holds no value of 8 or more characters" % p])
+        rows += got
+    table, seen = [], set()
+    for row in rows:
+        if row[2] not in seen:
+            seen.add(row[2])
+            table.append(row)
+    return table
+
+
+def value_needles(table):
+    """{bytes: [(name, at)]}: each known value whole (at -1) and each of its windows (at = the window's index), with the
+    name `<label> <form>` of every row that holds it. Names and indexes only leave a worker, never a value."""
+    out = {}
+    for label, form, value, wins in table:
+        name = "%s %s" % (label, form)
+        out.setdefault(value, []).append((name, -1))
+        for at, w in enumerate(wins):
+            out.setdefault(w, []).append((name, at))
+    return out
+
+
+class ValueOutsideString(Exception):
+    """A known value sits where a redaction would break the JSON line (a key, a number): the export refuses the source."""
+
+
+def _shape(obj):
+    """A JSON value's keys and types, not its text: what a redaction must leave as it was."""
+    if isinstance(obj, dict):
+        return tuple((k, _shape(v)) for k, v in obj.items())
+    if isinstance(obj, list):
+        return tuple(_shape(v) for v in obj)
+    return type(obj).__name__
+
+
+def redact_values(raw, found):
+    """The known-value pass on one JSON line, in the UTF-8 bytes that are written (what known_values_check.py counts):
+    every occurrence of a known value, whole or by a window (`found`, value_needles), becomes KV_MARK. Spans that overlap
+    or touch merge, and each grows to whole characters and whole JSON escapes: a window can begin at the `n` of an escaped
+    newline, which the check counts too. Returns (line, {name: matches}); ValueOutsideString when the line would not stay
+    JSON with the same keys."""
+    spans, hits = [], {}
+    for needle, rows in found.items():
+        if needle not in raw:
+            continue
+        at = raw.find(needle)
+        while at != -1:
+            spans.append([at, at + len(needle)])
+            for name, _ in rows:
+                _inc(hits, name)
+            at = raw.find(needle, at + 1)
+    if not spans:
+        return raw, hits
+    escapes, at = [], raw.find(b"\\")
+    while at != -1:                        # json.dumps writes a backslash only to begin an escape: \X or \uXXXX
+        end = at + (6 if raw[at + 1:at + 2] == b"u" else 2)
+        escapes.append((at, end))
+        at = raw.find(b"\\", end)
+    for span in spans:
+        while span[0] > 0 and 0x80 <= raw[span[0]] < 0xC0:
+            span[0] -= 1
+        while span[1] < len(raw) and 0x80 <= raw[span[1]] < 0xC0:
+            span[1] += 1
+        for a, b in escapes:
+            if a < span[1] and span[0] < b:
+                span[0], span[1] = min(span[0], a), max(span[1], b)
+    merged = []
+    for a, b in sorted(spans):
+        if merged and a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    parts, last = [], 0
+    for a, b in merged:
+        parts += [raw[last:a], KV_MARK]
+        last = b
+    out = b"".join(parts + [raw[last:]])
+    try:
+        same = _shape(json.loads(out)) == _shape(json.loads(raw))
+    except ValueError:
+        same = False
+    if not same:
+        raise ValueOutsideString("a known value (%s) outside a string value" % ", ".join(sorted(hits)))
+    return out, hits
 
 
 def pseudonymizer(key, committed=frozenset()):
@@ -568,7 +702,7 @@ class Source:
         if type(tur.get("timedOutAfterMs")) is int:
             outcome["timed_out_after_ms"] = tur["timedOutAfterMs"]
         if isinstance(r.get("toolDenialKind"), str):
-            outcome["denial_kind"] = r["toolDenialKind"]
+            outcome["denial_kind"] = _fix(r["toolDenialKind"])        # R2-I-15: a lone surrogate stopped the export
         self.emit(n, ts, "tool", "tool_result", text, tool=name, call_id=cid, outcome=outcome, mode=mode)
         entry = self.archives.get(cid) if cid else None
         if entry is not None:                         # AMENDMENT 2: what the pruner kept from the model, in full
@@ -795,20 +929,54 @@ def archive_unchanged(entry):
     return hashlib.sha256(data).hexdigest() == entry["sha256"]
 
 
-def export_source(root, src, offset, out_dir, expect_sha, key, archives, mark=False):
-    """One source to <out_dir>/<src>.xz through convert() from 0, read only up to its offset; its manifest entry. With
-    `mark` (AF-AP-213), each event's JSON line passes mark_canaries: a canary holds no character JSON escapes or uses
-    as a separator, so the line holds a canary exactly where one of the event's strings does."""
+def export_source(root, src, offset, out_dir, expect_sha, key, archives, mark=False, found=None):
+    """One source to <out_dir>/<src>.xz through convert() from 0, read only up to its offset; its manifest entry. Each
+    event's JSON line takes two steps before it is written. (1) The known-value pass (redact_values over `found`): a known
+    value, whole or by a window, becomes KV_MARK. A gate count the pass takes off the line stays counted
+    (`shapes_redacted`, which the gate adds), so the pass never turns a refusal into a ship. (2) With `mark` (AF-AP-213),
+    mark_canaries: a canary holds no character JSON escapes or uses as a separator, so the line holds a canary exactly
+    where one of the event's strings does. A line whose marking would take away a gate count (a key form or a shape glued
+    to a canary, R2-F-1 and R2-F-2) is written unmarked, so the gate counts it; `canaries_unmarked` counts such lines."""
     dest = os.path.join(out_dir, src + ".xz")
     os.makedirs(os.path.dirname(dest), exist_ok=True)
-    h, marked = hashlib.sha256(), {}
+    h, marked, redacted, held, unmarked = hashlib.sha256(), {}, {}, {}, {"lines": 0}
+    pats, forms = gate_patterns(), key_forms(key)
+
+    def view(raw):
+        """The gate's counts on one line: (pattern counts, key form counts)."""
+        p, f = {}, {}
+        count_event(json.loads(raw), pats, forms, p, f)
+        return p, f
+
+    def lost(before, after):
+        return {k: v - after.get(k, 0) for k, v in before.items() if after.get(k, 0) < v}
+
     try:
         with lzma.open(dest + ".part", "wb", preset=XZ_PRESET) as out:
             def write(ev):
-                line = json.dumps(ev, ensure_ascii=False, separators=(",", ":"))
-                out.write(((mark_canaries(line, marked) if mark else line) + "\n").encode("utf-8"))
+                raw = json.dumps(ev, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                if found:
+                    clean, hits = redact_values(raw, found)
+                    if hits:
+                        for k, v in lost(view(raw)[0], view(clean)[0]).items():
+                            _inc(held, k, v)
+                        for k, v in hits.items():
+                            _inc(redacted, k, v)
+                        raw = clean
+                if mark:
+                    got = {}
+                    text = mark_canaries(raw.decode("utf-8"), got).encode("utf-8")
+                    if got:
+                        (p0, f0), (p1, f1) = view(raw), view(text)
+                        if lost(p0, p1) or lost(f0, f1):
+                            unmarked["lines"] += 1
+                        else:
+                            raw = text
+                            for k, v in got.items():
+                                _inc(marked, k, v)
+                out.write(raw + b"\n")
             _, pos, state = convert(os.path.join(root, src), src, 0, None, offset, key, archives, write, h, _COMMITTED)
-    except ArchiveChanged as e:
+    except (ArchiveChanged, ValueOutsideString) as e:
         os.remove(dest + ".part")
         return {"src": src, "error": str(e)}
     sha = h.hexdigest()
@@ -821,7 +989,8 @@ def export_source(root, src, offset, out_dir, expect_sha, key, archives, mark=Fa
         st[k] = dict(sorted(st[k].items()))
     return {"src": src, "offset": offset, "input_sha256": sha, "output": src + ".xz", "output_sha256": sha256_file(dest),
             "output_bytes": os.path.getsize(dest), "lines": state["line"], **st, "archived": sorted(state["archived"]),
-            "canaries_marked": dict(sorted(marked.items()))}
+            "canaries_marked": dict(sorted(marked.items())), "canaries_unmarked": unmarked["lines"],
+            "values_redacted": dict(sorted(redacted.items())), "shapes_redacted": dict(sorted(held.items()))}
 
 
 def gate_patterns():
@@ -845,38 +1014,54 @@ IDENT = re.compile(r"[A-Za-z][A-Za-z0-9_\-]*")
 IDENT_FIELDS = ("tool", "call_id")
 
 
-def gate_file(path, extra=None):
+def count_event(ev, pats, needles, patterns, found):
+    """D-6 on one event (the gate's rule, and the export's guard on its own two steps): adds to `patterns` each match its
+    rule would still change, in every string, and to `found` each needle's occurrences. Two exemptions, both of the coarse
+    opaque-run rule (40+ identifier characters): a `tool` or `call_id` that is one identifier, because the harness names its
+    tools (`mcp__Claude_Code_Remote__register_repo_root` is 43 characters) and its call ids; and a committed run
+    (_COMMITTED, AMENDMENT 3), which the export leaves as it is. Every other rule and every needle still reads them."""
+    for field, value in (ev.items() if isinstance(ev, dict) else [(None, ev)]):
+        ident = field in IDENT_FIELDS and isinstance(value, str) and IDENT.fullmatch(value)
+        for s in _strings(value):
+            for name, (pat, rep) in pats:
+                if ident and name == "opaque-run":
+                    continue
+                for m in pat.finditer(s):
+                    if name == "opaque-run" and m.group(0) in _COMMITTED:
+                        continue            # AMENDMENT 3: committed text, which the export leaves as it is
+                    if (rep(m) if callable(rep) else m.expand(rep)) != m.group(0):
+                        _inc(patterns, name)
+            for c, v in needles.items():
+                if v in s:
+                    _inc(found, c, s.count(v))
+
+
+def gate_file(path, extra=None, found=None):
     """D-6 over one output, decompressed as a stream: per pattern, the matches its rule would still change, in every
-    string of every event; per canary (and per printed form of the key, `extra`), its occurrences. Counts only. Two
-    exemptions, both of the coarse opaque-run rule (40+ identifier characters): a `tool` or `call_id` that is one
-    identifier, because the harness names its tools (`mcp__Claude_Code_Remote__register_repo_root` is 43 characters) and its
-    call ids; and a committed run (_COMMITTED, AMENDMENT 3), which the export leaves as it is. Every other rule and every
-    canary still reads them."""
+    string of every event; per canary (and per printed form of the key, `extra`), its occurrences (count_event). With
+    `found` (value_needles), each known value's whole occurrences and the indexes of its windows, in the line as written
+    (known_values_check.py's count). Counts and indexes only."""
     pats = gate_patterns()
     needles = dict(CANARIES, **(extra or {}))
-    res = {"events": 0, "bad_lines": 0, "patterns": {name: 0 for name, _ in pats}, "canaries": {c: 0 for c in needles}}
+    res = {"events": 0, "bad_lines": 0, "patterns": {name: 0 for name, _ in pats}, "canaries": {c: 0 for c in needles},
+           "values": {}}
     with lzma.open(path, "rb") as fh:
         for raw in fh:
+            for needle, rows in (found or {}).items():
+                if needle in raw:
+                    for name, at in rows:
+                        v = res["values"].setdefault(name, [0, set()])
+                        if at < 0:
+                            v[0] += raw.count(needle)
+                        else:
+                            v[1].add(at)
             try:
                 ev = json.loads(raw)
             except ValueError:
                 res["bad_lines"] += 1
                 continue
             res["events"] += 1
-            for field, value in (ev.items() if isinstance(ev, dict) else [(None, ev)]):
-                ident = field in IDENT_FIELDS and isinstance(value, str) and IDENT.fullmatch(value)
-                for s in _strings(value):
-                    for name, (pat, rep) in pats:
-                        if ident and name == "opaque-run":
-                            continue
-                        for m in pat.finditer(s):
-                            if name == "opaque-run" and m.group(0) in _COMMITTED:
-                                continue            # AMENDMENT 3: committed text, which the export leaves as it is
-                            if (rep(m) if callable(rep) else m.expand(rep)) != m.group(0):
-                                res["patterns"][name] += 1
-                    for c, v in needles.items():
-                        if v in s:
-                            res["canaries"][c] += s.count(v)
+            count_event(ev, pats, needles, res["patterns"], res["canaries"])
     return res
 
 
@@ -890,15 +1075,23 @@ def _pool_map(fn, args, jobs, committed=frozenset()):
         return list(ex.map(fn, *zip(*args))) if args else []
 
 
-def gate(paths, jobs, extra=None, committed=frozenset()):
+def gate(paths, jobs, extra=None, committed=frozenset(), found=None):
+    """D-6 over every output. `values` (with `found`): per known value with a hit, its whole occurrences plus its distinct
+    windows across the files (known_values_check.py's hit count); empty when no value is found."""
     total = {"files": len(paths), "events": 0, "bad_lines": 0, "patterns": {}, "canaries": {}}
-    for res in _pool_map(gate_file, [(p, extra) for p in paths], jobs, committed):
+    seen = {}
+    for res in _pool_map(gate_file, [(p, extra, found) for p in paths], jobs, committed):
         total["events"] += res["events"]
         total["bad_lines"] += res["bad_lines"]
         for k in ("patterns", "canaries"):
             for name, v in res[k].items():
                 _inc(total[k], name, v)
-    total["total"] = sum(total["patterns"].values()) + sum(total["canaries"].values())
+        for name, (whole, wins) in res["values"].items():
+            s = seen.setdefault(name, [0, set()])
+            s[0] += whole
+            s[1] |= wins
+    total["values"] = {name: whole + len(wins) for name, (whole, wins) in sorted(seen.items())}
+    total["total"] = sum(total["patterns"].values()) + sum(total["canaries"].values()) + sum(total["values"].values())
     return total
 
 
@@ -908,6 +1101,9 @@ def print_gate(g):
         print("pattern:%s %d" % (name, v))
     for name, v in g["canaries"].items():
         print("canary:%s %d" % (name, v))
+    for k in ("values", "shapes_redacted"):
+        for name, v in g.get(k, {}).items():
+            print("%s:%s %d" % (k, name.replace(" ", "/"), v))
     print("total %d" % g["total"])
 
 
@@ -931,15 +1127,25 @@ def cmd_init_key(a):
     return 0
 
 
+DICT_TOTALS = ("events", "capped", "skipped_records", "skipped_attachments", "canaries_marked", "values_redacted",
+               "shapes_redacted")
+
+
 def cmd_export(a):
     t0 = time.monotonic()
     export_id = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     root, out = os.path.abspath(a.root), os.path.abspath(a.out)
     try:
         key = load_key(a.key)
+        table = value_table(key, a.known_values, a.known_env_file)
     except KeyRefused as e:
         print("session_export: %s" % e, file=sys.stderr)
         return 2
+    except KnownValueRefusal as e:
+        for line in e.args[0]:
+            print("session_export: the known values: %s" % line, file=sys.stderr)
+        return 2
+    found = value_needles(table)
     if os.path.isdir(out) and os.listdir(out):
         print("session_export: out dir not empty: %s" % out, file=sys.stderr)
         return 2
@@ -981,15 +1187,15 @@ def cmd_export(a):
     os.makedirs(out, exist_ok=True)
     linked = {x["call_id"]: x for x in archives if x["call_id"]}
     order = sorted(jobs_in, key=lambda j: (-j[1], j[0]))                 # the largest first: it bounds the wall time
-    results = _pool_map(export_source, [(root, s, off, out, sha, key, linked, mark) for s, off, sha in order], a.jobs,
-                        committed)
+    results = _pool_map(export_source, [(root, s, off, out, sha, key, linked, mark, found) for s, off, sha in order],
+                        a.jobs, committed)
     errors = [r for r in results if "error" in r]
     if errors:
         for r in errors:
             print("session_export: %s: %s" % (r["src"], r["error"]), file=sys.stderr)
         return 2
     sources = sorted(results, key=lambda r: r["src"])
-    g = gate([os.path.join(out, s["output"]) for s in sources], a.jobs, key_forms(key), committed)
+    g = gate([os.path.join(out, s["output"]) for s in sources], a.jobs, key_forms(key), committed, found)
     emitted = {c for s in sources for c in s["archived"]}
     totals = {"sources": len(sources), "bytes_read": 0, "bytes_written": 0, "folders": {},
               "archives": len(archives), "archives_skipped": sum(1 for x in archives if x.get("skipped")),
@@ -1003,18 +1209,23 @@ def cmd_export(a):
         folder["bytes_read"] += s["offset"]
         for k in ("lines", "bad_lines", "seam_adjusted", "dropped_secret_path", "strict_results", "unsettled",
                   "thinking_signature_only", "duplicate_notifications", "file_changes_unrecorded", "pruner_archives",
-                  "pseudonyms"):
+                  "pseudonyms", "canaries_unmarked"):
             _inc(totals, k, s[k])
-        for k in ("events", "capped", "skipped_records", "skipped_attachments", "canaries_marked"):
+        for k in DICT_TOTALS:
             for name, v in s[k].items():
                 _inc(totals.setdefault(k, {}), name, v)
-    for k in ("events", "capped", "skipped_records", "skipped_attachments", "canaries_marked"):
+    for k in DICT_TOTALS:
         totals[k] = dict(sorted(totals.get(k, {}).items()))
+    g["shapes_redacted"] = totals["shapes_redacted"]            # a count the known-value pass took off a line stays counted
+    g["total"] += sum(g["shapes_redacted"].values())
     code_sha, code = code_hashes()
     repo_entry = {"path": repo, "commit": commit, "runs": len(committed), "runs_sha256": runs_digest(committed)} \
         if commit else None
     manifest = {"schema": 2, "export_id": export_id, "root": root, "code_sha256": code_sha, "code": code,
                 "pseudonym_key_id": key_id(key), "repo": repo_entry, "own_canaries": "marked" if mark else "counted",
+                "known_values": {"mode": a.known_values, "env_files": [os.path.basename(p) for p in a.known_env_file],
+                                 "names": sorted({"%s %s" % (r[0], r[1]) for r in table}), "forms": len(table),
+                                 "windows": sum(len(r[3]) for r in table)},
                 "limits": {"cap": CAP, "kept_head": HEAD, "kept_tail": TAIL, "big_cap": BIG_CAP, "big_kept_head": BIG_HEAD,
                            "big_kept_tail": BIG_TAIL, "xz_preset": XZ_PRESET},
                 "archive_dirs": dirs, "archives": archives, "sources": sources, "totals": totals, "gate": g,
@@ -1034,7 +1245,10 @@ def cmd_export(a):
         "dropped_secret_path", "strict_results", "unsettled", "seam_adjusted", "thinking_signature_only",
         "duplicate_notifications", "file_changes_unrecorded", "pseudonyms", "pruner_archives", "archives",
         "archives_skipped", "archives_unlinked", "archives_unmatched")))
-    print("own canaries %s: %s" % ("marked" if mark else "counted by the gate", json.dumps(totals["canaries_marked"])))
+    print("own canaries %s: %s; lines left unmarked %d" % ("marked" if mark else "counted by the gate",
+                                                            json.dumps(totals["canaries_marked"]), totals["canaries_unmarked"]))
+    print("known values (%s): %d forms, %d windows; redacted %s" % (a.known_values, len(table), sum(len(r[3]) for r in table),
+                                                                     json.dumps(totals["values_redacted"])))
     print_gate(g)
     return 3 if g["total"] or g["bad_lines"] else 0
 
@@ -1083,6 +1297,8 @@ def main(argv=None):
     e.add_argument("--repo")
     e.add_argument("--commit")
     e.add_argument("--mark-own-canaries", action="store_true")
+    e.add_argument("--known-values", required=True, choices=("default", "key-only"))
+    e.add_argument("--known-env-file", action="append", default=[])
     g = sub.add_parser("gate")
     g.add_argument("dir")
     g.add_argument("--jobs", type=int, default=os.cpu_count() or 1)

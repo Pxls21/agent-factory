@@ -11,6 +11,9 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-01 18:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 18:1xZ): 0e540894 (the R2 harvest and its report pushed). Landing with this block: the session export's known-value pass and the R2 follow-ups (task #439), GATED-PENDING-VERIFY.**
+- **LIVE (as of 18:1xZ):** as in the block below (the Attention-kind style, pruner change 4, the relay, pid 21231). **HELD:** the 2026-10-01 export, until the re-export through the pass. **NEXT:** the push, CI, the original verifier on this landing (VERIFY-SESSION-EXPORT-R3), the real export with `--known-values default --mark-own-canaries`, the check, the ship and the PC-side check; then task #444, task #441, task #448.
 **2026-10-01 16:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 17:0xZ): 2c267380; CI run #1210 passed (16:37Z) on the code landing f69f54cb. Landed and pushed since 15:0xZ: issue #78's items and the known-values fix (AF-AP-255). Landing with this block: the VERIFY-SESSION-EXPORT-R2 brief, D-126 and the RWKV-on-CPU findings.**
 - **LIVE (as of 16:5xZ):** the Attention-kind style, pruner change 4 and the relay as in the blocks below (the relay restarted on the new scrubber after the push, pid 21231); VERIFY-SESSION-EXPORT-R2 (sandbox, Opus 5.5) on cc488cec. **DECIDED (D-126):** RWKV-7 is the only System-1 model, served on the CPU through llama.cpp (measured); Laya retires once RWKV beats the kind rule (0.809) and serves live. **HELD:** the 2026-10-01 export (4 windows of the codiv key, no whole value): a redaction step first. **NEXT:** the verifier's verdict, one repair round (its findings and the redaction), the re-export, the ship and the PC-side check; then task #444, task #441, task #448.
