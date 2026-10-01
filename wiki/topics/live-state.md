@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-01 00:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 00:5xZ): f93bf77f. The K2 registration commit and the commit recording it live ride the next push; CI run #1200 (records and one skill line) runs meanwhile.**
+- **LIVE (as of 00:5xZ):** K2 (task #353, closed): the file-pack hook injects a pack on the first touch of a tracked file (PreToolUse on Read, Edit, Write and Bash) and resets at SessionStart; the post-commit hook rebuilds the packs after each commit. Off switch: `.jev/filepacks-off` (it stops injection, not builds). Follow-ups: task #428 (backlog). **RUNNING:** the Jev relay (pid 722, 127.0.0.1:47430).
+
 **2026-10-01 00:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 00:1xZ): f93bf77f; CI run #1200 (records and one skill line) is running. K2's registration (D-122, task #353) is committed with this block and rides the next push.**
 - **LANDED (as of 00:1xZ):** K2 (task #353): the file-pack hook is registered (PreToolUse on Read, Edit, Write and Bash; a reset at SessionStart), and the post-commit hook builds the packs. The hook shows nothing until a build of HEAD's tree exists. Next: the user-scope install, `codemap.py build --all` and `filepacks.py build` at HEAD, and a smoke. Off switch: `.jev/filepacks-off` (it stops injection, not builds). **RUNNING:** the Jev relay (pid 722, 127.0.0.1:47430).
