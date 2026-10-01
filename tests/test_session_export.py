@@ -1262,3 +1262,98 @@ def test_repo_runs_refuses_a_blob_git_cannot_give(tmp_path, se):
     (repo / ".git" / "objects" / blob[:2] / blob[2:]).unlink()
     with pytest.raises(ValueError):
         se.repo_runs(str(repo), commit)
+
+
+# Issue #78 (task #439): the follow-ups the R1 re-verify asked for before the next export.
+def test_marked_canaries_become_markers_and_are_counted(tmp_path, se):
+    # AF-AP-213: a lane that worked on the exporter printed a test canary into its own transcript, and the real export's
+    # gate stopped on it. With --mark-own-canaries (the real run) each whole canary becomes `[canary:<name>]` after the
+    # scrub and is counted per source; the gate reads 0, and an --offsets rerun takes the mode its manifest names (byte-
+    # identical output with no flag). Negative control: without the flag the same tree exits 3 on that canary.
+    C = se.CANARIES
+    tree = _one_call_tree(tmp_path, "mv", "holds %s, then %s\n" % (C["orphan"], C["orphan"]))
+    key_path, _ = _key(tmp_path)
+
+    def run(out, *extra):
+        return _run("export", "--root", tree, "--out", tmp_path / out, "--jobs", 1, "--key", key_path, "--repo",
+                    REPO["path"], *extra)
+    plain, marked = run("o1"), run("o2", "--mark-own-canaries")
+    rerun = run("o3", "--offsets", tmp_path / "o2" / "manifest.json")
+    said = [_say(r.stdout + r.stderr, C) for r in (plain, marked, rerun)]
+    assert (plain.returncode, marked.returncode, rerun.returncode) == (3, 0, 0), said
+    m1, m2 = _manifest(tmp_path / "o1"), _manifest(tmp_path / "o2")
+    assert (m1["gate"]["canaries"]["orphan"], m2["gate"]["canaries"]["orphan"], m2["gate"]["total"]) == (2, 0, 0)
+    assert (m1["own_canaries"], m2["own_canaries"], _manifest(tmp_path / "o3")["own_canaries"]) == \
+        ("counted", "marked", "marked")
+    assert (m1["totals"]["canaries_marked"], m2["totals"]["canaries_marked"], m2["sources"][0]["canaries_marked"]) == \
+        ({}, {"orphan": 2}, {"orphan": 2})
+    _expect(C, _events(tmp_path / "o2")["-mv/mv.jsonl"][1]["text"], "holds [canary:orphan], then [canary:orphan]\n",
+            "the marked result")
+    assert _shas(tmp_path / "o3") == _shas(tmp_path / "o2")
+    assert (_leaks(_blob(tmp_path / "o1"), C), _leaks(_blob(tmp_path / "o2"), C)) == (["orphan"], [])
+    assert 'own canaries marked: {"orphan": 2}' in marked.stdout and [_leaks(s, C) for s in said] == [[], [], []]
+
+
+def test_mark_canaries_replaces_whole_canaries_only(se):
+    # each whole canary, and nothing else: not a canary one character short or with its case swapped, and never a printed
+    # form of the pseudonym key (the gate still counts those in a marked export). Names only on failure.
+    wrong = []
+    for name, v in se.CANARIES.items():
+        counts = {}
+        out = se.mark_canaries("a %s b %s c %s" % (v, v[:-1], v.swapcase()), counts)
+        if out != "a [canary:%s] b %s c %s" % (name, v[:-1], v.swapcase()) or counts != {name: 1}:
+            wrong.append(name)
+    assert wrong == []
+    counts, text = {}, " ".join(se.key_forms(bytes(range(32))).values()) + " ZQ plain text"
+    assert se.mark_canaries(text, counts) == text and counts == {}
+
+
+def test_only_an_exact_committed_run_stays_raw(tmp_path, se):
+    # R1-F-2 (mutants X4a, X4b, X4c): a form of a committed run that is not the run itself (one character short, one more,
+    # a prefix, case swapped, a glued tail) becomes a pseudonym; the committed run itself stays as it is
+    forms = (("exact", COMMITTED_NAME), ("short", COMMITTED_NAME[:-1]), ("long", COMMITTED_NAME + "Q"),
+             ("prefix", "Q" + COMMITTED_NAME), ("swapcase", COMMITTED_NAME.swapcase()), ("glued", COMMITTED_NAME + "-tail"))
+    tree = _one_call_tree(tmp_path, "mv", "".join("%s %s\n" % f for f in forms))
+    key_path, key = _key(tmp_path)
+    r = _run("export", "--root", tree, "--out", tmp_path / "o", "--jobs", 1, "--key", key_path, "--repo", REPO["path"])
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+    want = "".join("%s %s\n" % (k, v if k == "exact" else "[opaque:%s]" % _hmac12(key, v)) for k, v in forms)
+    assert _events(tmp_path / "o")["-mv/mv.jsonl"][1]["text"] == want
+
+
+def test_the_gate_exempts_a_committed_run_from_the_opaque_rule_only(tmp_path, se):
+    # R1-F-2 (mutant X1): a committed fake provider token is still counted by its own rule; the committed set exempts it
+    # from the coarse opaque-run rule only. Negative control: with no repo named, the opaque-run rule counts it as well
+    token = "ghp_" + "Zq9" * 12
+    repo = tmp_path / "repo"
+    commit = make_repo(repo, "a fake token %s\n" % token)[0]
+    d = tmp_path / "exp"
+    d.mkdir()
+    with lzma.open(d / "x.jsonl.xz", "wt", encoding="utf-8") as fh:
+        fh.write(json.dumps({"seq": 0, "text": "holds " + token}) + "\n")
+    got = []
+    for named in ({"path": str(repo), "commit": commit}, None):
+        (d / "manifest.json").write_text(json.dumps({"repo": named}))
+        g = _run("gate", d)
+        counts = dict(re.findall(r"^(\S+) (\d+)$", g.stdout, re.M))
+        got.append((g.returncode, counts.get("pattern:github-token"), counts.get("pattern:opaque-run"), counts.get("total")))
+    assert got == [(3, "1", "0", "1"), (3, "1", "1", "2")]
+
+
+def test_repo_runs_leave_out_the_chat_digests(tmp_path, se):
+    # R1-F-7: the auto-committed chat digests under the top-level transcripts/ are session text that only `scrub` passed, so
+    # a run that only they hold is not committed text; the same run in any other tracked file (a nested transcripts/
+    # folder, a transcripts.md at the root) is
+    repo = tmp_path / "repo"
+    make_repo(repo, COMMITTED_TEXT)
+    names = {"transcripts/sandbox/zq.md": "a", "transcripts/pc/zq.md": "b", "tests/fixtures/transcripts/zq.md": "c",
+             "transcripts.md": "d"}
+    for path, tag in names.items():
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (repo / path).write_text("%s_%s\n" % (UNCOMMITTED_NAME, tag))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "digests")
+    runs = se.repo_runs(str(repo), _git(repo, "rev-parse", "HEAD"))
+    assert {tag: "%s_%s" % (UNCOMMITTED_NAME, tag) in runs for tag in "abcd"} == \
+        {"a": False, "b": False, "c": True, "d": True}
+    assert COMMITTED_NAME in runs

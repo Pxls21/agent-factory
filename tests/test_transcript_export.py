@@ -687,6 +687,22 @@ def test_strict_pass_keeps_committed_runs():
                             "PC_BRIDGE_TOKEN=" + R + "\n" + R + "\n")
 
 
+def test_strict_pass_keeps_only_an_exact_committed_run():
+    # Issue #78 (VERIFY-SESSION-EXPORT R1.8): only a committed run itself, or a short name and `=` before one, is kept. A
+    # token-like name glued by `=` to a committed run (R1-F-1), a form of a committed token one character short, one longer,
+    # with a glued tail or with its case swapped (R1-F-2's mutants X2a, X2b, X3), and an assignment value that only HOLDS a
+    # committed run (X6) are redacted. The last two rows are the controls: a short name, and a long name with no digit,
+    # before a committed run stay.
+    strict = getattr(MOD, "scrub_strict")
+    tok, name = "ZQfake0committed0fixture0token0v1", "QZ7uncommitted7name7x9"     # the name: fake, 22 characters
+    rows = ((name + "=" + tok + "\n", R + "\n"), ("x " + name + "=" + tok + " y\n", "x " + R + " y\n"),
+            (tok[:-1] + "\n", R + "\n"), (tok + "9\n", R + "\n"), (tok + "-tail\n", R + "\n"),
+            (tok.swapcase() + "\n", R + "\n"), ("ZQ_VALUE=" + tok + " QZsecretlettersonly\n", "ZQ_VALUE=" + R + "\n"),
+            ("ZQ_VALUE=" + tok + "\n", "ZQ_VALUE=" + tok + "\n"),
+            ("x ZQ_LONG_BRANCH_NAME=" + tok + " y\n", "x ZQ_LONG_BRANCH_NAME=" + tok + " y\n"))
+    assert [strict(text, keep=COMMITTED) for text, _ in rows] == [want for _, want in rows]
+
+
 def test_run_shapes_are_the_rules_own_shapes():
     # the set session_export.py builds uses the opaque rule's own pattern, the key-run rule's and the token-line class
     shapes = getattr(MOD, "RUN_SHAPES")

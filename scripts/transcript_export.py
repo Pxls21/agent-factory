@@ -220,9 +220,10 @@ _HEAD_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 
 def _committed(s, keep):
     """AMENDMENT 3: `s` is in `keep`, or is `NAME=<a value in keep>` (a key run and a token take an assignment's name
-    with its value; the name was never redacted)."""
+    with its value; the name was never redacted) whose NAME is not itself token-like: a name of 12 or more characters
+    with a letter and a digit is not committed text, so the run is redacted (issue #78, R1-F-1)."""
     m = _HEAD_NAME.match(s)
-    return s in keep or bool(m) and s[m.end():] in keep
+    return s in keep or bool(m) and s[m.end():] in keep and not (m.end() > 12 and _keylike(s[:m.end() - 1]))
 
 
 def scrub_strict(text: str, opaque=None, keep=()) -> str:

@@ -47,7 +47,8 @@ SECRET_PATH finds it in the text itself or in another spelling (R-3, F-7; named_
 Committed text (AMENDMENT 3): a run that a file tracked by --repo at --commit (default: this script's repo at HEAD, or the
 commit an --offsets manifest names) holds verbatim is committed text, not a secret: the opaque rule leaves it as it is (no
 pseudonym) and so does the strict pass; the named rules still take it first. The set is built once per export from the
-commit's blobs and named in the manifest. Cap (D-3, G3): a Read result, a Write input, a file change and a
+commit's blobs and named in the manifest; the chat digests under the top-level transcripts/ are left out (issue #78,
+R1-F-7: machine-written session text, so a run only they hold is not committed text). Cap (D-3, G3): a Read result, a Write input, a file change and a
 pruner archive keep their first 98,304 and last 32,768 characters of a text over 131,072; every other event its first
 24,576 and last 8,192 of a text over 32,768; scrubbed first; if the seam forms a secret shape, the cut moves inward and
 `truncated` records what was kept.
@@ -58,11 +59,13 @@ from 0. Files (D-4, D-5): each source is read to a byte offset fixed before any 
 or taken from --offsets <manifest> and checked against that manifest's input sha256 (the pruner archives likewise); one
 <src>.xz (lzma, preset 6) per source; manifest.json last. The leak gate (D-6) decompresses every output as a stream and
 counts, per pattern, each match of the extended scrubber's shapes that the scrubber would still change (a committed run
-is not one), each test canary and the key's printed forms; it prints counts only.
+is not one), each test canary and the key's printed forms; it prints counts only. --mark-own-canaries (the real export,
+AF-AP-213; an --offsets rerun takes the mode its manifest names) first turns each whole test canary into
+`[canary:<name>]` and counts it per source, because the input holds the transcripts of the lanes that built this tool.
 
 usage: session_export.py init-key [--key PATH]
        session_export.py export --out DIR [--root DIR] [--offsets MANIFEST] [--jobs N] [--key PATH] [--archive-dir DIR]
-                                [--repo DIR] [--commit REV]
+                                [--repo DIR] [--commit REV] [--mark-own-canaries]
        session_export.py gate DIR [--jobs N] [--key PATH]      (reads the committed runs of the repo DIR/manifest.json names)
 exit:  0 done and the gate found nothing; 2 bad input (usage, no sources, a used out dir, a missing or loose key, an input or
        archive changed under its offset, a --repo or commit git cannot read); 3 the gate found a secret shape or a canary
@@ -176,6 +179,17 @@ CANARIES = {
     "path-dslash": _z("ps1"), "path-rel": _z("pr1"), "path-quoted": _z("pq1"), "path-glob": _z("pg1"),
     "path-glob-env": _z("pe1"), "a3-strict": _z("as1"),
 }
+
+
+def mark_canaries(text, counts):
+    """AF-AP-213: each whole canary in `text` as `[canary:<name>]`, counted into `counts` by name. A printed form of the
+    pseudonym key is never marked, so the gate still counts it."""
+    for name, value in CANARIES.items():
+        n = text.count(value)
+        if n:
+            text = text.replace(value, "[canary:%s]" % name)
+            counts[name] = counts.get(name, 0) + n
+    return text
 
 
 class KeyRefused(Exception):
@@ -693,11 +707,17 @@ def repo_commit(repo, rev):
     return _git(repo, "rev-parse", "--verify", "--quiet", "%s^{commit}" % rev).decode().strip()
 
 
+# Issue #78, R1-F-7: the chat digests that scripts/push_clean.sh and the PC lane runner commit. They are session text
+# that passed only the plain scrub, so a run that only they hold would exempt the session's own text from the strict pass.
+CHAT_DIGESTS = b"transcripts/"
+
+
 def repo_runs(repo, commit):
     """AMENDMENT 3: every run of transcript_export.RUN_SHAPES in the files tracked at `commit`, read from the commit's
-    blobs (never the working tree), so one commit gives one set."""
+    blobs (never the working tree), so one commit gives one set. The files under CHAT_DIGESTS are left out (R1-F-7)."""
     listing = _git(repo, "ls-tree", "-r", "-z", commit).split(b"\0")
-    blobs = [e.split(b"\t", 1)[0].split()[2] for e in listing if e and e.split()[1] == b"blob"]
+    blobs = [e.split(b"\t", 1)[0].split()[2] for e in listing
+             if e and e.split()[1] == b"blob" and not e.split(b"\t", 1)[1].startswith(CHAT_DIGESTS)]
     out = _git(repo, "cat-file", "--batch", stdin=b"".join(b + b"\n" for b in blobs))
     runs, pos = set(), 0
     while pos < len(out):
@@ -775,15 +795,18 @@ def archive_unchanged(entry):
     return hashlib.sha256(data).hexdigest() == entry["sha256"]
 
 
-def export_source(root, src, offset, out_dir, expect_sha, key, archives):
-    """One source to <out_dir>/<src>.xz through convert() from 0, read only up to its offset; its manifest entry."""
+def export_source(root, src, offset, out_dir, expect_sha, key, archives, mark=False):
+    """One source to <out_dir>/<src>.xz through convert() from 0, read only up to its offset; its manifest entry. With
+    `mark` (AF-AP-213), each event's JSON line passes mark_canaries: a canary holds no character JSON escapes or uses
+    as a separator, so the line holds a canary exactly where one of the event's strings does."""
     dest = os.path.join(out_dir, src + ".xz")
     os.makedirs(os.path.dirname(dest), exist_ok=True)
-    h = hashlib.sha256()
+    h, marked = hashlib.sha256(), {}
     try:
         with lzma.open(dest + ".part", "wb", preset=XZ_PRESET) as out:
             def write(ev):
-                out.write((json.dumps(ev, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"))
+                line = json.dumps(ev, ensure_ascii=False, separators=(",", ":"))
+                out.write(((mark_canaries(line, marked) if mark else line) + "\n").encode("utf-8"))
             _, pos, state = convert(os.path.join(root, src), src, 0, None, offset, key, archives, write, h, _COMMITTED)
     except ArchiveChanged as e:
         os.remove(dest + ".part")
@@ -797,7 +820,8 @@ def export_source(root, src, offset, out_dir, expect_sha, key, archives):
     for k in ("events", "capped", "skipped_records", "skipped_attachments"):
         st[k] = dict(sorted(st[k].items()))
     return {"src": src, "offset": offset, "input_sha256": sha, "output": src + ".xz", "output_sha256": sha256_file(dest),
-            "output_bytes": os.path.getsize(dest), "lines": state["line"], **st, "archived": sorted(state["archived"])}
+            "output_bytes": os.path.getsize(dest), "lines": state["line"], **st, "archived": sorted(state["archived"]),
+            "canaries_marked": dict(sorted(marked.items()))}
 
 
 def gate_patterns():
@@ -940,6 +964,7 @@ def cmd_export(a):
     if not jobs_in:
         print("session_export: no *.jsonl under %s" % root, file=sys.stderr)
         return 2
+    mark = a.mark_own_canaries or prior.get("own_canaries") == "marked"       # AF-AP-213; a rerun keeps its mode
     # AMENDMENT 3: the committed runs, once per export: --repo at --commit, else at the commit an --offsets manifest names
     # (the same set, so the rerun is byte-identical), else this script's repo at HEAD. Only that default may be missing
     # (a copy outside git): then nothing is exempt, and the summary and the manifest say so.
@@ -956,7 +981,7 @@ def cmd_export(a):
     os.makedirs(out, exist_ok=True)
     linked = {x["call_id"]: x for x in archives if x["call_id"]}
     order = sorted(jobs_in, key=lambda j: (-j[1], j[0]))                 # the largest first: it bounds the wall time
-    results = _pool_map(export_source, [(root, s, off, out, sha, key, linked) for s, off, sha in order], a.jobs,
+    results = _pool_map(export_source, [(root, s, off, out, sha, key, linked, mark) for s, off, sha in order], a.jobs,
                         committed)
     errors = [r for r in results if "error" in r]
     if errors:
@@ -980,16 +1005,16 @@ def cmd_export(a):
                   "thinking_signature_only", "duplicate_notifications", "file_changes_unrecorded", "pruner_archives",
                   "pseudonyms"):
             _inc(totals, k, s[k])
-        for k in ("events", "capped", "skipped_records", "skipped_attachments"):
+        for k in ("events", "capped", "skipped_records", "skipped_attachments", "canaries_marked"):
             for name, v in s[k].items():
                 _inc(totals.setdefault(k, {}), name, v)
-    for k in ("events", "capped", "skipped_records", "skipped_attachments"):
+    for k in ("events", "capped", "skipped_records", "skipped_attachments", "canaries_marked"):
         totals[k] = dict(sorted(totals.get(k, {}).items()))
     code_sha, code = code_hashes()
     repo_entry = {"path": repo, "commit": commit, "runs": len(committed), "runs_sha256": runs_digest(committed)} \
         if commit else None
     manifest = {"schema": 2, "export_id": export_id, "root": root, "code_sha256": code_sha, "code": code,
-                "pseudonym_key_id": key_id(key), "repo": repo_entry,
+                "pseudonym_key_id": key_id(key), "repo": repo_entry, "own_canaries": "marked" if mark else "counted",
                 "limits": {"cap": CAP, "kept_head": HEAD, "kept_tail": TAIL, "big_cap": BIG_CAP, "big_kept_head": BIG_HEAD,
                            "big_kept_tail": BIG_TAIL, "xz_preset": XZ_PRESET},
                 "archive_dirs": dirs, "archives": archives, "sources": sources, "totals": totals, "gate": g,
@@ -1009,6 +1034,7 @@ def cmd_export(a):
         "dropped_secret_path", "strict_results", "unsettled", "seam_adjusted", "thinking_signature_only",
         "duplicate_notifications", "file_changes_unrecorded", "pseudonyms", "pruner_archives", "archives",
         "archives_skipped", "archives_unlinked", "archives_unmatched")))
+    print("own canaries %s: %s" % ("marked" if mark else "counted by the gate", json.dumps(totals["canaries_marked"])))
     print_gate(g)
     return 3 if g["total"] or g["bad_lines"] else 0
 
@@ -1056,6 +1082,7 @@ def main(argv=None):
     e.add_argument("--archive-dir", action="append", default=[])
     e.add_argument("--repo")
     e.add_argument("--commit")
+    e.add_argument("--mark-own-canaries", action="store_true")
     g = sub.add_parser("gate")
     g.add_argument("dir")
     g.add_argument("--jobs", type=int, default=os.cpu_count() or 1)

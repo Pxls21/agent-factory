@@ -11,6 +11,9 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-01 15:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 15:0xZ): ee6ad873; CI run #1209 passed. Landing with this block: issue #78's pre-export items (task #439: R1-F-1, the canary marker, R1-F-2's tests, R1-F-7's digest exclusion) and the DSV2 record's regenerated manifest.**
+- **LIVE (as of 15:0xZ):** as in the block below (the Attention-kind style, pruner change 4, the relay). **OPEN, the owner's call (D-125):** RWKV as the only System-1 model. **NEXT:** the export to now with `--mark-own-canaries`, the original verifier resumed on this landing, then the ship and the PC-side known-values check; then task #444.
 **2026-10-01 13:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 13:2xZ): 5be8cc0c; CI run #1207 (38d4f28) passed. Landed: the S1 dataset (task #438) and the output styles' labels (task #440). Landed with this block: step 3's re-plan (D-125), the dataset summary and the retro (task #444 registered).**
 - **LIVE (as of 13:2xZ):** the Attention-kind style with its labels section; pruner change 4, running since the resume (no request has used its window yet; task #406 open); the relay (pid 722). **OPEN, the owner's call (D-125):** RWKV as the only System-1 model. **NEXT:** task #439 (the stream export to now), then task #444 (the RWKV view), then task #441 (the pre-registered first training; its reading pass in a GPU test window).
