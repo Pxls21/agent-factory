@@ -4,7 +4,8 @@ STATUS: 2026-10-01 10:1xZ — AUTHORED from the owner's rulings D-123 item 10 (s
 D-078 (1) and D-118 (1). No new seed: this extends the Laya fine-tune tooling (FT1, DSV2, K265) under the program of
 `seeds/seed-laya-j1-v1.yaml`, and the rulings are the spec. The increments are registered as tasks #438 to #441
 before any build.
-RE-PLANNED: 2026-10-01 12:5xZ by D-125. S3-1 (#438) and S3-3 (#440) landed and were pushed (12:5xZ). The first training (S3-4, #441) moves from Laya to a frozen RWKV-7 with contrastive heads (CLM's method), and a new increment, S3-5 (#444, the RWKV view of the S1 dataset), sits between S3-2 and S3-4. Whether Laya is retired is the owner's call (D-125 item 3, open).
+RE-PLANNED: 2026-10-01 12:5xZ by D-125. S3-1 (#438) and S3-3 (#440) landed and were pushed (12:5xZ). The first training (S3-4, #441) moves from Laya to a frozen RWKV-7 with contrastive heads (CLM's method), and a new increment, S3-5 (#444, the RWKV view of the S1 dataset), sits between S3-2 and S3-4. Laya retires once RWKV beats the kind rule and serves live (D-126, which answered D-125 item 3).
+DECIDED: 2026-10-01 16:5xZ by D-126: RWKV-7 is the only System-1 model, and it serves on the CPU through llama.cpp (measured: `docs/research/findings/s1-train/RWKV-CPU-2026-10-01.md`); its live home is task #448.
 
 ## The owner's words (transcript 2026-10-01 02:26:19Z)
 
@@ -35,11 +36,11 @@ coordinator's output are clean, pre-labeled training data for System-1 models.
   pre-export items (R1-F-1, AF-AP-213) never landed, so no later export ran.
 - The output styles (`.claude/output-styles/`) mention no label, no stack and no box (S3-3 added them).
 - The S1 build at the pushed commit 5be8cc0c (12:5xZ; the session had grown since 10:3xZ): 1,093 scored injections; training 851 rows (512 yes), held-out 220 (147 yes); on the held-out rows always-yes 0.668 and the kind rule 0.809 (edit snapshots no, every other kind yes). Summary: `docs/research/findings/s1-train/2026-10-01-dataset-summary.json` (counts, digests, baselines; no text).
-- RWKV-7 (`RWKV/RWKV7-Goose-World2.9-0.4B-HF` at e94655a9, pinned in `upstream.lock.yaml`), measured on the 3090 in the 2026-09-24 window: one forward over 61,440 tokens in 1.17 s at a 10,474 MiB peak; a question from a copied state in 0.04 s; zero-shot answers rejected on every KC-J3 line. No CPU path in the PC venvs (fla's cache and its CPU fallback fail), and no GPU room beside vLLM (about 796 MiB free, D-099; its bf16 weights are 859 MiB).
+- RWKV-7 (`RWKV/RWKV7-Goose-World2.9-0.4B-HF` at e94655a9, pinned in `upstream.lock.yaml`), measured on the 3090 in the 2026-09-24 window: one forward over 61,440 tokens in 1.17 s at a 10,474 MiB peak; a question from a copied state in 0.04 s; zero-shot answers rejected on every KC-J3 line. No CPU path in the PC venvs (fla's cache and its CPU fallback fail), and no GPU room beside vLLM (about 796 MiB free, D-099; its bf16 weights are 859 MiB). CORRECTED 2026-10-01 16:5xZ (D-126): that held for the checkpoint's own runtime only; llama.cpp runs RWKV-7 on the CPU, its hidden states equal to the official package's (`docs/research/findings/s1-train/RWKV-CPU-2026-10-01.md`).
 
 ## Pinned decisions (with the rejected alternative)
 
-1. The first training target is the System-1 injection decision (task #297): should this injected context be shown
+1. The first training target is the System-1 injection decision (task #297's goal; D-126 closed that task into tasks #441 and #448): should this injected context be shown
    before this step? The state carries the step's INTENT as well as its input: the owner's last prompt (`task`), the
    coordinator's text right before the call (`intent`), the call's tool and input (`step`), the context's kind and
    the context itself (`chunk`; `fit.py` never cuts it, and cuts the longest other field first). Rejected: the tool
@@ -72,14 +73,14 @@ coordinator's output are clean, pre-labeled training data for System-1 models.
 | S3-2 (#439) | The chat history laid out: issue #78's two pre-export items, then the export from the last offsets to now, shipped and checked on the PC | `scripts/session_export.py`, `scripts/transcript_export.py`, their tests | export rc 0, gate 0, the ship sha-checked, the PC-side known-values check NO HIT | R1-F-1's token-like NAME; the AF-AP-213 canary transcript |
 | S3-3 (#440) | The output styles name the labels and the box (D-100 (1), D-123 step 3) | `.claude/output-styles/*.md`, `sandbox-kit/output-styles/`, their provenance, the manifest | each style carries the labels line; the mirrors and the manifest pass | none (a docs change) |
 | S3-5 (#444) | The RWKV view of the S1 dataset: each scored injection found in its transcript's exported stream (the hook event that carries its `[S1 <id>` stamp); the state is the stream before it (prompts, texts, tool calls and results; never a thinking block, which no hook sees when System 1 serves), the candidate is the injection's body; the split and labels are the S1 build's | `scripts/s1_train/`, its tests | every scored injection of the frozen build is found once, or counted as not found with its reason; the labels and the split equal the S1 build's | an id missing from the stream is counted, never guessed; a thinking block never enters a state; a planted fake key is scrubbed |
-| S3-4 (#441) | The first training, pre-registered: the reading pass in a GPU test window, the heads on the CPU, one evaluator | `docs/research/findings/s1-train/` (the pre-registration first, then the run's record) | the model beats the kind rule on the held-out rows of the frozen build, by the bar and the test the pre-registration names, or the run is reported as failed | shuffled labels fall to chance; a chunk-only control (no state) measures what the state adds; the baselines run through the same evaluator |
+| S3-4 (#441) | The first training, pre-registered: the reading pass in a GPU test window, the heads on the CPU, one evaluator | `docs/research/findings/s1-train/` (the pre-registration first, then the run's record) | the model beats the kind rule on the held-out rows of the frozen build, by the bar and the test the pre-registration names, or the run is reported as failed; the reading pass's features and the serving runtime's are the same, or the pre-registration names their comparison (D-126) | shuffled labels fall to chance; a chunk-only control (no state) measures what the state adds; the baselines run through the same evaluator |
 
 Order: S3-1 and S3-3 landed; then S3-2 (#439, the stream export to now), S3-5, and S3-4, whose reading pass runs in a GPU test window (D-088).
 
 ## NOT built (declared)
 
-- A live home for RWKV-7 (D-125): a CPU runtime for it (not tried yet) or a permanent GPU slice taken from vLLM (the owner's call, D-088). Until one exists, RWKV runs only in GPU windows and cannot serve System 1 live.
+- A live home for RWKV-7 (task #448, D-126): llama.cpp runs it on the CPU (measured 2026-10-01), but nothing serves its hidden states yet, no hook reads them, and the reading pass's features and the serving runtime's are not yet compared. Until it exists, Laya keeps serving as it does, with no new work (D-126).
 - The max-relevance examples (task #432, D-123 item 2): after S3-1, on a sample, if the first training shows the
   data is thin.
 - The relay's pruning labels as a Laya question (a local pruner): later; they are teacher labels only.
-- Serving a trained head in the System-1 hook (the second half of task #297): after S3-4 passes.
+- Serving a trained head in the System-1 hook (task #448; task #297 closed by D-126): after S3-4 passes.

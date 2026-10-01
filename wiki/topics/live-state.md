@@ -11,6 +11,9 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-01 16:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 16:5xZ): cc488cec (pushed 16:04Z); its CI run not in yet. Landed and pushed since 15:0xZ: issue #78's items and the known-values fix (AF-AP-255). Landing with this block: the VERIFY-SESSION-EXPORT-R2 brief, D-126 and the RWKV-on-CPU findings.**
+- **LIVE (as of 16:5xZ):** the Attention-kind style, pruner change 4 and the relay as in the blocks below (the relay's scrub hash stays the old one until it restarts after the push); VERIFY-SESSION-EXPORT-R2 (sandbox, Opus 5.5) on cc488cec. **DECIDED (D-126):** RWKV-7 is the only System-1 model, served on the CPU through llama.cpp (measured); Laya retires once RWKV beats the kind rule (0.809) and serves live. **HELD:** the 2026-10-01 export (4 windows of the codiv key, no whole value): a redaction step first. **NEXT:** the verifier's verdict, one repair round (its findings and the redaction), the re-export, the ship and the PC-side check; then task #444, task #441, task #448.
 **2026-10-01 15:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 15:0xZ): ee6ad873; CI run #1209 passed. Landing with this block: issue #78's pre-export items (task #439: R1-F-1, the canary marker, R1-F-2's tests, R1-F-7's digest exclusion) and the DSV2 record's regenerated manifest.**
 - **Landing next (as of 15:4xZ): the known-values check reads compressed targets unpacked (AF-AP-255).** The 2026-09-25 export's NO HIT was hollow (it read `.xz` bytes); the re-check of its sandbox copy reads no whole value (4 windows of the codiv key's first 11 characters, from a 2026-09-24 command). The PC copy is re-checked before the next ship.
