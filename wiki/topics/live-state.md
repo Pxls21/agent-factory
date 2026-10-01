@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-01 20:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 20:3xZ): this block's commit (AF-AP-257: the OmniRoute key's 12-character piece out of the tree; R3's report; the SGLang brief), after a0697cf2 (D-127, the S3-5-VIEW brief).**
+- **LIVE (as of 20:3xZ):** as in the block below. **RUNNING:** S3-5-VIEW (task #444, a sandbox code-implementer; fixtures only); SGLANG-EVIDENCE (task #454, a sandbox evidence-gatherer; web sources only). **HELD:** both PC exports (`/home/rocco/jev-data/session-export-2026-10-01` and `-2026-09-25-r1`): each holds 14 lines with the OmniRoute key's first 12 characters (AF-AP-257). **WAITING ON THE OWNER:** rotate the OmniRoute `hermes` key, or rewrite the branch's history. **NEXT:** S3-5-VIEW's landing and its real run; SGLANG-EVIDENCE's harvest, then the verdict and the A/B design; task #456; then task #441, task #448.
+
 **2026-10-01 20:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 20:0xZ): this block's commit (D-127; the S3-5-VIEW brief, task #444), after the retro bdcbfb67 and the landing 5cf654e5 (task #439; CI run #1214 passed), GATED-PENDING-VERIFY.**
 - **LIVE (as of 20:0xZ):** as in the block below. **RUNNING:** VERIFY-SESSION-EXPORT-R3 (as below); S3-5-VIEW (task #444: a sandbox code-implementer on `tasks/briefs/jev-laya/S3-5-VIEW-brief.md`, PIN f7f78165; fixtures only). **HELD:** the re-made export, until R3's verdict. **NEXT:** task #454 (SGLang, D-127 item 3): the evidence lane's brief, then an A/B in a GPU test window; R3's harvest, the ship and the PC-side check; S3-5-VIEW's landing and its real run (the prototype: 1,091 of 1,091 ids found once); then task #441, task #448.
