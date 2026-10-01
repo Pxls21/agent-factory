@@ -329,3 +329,17 @@ has two honest shapes and one flake.
 War story: the PC checker gate's first rerun of checkpoint 8p went red on a sibling xdist worker's
 `frame_tee.py` sleeper inside a world-scoped scan body (run 20260907T161133Z); the fix was shape 1 plus the
 two committed controls, and shape 2 for the count (`tests/test_s0_01_pc_post_scan.py`).
+
+## Tactic 11 — a pass over real data is proven by a line diff against the output made before it (2026-10-01, task #439)
+
+A pass that rewrites real data (a scrub, a redaction, a normalizer) must prove two things, not one: its target is gone
+(an independent check passes), and NOTHING ELSE moved. Make the output twice, once before the pass, and diff the two
+line by line: each line that differs must be one the pass counted, and every other difference is named and explained
+before the green counts. Compare two instruments' counts only in the same unit: a pass that counts occurrences and a
+check that counts distinct windows report different numbers for one leak (Tactic 10's same-population rule, for units).
+War story: the session export's known-value pass cut 56 occurrences of a real key's windows, where the check had
+reported 4 (distinct windows) on the export before the pass: it read as fourteen times more. A count-only locator (line,
+record type, minute, the key's character range) found the same 24 events in both exports, none after 2026-09-30. The
+diff over the 200,736 lines both exports hold: 200,706 byte-identical, 24 with the pass's new mark (those 24 events),
+6 explained by the newer commit's committed runs (fewer opaque pseudonyms). The run's scratch scripts (`cmpscan.py`,
+`cmp6.py`, `fscan.py`) become committed tools in task #452.
