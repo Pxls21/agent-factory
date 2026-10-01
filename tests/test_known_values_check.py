@@ -150,3 +150,74 @@ def test_a_malformed_env_line_is_printed_as_its_line_number(tmp_path):
     assert rc == 3 and [ln.split(" whole=")[0] for ln in out.splitlines() if " whole=" in ln] == [
         "bad.env:<malformed line 3> value", "bad.env:GOOD_NAME value", "bad.env:<malformed line 5> value"]
     assert not any(w in out for w in windows(token))
+
+
+def test_a_compressed_target_is_read_unpacked(tmp_path):
+    # AF-AP-255: the 2026-09-25 check read the session export's .xz bytes, so its NO HIT covered no event text. A format
+    # is found by its first bytes, never the name (b.data is gzip, e.xz is plain text); bzip2 at any level (c is level 1);
+    # every stream in a file (f); a layer inside a layer (d), up to eight (g); the total counts the bytes searched.
+    import bz2
+    import gzip
+    import lzma
+    env, target, token, _ = setup(tmp_path, lambda t, h: "nothing secret here\n")
+    body = ('{"text": "the token %s"}\n' % token).encode()
+    eight = body
+    for _ in range(8):
+        eight = lzma.compress(eight)
+    files = {"a.jsonl.xz": lzma.compress(body), "b.data": gzip.compress(body), "c.jsonl.bz2": bz2.compress(body, 1),
+             "d.jsonl.gz.xz": lzma.compress(gzip.compress(body)), "e.xz": body,
+             "f.two.xz": lzma.compress(b"first stream\n") + lzma.compress(body), "g.eight.xz": eight}
+    for name, data in files.items():
+        (target / name).write_bytes(data)
+    rc, out = run(["--env-file", str(env), str(target)])
+    n = len(token) - 7
+    assert rc == 3 and "bridge.env:PC_BRIDGE_TOKEN value whole=7 windows=%d/%d" % (n, n) in out
+    assert "known-values: unpacked 6 of 8 files (layers: xz 11, gzip 2, bzip2 1)" in out
+    searched = len("nothing secret here\n") + 7 * len(body) + len("first stream\n")
+    assert "known-values: 3 secret forms, 8 files, %d bytes, %d HIT(S)" % (searched, 7 + n) in out
+
+
+def test_a_target_it_cannot_read_whole_is_refused(tmp_path):
+    # AF-AP-255: a format this check does not unpack, an archive (a member inside may be compressed), a stream cut short,
+    # a stream followed by bytes that are not a stream (the one-call lzma and bz2 functions drop those silently, measured
+    # 2026-10-01) and nine layers are each refused (exit 2), never read raw; the line names the file and the reason only.
+    import bz2
+    import gzip
+    import io
+    import lzma
+    import tarfile
+    import zipfile
+    env, _, token, _ = setup(tmp_path, lambda t, h: "nothing secret here\n")
+    body = ("the token %s\n" % token).encode()
+    zbuf, tbuf = io.BytesIO(), io.BytesIO()
+    with zipfile.ZipFile(zbuf, "w") as z:
+        z.writestr("a.txt", body)
+    with tarfile.open(fileobj=tbuf, mode="w") as t:
+        info = tarfile.TarInfo("a.txt")
+        info.size = len(body)
+        t.addfile(info, io.BytesIO(body))
+    nine = body
+    for _ in range(9):
+        nine = lzma.compress(nine)
+    cases = {"zstd": (b"\x28\xb5\x2f\xfd" + body, "holds zstd data, which this check does not unpack"),
+             "zip": (zbuf.getvalue(), "holds zip data, which this check does not unpack"),
+             "7z": (b"7z\xbc\xaf\x27\x1c" + body, "holds 7z data, which this check does not unpack"),
+             "lz4": (b"\x04\x22\x4d\x18" + body, "holds lz4 data, which this check does not unpack"),
+             "tar": (tbuf.getvalue(), "holds tar data, which this check does not unpack"),
+             "tar.xz": (lzma.compress(tbuf.getvalue()), "holds tar data, which this check does not unpack"),
+             "xz-cut": (lzma.compress(body)[:-12], "does not unpack whole as xz"),
+             "gzip-cut": (gzip.compress(body)[:-12], "does not unpack whole as gzip"),
+             "bzip2-cut": (bz2.compress(body)[:-12], "does not unpack whole as bzip2"),
+             "xz-then-plain": (lzma.compress(b"x\n") + body, "does not unpack whole as xz"),
+             "gzip-then-plain": (gzip.compress(b"x\n") + body, "does not unpack whole as gzip"),
+             "bzip2-then-plain": (bz2.compress(b"x\n") + body, "does not unpack whole as bzip2"),
+             "nine-layers": (nine, "holds more than 8 compressed layers")}
+    wrong = []
+    for name, (data, why) in cases.items():
+        f = tmp_path / ("zq-" + name)
+        f.write_bytes(data)
+        got = run(["--env-file", str(env), str(f)])
+        if got != (2, "known-values: cannot read a target: %s %s\n" % (f, why)):
+            wrong.append((name, got[0]))
+        assert not any(w in got[1] for w in windows(token)), name
+    assert wrong == []

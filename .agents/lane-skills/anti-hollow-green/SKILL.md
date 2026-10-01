@@ -191,6 +191,12 @@ expansion.
    check: read every known secret where it lives, in process, and count it in the output, whole, by 8-byte windows and in
    its printed forms (`scripts/known_values_check.py`, names and counts only). Run it on every export before it ships, and
    on the repository's tracked files when committed text feeds an exemption.
+   **The value check reads what the output HOLDS (2026-10-01, AF-AP-255):** the 2026-09-25 check ran over the
+   export's `.xz` files, read the compressed bytes and printed NO HIT for event text it never saw, in the sandbox and on
+   the PC. A content check over packed bytes checks nothing. The checker now unpacks xz, gzip and bzip2 by their first
+   bytes, stream by stream (the one-call `lzma` and `bz2` functions and `lzma.open` drop bytes after a stream, silently,
+   measured), and refuses what it cannot read whole. Read a check's own count of what it searched (its `unpacked N of M
+   files` line, the bytes searched) before trusting its verdict.
    **A key's public prefix is a window hit (2026-09-29):** a ledger line that named the codiv key's prefix in backticks
    read `whole=0 windows=2/42`; a file holding the prefix alone reads the same two windows, and the ledger before that
    line read 0/42. In committed text, describe a key's prefix in words, so the check's zero stays a zero.
