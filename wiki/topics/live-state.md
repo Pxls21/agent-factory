@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-01 21:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 21:4xZ): 814dadb7 (transcripts), after 3f9d0321 (the retro of the AF-AP-257 batch; CI run #1220 on it running). Landing with this block: the RWKV view (task #444), GATED-PENDING-VERIFY: its real run equals the prototype on all 19 counts and repeats byte for byte; with it the 21:0xZ block and the AF-AP-256 correction.**
+- **LIVE (as of 21:4xZ):** as in the 20:3xZ block. **RUNNING:** SGLANG-EVIDENCE (task #454, a sandbox evidence-gatherer; web sources only). **HELD:** both PC exports (AF-AP-257). **WAITING ON THE OWNER:** the OmniRoute key: rotate it, rewrite the history, or leave it. **NEXT:** VERIFY-S3-5-VIEW; the SGLang harvest, the verdict and the A/B design (D-088 window); task #441 after the verify.
+
 **2026-10-01 21:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 21:0xZ): 3f9d0321, the retro of the AF-AP-257 batch (two lessons baked: a display prefix is part of the key and a value check sees only its own machine's keys; a bridge guard's name appears nowhere in the launching command; task #457 registered as backlog), after dd14c6c2 (AF-AP-257: the OmniRoute key's piece out of the tree; R3's report; the SGLang brief). CI runs on 3f9d0321.**
 - **LIVE, RUNNING, HELD, WAITING ON THE OWNER and NEXT (as of 21:0xZ):** as in the block below.
