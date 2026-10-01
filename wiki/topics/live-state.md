@@ -11,6 +11,9 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-01 03:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 03:5xZ): 0a700964; CI run #1203 passed on f2d9f5b (the pruner landing: D-123, tasks #415 and #407).**
+- **LIVE (as of 03:5xZ):** as in the 02:4xZ block below: our pruner copy installed and enabled, waiting for the next Claude Code start or /reload-plugins (task #406); the probe's line in orient's layer 0; K2. **RUNNING:** the Jev relay (pid 12410, 127.0.0.1:47430). No lane is running.
 **2026-10-01 02:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 02:4xZ): d9de6821; CI run #1202 passed on db077f9 (the 01:3xZ live-state).**
 - **LIVE (as of 02:4xZ):** K2 (task #353, closed) as in the block below. The pruner: our copy `fast-jev-output-floor@agent-factory-vendor` is installed and enabled (floor 1,000 tokens, to the relay, records under `.jev/pruner/`), the upstream `fast-jev-output` disabled; this session still runs the upstream hook it loaded at start, so our copy takes over at the next Claude Code start or /reload-plugins (task #406). The liveness probe `scripts/jev_liveness.py` prints a line in orient's layer 0. **RUNNING:** the Jev relay (pid 12410, 127.0.0.1:47430). No lane is running.
