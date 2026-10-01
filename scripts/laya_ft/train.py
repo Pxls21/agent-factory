@@ -321,7 +321,7 @@ def run(args):
         "labels": {"file": str(Path(args.labels).resolve()), "sha256": C.sha256_file(args.labels),
                    **lstats, "used": len(examples), "teachers": teachers},
         "examples": {"n": len(items), "by_question": {q: sum(r["question_id"] == q for r, _t, _r in examples)
-                                                       for q in C.QUESTIONS}},
+                                                       for q in C.ALL_QUESTIONS}},
         "base_model": dict(fp, model_dir=str(model_dir.resolve()),
                            safetensors_sha256=C.sha256_file(model_dir / "model.safetensors")),
         "hyperparameters": {"mode": args.mode, "device": args.device, "epochs": args.epochs,

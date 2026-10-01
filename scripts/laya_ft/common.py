@@ -49,6 +49,15 @@ QUESTIONS = {
     "ap.violates_row": {"type": "noul", "instructions": AP.INSTRUCTION},
 }
 
+# The System-1 injection question (task #438; tasks/laya-s3-breakdown.md decisions 1 and 2): yes when the agent's live
+# score of the injection was rel 2 or 3. A table of its own, because the version-1 and version-2 builders iterate
+# QUESTIONS and their committed records must still rebuild byte for byte; the loader and the trainer read ALL_QUESTIONS.
+S1_QUESTIONS = {
+    "s1.inject": {"type": "noul", "instructions": "Is the context in `chunk` relevant to the agent's next step in `step` "
+                                                  "(the agent's own words in `intent`, the person's task in `task`)?"},
+}
+ALL_QUESTIONS = {**QUESTIONS, **S1_QUESTIONS}
+
 # D-3: the three held-out samples, pinned by the sha256 each was committed with before scoring.
 HELDOUT = {
     "j2_v1": ("docs/research/findings/j2-v1-probe/sample.json",
@@ -185,6 +194,8 @@ def row_identities(row):
             ids.add(("incident", s["heading"]))
         elif s.get("kind") == "commit":   # a commit message (dataset version 2, D-085); no sample holds one
             ids.add(("commit", s["commit"]))
+        elif s.get("kind") == "injection":   # a scored System-1 injection (task #438); no J2 sample holds one
+            ids.add(("injection", s["id"]))
         else:
             raise DatasetError("row %s: unknown source kind %r" % (row.get("item_id"), s.get("kind")))
     if not ids:
@@ -225,7 +236,7 @@ def load_dataset(ddir, heldout=None):
         if key in seen:
             raise DatasetError("duplicate row %s" % key)
         seen.add(key)
-        if row["question_id"] not in QUESTIONS or row["question"] != QUESTIONS[row["question_id"]]:
+        if row["question_id"] not in ALL_QUESTIONS or row["question"] != ALL_QUESTIONS[row["question_id"]]:
             raise DatasetError("row %s: the question is not this code's %r" % (key, row["question_id"]))
         if row["state_sha"] != state_sha(row["state"]) or row["question_sha"] != question_sha(row["question"]):
             raise DatasetError("row %s: a digest does not match its content" % key)
