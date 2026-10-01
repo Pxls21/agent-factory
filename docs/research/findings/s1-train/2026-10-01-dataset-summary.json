@@ -1,0 +1,132 @@
+{
+ "baselines_on_heldout": {
+  "always_true": 0.6682,
+  "kind_prior": {
+   "accuracy": 0.8091,
+   "rule": {
+    "a code-search answer": "true",
+    "a file pack": "true",
+    "a wiki excerpt": "true",
+    "skill lines": "true",
+    "the file's recent changes": "false"
+   }
+  },
+  "majority": {
+   "accuracy": 0.6682,
+   "answer": "true"
+  },
+  "word_overlap": {
+   "accuracy": 0.6682,
+   "threshold": 0.0
+  }
+ },
+ "by_kind": {
+  "heldout": {
+   "a code-search answer": {
+    "false": 0,
+    "true": 1
+   },
+   "a file pack": {
+    "false": 0,
+    "true": 11
+   },
+   "a wiki excerpt": {
+    "false": 1,
+    "true": 7
+   },
+   "skill lines": {
+    "false": 24,
+    "true": 111
+   },
+   "the file's recent changes": {
+    "false": 48,
+    "true": 17
+   }
+  },
+  "train": {
+   "a code-search answer": {
+    "false": 0,
+    "true": 3
+   },
+   "a file pack": {
+    "false": 11,
+    "true": 32
+   },
+   "a wiki excerpt": {
+    "false": 7,
+    "true": 19
+   },
+   "skill lines": {
+    "false": 125,
+    "true": 415
+   },
+   "the file's recent changes": {
+    "false": 196,
+    "true": 43
+   }
+  }
+ },
+ "code": {
+  "scripts/hook_context.py": "1f4912ce9389185dc926fdca100e798961702a0a154fb568ec5585bdca73ec6c",
+  "scripts/laya_ft/build_s1.py": "36e40920f365d5a233a16a2c95b89309768cf86adee686de60662b3d15601c95",
+  "scripts/laya_ft/common.py": "fa32e637b3d53a8f0fa860d68f4686e11cb0a5cd5467825685715a61fe39ac6b",
+  "scripts/laya_ft/fit.py": "1f262ccad009ed828350cbcd39f08512d1c927a3b5acac517bc85e8939434542",
+  "scripts/laya_ft/recorded_labels.py": "fc7b222ce71596ab2441b150cc9677fa6080cc810d7256f463db7decc2443ddf",
+  "scripts/s1_scores.py": "f599e056cc60098c989ebf5a45eb671e92bf8f35614b02e41a83331eb7972eed",
+  "scripts/transcript_export.py": "6ad316dccfca01474c7da0f716e4788407dd8e4c2699d2368e41ea96e5195f42"
+ },
+ "commit": "5be8cc0c7329a4ffdbed65274032790988f81211",
+ "cutoff": {
+  "a code-search answer": "2026-09-29T22:21:34.338Z",
+  "a file pack": "2026-10-01T10:30:54.504Z",
+  "a wiki excerpt": "2026-09-30T14:47:26.923Z",
+  "skill lines": "2026-09-30T12:04:37.519Z",
+  "the file's recent changes": "2026-09-29T21:55:57.233Z"
+ },
+ "dropped": {},
+ "fit": {
+  "conflicting_states": 1,
+  "cross_split_states": 0,
+  "cut_to_window": 0,
+  "merged_duplicates": 20,
+  "unfit": 0
+ },
+ "items": 1093,
+ "join": {
+  "sections": 1185,
+  "sha_ok": 1951,
+  "stamps": 1951
+ },
+ "model": {
+  "config_sha256": "ebf0cd524d92342a6be5e48e9fca3d7c2babfb5a56ccd79d2171ef5d8c7f7be8",
+  "head_max_len": 256,
+  "max_len": 1024,
+  "revision": "1c5edc17a7acd8701df6fc341c0d179f1c62c982",
+  "tokenizer_sha256": "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30"
+ },
+ "question": {
+  "s1.inject": "11f5473ac5fe34691134b8e01b851fd73a32743eb9545f0beeda53c233042ee6"
+ },
+ "scored_injections": 1093,
+ "splits": {
+  "heldout": {
+   "dataset_sha256": "72c8ad4b35c52d9b6ceb280c64ab2d494f227f7f20ac92fdf0570677d771541a",
+   "labels_sha256": "a883fa6a1be5783fb869c218c7282e188a17dda144ffbf87e2abf27f2d6c67af",
+   "rows": {
+    "false": 73,
+    "rows_total": 220,
+    "true": 147
+   }
+  },
+  "train": {
+   "dataset_sha256": "01fb9d4451a4f9aaebb39b5c9d161df60d364cf74dda205755dc8367702f3224",
+   "labels_sha256": "8d73ff58788eeb1903560842d0c3d8688b37c0d0a81891c049483c0900993165",
+   "rows": {
+    "false": 339,
+    "rows_total": 851,
+    "true": 512
+   }
+  }
+ },
+ "version": "s1-v1"
+}

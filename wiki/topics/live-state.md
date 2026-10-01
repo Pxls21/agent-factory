@@ -11,6 +11,9 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-01 13:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 13:2xZ): 5be8cc0c; CI run #1207 (38d4f28) passed. Landed: the S1 dataset (task #438) and the output styles' labels (task #440). Landed with this block: step 3's re-plan (D-125), the dataset summary and the retro (task #444 registered).**
+- **LIVE (as of 13:2xZ):** the Attention-kind style with its labels section; pruner change 4, running since the resume (no request has used its window yet; task #406 open); the relay (pid 722). **OPEN, the owner's call (D-125):** RWKV as the only System-1 model. **NEXT:** task #439 (the stream export to now), then task #444 (the RWKV view), then task #441 (the pre-registered first training; its reading pass in a GPU test window).
 **2026-10-01 12:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 12:2xZ): 7fb3b387; CI run #1206 passed on it. The owner said yes at 12:21Z (D-125): tasks #438 and #440 land now, with the step-3 plan commit.**
 - **LIVE (as of 12:2xZ):** the Attention-kind output style with the labels section (loaded at the resume before 12:21Z); our pruner copy, restarted with Claude Code at that resume (change 4's first live records not read yet); the relay (pid 722, restarted at the resume). **OPEN, the owner's call (D-125):** RWKV as the only System-1 model, Laya retired once RWKV beats the 78% kind rule and has a live home. **NEXT:** re-plan task #441 as a frozen RWKV-7 with contrastive heads; read change 4's first live records (tasks #406 and #436).

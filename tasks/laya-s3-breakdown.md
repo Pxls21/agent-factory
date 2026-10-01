@@ -4,6 +4,7 @@ STATUS: 2026-10-01 10:1xZ — AUTHORED from the owner's rulings D-123 item 10 (s
 D-078 (1) and D-118 (1). No new seed: this extends the Laya fine-tune tooling (FT1, DSV2, K265) under the program of
 `seeds/seed-laya-j1-v1.yaml`, and the rulings are the spec. The increments are registered as tasks #438 to #441
 before any build.
+RE-PLANNED: 2026-10-01 12:5xZ by D-125. S3-1 (#438) and S3-3 (#440) landed and were pushed (12:5xZ). The first training (S3-4, #441) moves from Laya to a frozen RWKV-7 with contrastive heads (CLM's method), and a new increment, S3-5 (#444, the RWKV view of the S1 dataset), sits between S3-2 and S3-4. Whether Laya is retired is the owner's call (D-125 item 3, open).
 
 ## The owner's words (transcript 2026-10-01 02:26:19Z)
 
@@ -32,7 +33,9 @@ coordinator's output are clean, pre-labeled training data for System-1 models.
   (`scripts/session_export.py`, task #252: every call and result in order), shipped to the PC once
   (`/home/rocco/jev-data/session-export-2026-09-25-r1`, the transcripts up to 2026-09-25 12:4xZ). Issue #78's two
   pre-export items (R1-F-1, AF-AP-213) never landed, so no later export ran.
-- The output styles (`.claude/output-styles/`) mention no label, no stack and no box.
+- The output styles (`.claude/output-styles/`) mention no label, no stack and no box (S3-3 added them).
+- The S1 build at the pushed commit 5be8cc0c (12:5xZ; the session had grown since 10:3xZ): 1,093 scored injections; training 851 rows (512 yes), held-out 220 (147 yes); on the held-out rows always-yes 0.668 and the kind rule 0.809 (edit snapshots no, every other kind yes). Summary: `docs/research/findings/s1-train/2026-10-01-dataset-summary.json` (counts, digests, baselines; no text).
+- RWKV-7 (`RWKV/RWKV7-Goose-World2.9-0.4B-HF` at e94655a9, pinned in `upstream.lock.yaml`), measured on the 3090 in the 2026-09-24 window: one forward over 61,440 tokens in 1.17 s at a 10,474 MiB peak; a question from a copied state in 0.04 s; zero-shot answers rejected on every KC-J3 line. No CPU path in the PC venvs (fla's cache and its CPU fallback fail), and no GPU room beside vLLM (about 796 MiB free, D-099; its bf16 weights are 859 MiB).
 
 ## Pinned decisions (with the rejected alternative)
 
@@ -59,9 +62,7 @@ coordinator's output are clean, pre-labeled training data for System-1 models.
    The rows and labels stay out of git (`.jev/laya-ft/`, ignored); the build's summary (counts, cutoffs, digests,
    baselines; no text) is committed, built at a pushed commit. Rejected: committing the rows (they are session text; the committed digests
    follow the exporter's own policy).
-5. Training runs on the GPU, in a window the owner approves (D-078 (1): "CPU is unrealistic"; each window needs the
-   owner's say-so). The acceptance lines are written before the run: Laya against always-yes (today's behaviour,
-   every injection fires), the source-kind prior and a word-overlap score, on the held-out rows.
+5. RE-PLANNED by D-125 (the Laya version is in git history). The first training is a frozen RWKV-7 that reads each transcript's exported stream once, with contrastive heads trained the CLM way (Contrastive-LM's method: a frozen backbone, two small MLP heads into one space, bidirectional in-batch InfoNCE; our "no" rows are hard negatives). The GPU only reads, in a GPU test window (D-088); the heads train on the CPU, so they can be re-trained without a window. The acceptance lines are written before the run, on a frozen build, and one evaluator scores the model and every baseline (always-yes, the kind rule, word overlap) on the held-out rows. Rejected: Laya first (its 1,024-token window holds no session, and J2 found it weakest on every shape, D-074); a bigger Laya window (its decision layers were never measured past 1,024 tokens, and 8,192 tokens is still a slice of one session); tuning RWKV's weights first (a training window, D-078, before the frozen stage has measured how far reading alone goes).
 
 ## Increments (one increment = code + deterministic test + commit; every count pasted from the test summary)
 
@@ -70,12 +71,14 @@ coordinator's output are clean, pre-labeled training data for System-1 models.
 | S3-1 (#438) | `common.py` learns the `s1.inject` question and the `injection` row kind; `build_s1.py` builds the S1 dataset from the scores, the transcripts and the injections | `scripts/laya_ft/common.py`, `scripts/laya_ft/build_s1.py`, `tests/test_laya_ft_s1.py`, SYNTH1's refusal test | a fixture session gives the same rows and labels twice, byte for byte; the real run's counts land in the findings | an unknown kind is refused; an injection whose sha256 does not match its score row is refused; a planted fake key is scrubbed; a pair in both splits leaves the training split |
 | S3-2 (#439) | The chat history laid out: issue #78's two pre-export items, then the export from the last offsets to now, shipped and checked on the PC | `scripts/session_export.py`, `scripts/transcript_export.py`, their tests | export rc 0, gate 0, the ship sha-checked, the PC-side known-values check NO HIT | R1-F-1's token-like NAME; the AF-AP-213 canary transcript |
 | S3-3 (#440) | The output styles name the labels and the box (D-100 (1), D-123 step 3) | `.claude/output-styles/*.md`, `sandbox-kit/output-styles/`, their provenance, the manifest | each style carries the labels line; the mirrors and the manifest pass | none (a docs change) |
-| S3-4 (#441) | The first training, pre-registered, and its evaluation | `docs/research/findings/laya-ft-s1/` (the pre-registration first, then the run's record) | Laya beats every pre-registered baseline on the held-out rows, or the run is reported as failed | the baselines run through the same evaluator |
+| S3-5 (#444) | The RWKV view of the S1 dataset: each scored injection found in its transcript's exported stream (the hook event that carries its `[S1 <id>` stamp); the state is the stream before it (prompts, texts, tool calls and results; never a thinking block, which no hook sees when System 1 serves), the candidate is the injection's body; the split and labels are the S1 build's | `scripts/s1_train/`, its tests | every scored injection of the frozen build is found once, or counted as not found with its reason; the labels and the split equal the S1 build's | an id missing from the stream is counted, never guessed; a thinking block never enters a state; a planted fake key is scrubbed |
+| S3-4 (#441) | The first training, pre-registered: the reading pass in a GPU test window, the heads on the CPU, one evaluator | `docs/research/findings/s1-train/` (the pre-registration first, then the run's record) | the model beats the kind rule on the held-out rows of the frozen build, by the bar and the test the pre-registration names, or the run is reported as failed | shuffled labels fall to chance; a chunk-only control (no state) measures what the state adds; the baselines run through the same evaluator |
 
-Order: S3-1, then S3-3; S3-2 can run beside them; S3-4 needs S3-1 and the owner's training window.
+Order: S3-1 and S3-3 landed; then S3-2 (#439, the stream export to now), S3-5, and S3-4, whose reading pass runs in a GPU test window (D-088).
 
 ## NOT built (declared)
 
+- A live home for RWKV-7 (D-125): a CPU runtime for it (not tried yet) or a permanent GPU slice taken from vLLM (the owner's call, D-088). Until one exists, RWKV runs only in GPU windows and cannot serve System 1 live.
 - The max-relevance examples (task #432, D-123 item 2): after S3-1, on a sample, if the first training shows the
   data is thin.
 - The relay's pruning labels as a Laya question (a local pruner): later; they are teacher labels only.
