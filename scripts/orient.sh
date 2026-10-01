@@ -21,6 +21,8 @@ echo "  graft:        $( [ -f graft/INDEX.md ] && echo "OK (graft ask/skeleton/c
 echo "  gitnexus:     $( [ -f .gitnexus/run.cjs ] && echo "OK (node .gitnexus/run.cjs impact/detect_changes)" || echo "ABSENT — npx gitnexus analyze" )"
 echo "  cbm:          $( [ -x /root/.local/bin/codebase-memory-mcp ] && echo "OK (binary; stdio search_graph/query_graph)" || echo "ABSENT" )"
 echo "  crg:          $( [ -x /root/venv-crg/bin/code-review-graph ] && echo "OK (/root/venv-crg/bin/code-review-graph query callers_of/tests_for)" || echo "ABSENT" )"
+# The Jev nervous system (task #407, D-123 item 7): endpoints, the pruner, its heartbeat; a WARN names where it fails.
+echo "  $(timeout 10 python3 scripts/jev_liveness.py --line 2>/dev/null || echo "jev: the probe failed (python3 scripts/jev_liveness.py)")"
 
 echo ""
 echo "── orient: layer 1 — CHAT (intent) ──"

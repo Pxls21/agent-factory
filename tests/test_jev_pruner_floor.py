@@ -41,6 +41,9 @@ UPSTREAM_MIN_TOKENS_DESCRIPTION = (
     "Stdout at or below this estimated token count passes through untouched. Minimum: 10000."
 )
 PLUGIN_NAME, MARKETPLACE_NAME = "fast-jev-output-floor", "agent-factory-vendor"
+CHANGE_3_OPTIONS = ("baseUrl", "archiveDir", "decisionsDir")  # PROVENANCE.md local change 3
+UPSTREAM_SYSTEM_ONE_URL = "https://api.typesafe.ai/v1/systemone"  # src/jev.ts:1 at 47d017c
+UPSTREAM_ARCHIVE_DIR = ".claude/fast-jev-output"  # hooks/fast-jev-output.ts ARCHIVE_DIR at 47d017c
 
 NAN, INF = float("nan"), float("inf")
 # name: (plugin options, resolved (minTokensFloor, minTokens), {estimated output tokens: passes the threshold})
@@ -278,12 +281,19 @@ def test_plugin_manifest_is_the_upstream_one_plus_the_local_changes():
     assert config["minTokens"]["default"] == UPSTREAM_FLOOR
     description = config["minTokens"]["description"]
     assert "minTokensFloor" in description and description != UPSTREAM_MIN_TOKENS_DESCRIPTION
-    assert "baseUrl" not in config  # the owner's uncommitted baseUrl patch is not vendored (PROVENANCE.md)
+    # local change 3: three string options, in this order, between maxScoringRequests and model
+    names = list(config)
+    assert names[names.index("maxScoringRequests") + 1:names.index("model")] == list(CHANGE_3_OPTIONS)
+    for name in CHANGE_3_OPTIONS:
+        assert set(config[name]) == {"type", "title", "description"} and config[name]["type"] == "string"
+        assert config[name]["title"].strip() and "local change 3" in config[name]["description"]
     assert manifest["name"] == PLUGIN_NAME != UPSTREAM_NAME
 
-    blocks = re.findall(r'^    "minTokensFloor": \{\n(?:      .*\n)+?    \},\n', text, re.M)
-    assert len(blocks) == 1
-    upstream = text.replace(blocks[0], "")
+    upstream = text
+    for name in ("minTokensFloor", *CHANGE_3_OPTIONS):
+        blocks = re.findall(r'^    "' + name + r'": \{\n(?:      .*\n)+?    \},\n', upstream, re.M)
+        assert len(blocks) == 1, name
+        upstream = upstream.replace(blocks[0], "")
     assert upstream.count(json.dumps(description)) == 1
     upstream = upstream.replace(json.dumps(description), json.dumps(UPSTREAM_MIN_TOKENS_DESCRIPTION))
     assert upstream.count(f'"name": "{PLUGIN_NAME}"') == 1
@@ -383,3 +393,118 @@ def test_claude_cli_validates_the_plugin_and_the_marketplace(tmp_path):
     (copy / "src" / "history.ts").unlink()
     broken = _validate(copy / ".claude-plugin" / "plugin.json", tmp_path / "home")
     assert not broken["success"] and any('cannot import "./history.js"' in error for error in _errors(broken))
+
+
+# Local change 3 (PROVENANCE.md): the scorer's URL, the archive folder and the decision records, through the real hook.
+DRIVER3 = r"""
+import { register } from 'node:module';
+import { pathToFileURL } from 'node:url';
+
+const input = [];
+for await (const chunk of process.stdin) input.push(chunk);
+const job = JSON.parse(Buffer.concat(input).toString('utf8'));
+const hookUrl = pathToFileURL(job.hook).href;
+const rootUrl = new URL('../', hookUrl).href;
+register('data:text/javascript,' + encodeURIComponent([
+  `const ROOT = ${JSON.stringify(rootUrl)};`,
+  'export async function resolve(specifier, context, next) {',
+  "  if (context.parentURL && context.parentURL.startsWith(ROOT) && (specifier.startsWith('./') || specifier.startsWith('../'))",
+  "      && specifier.endsWith('.js')) return next(specifier.slice(0, -3) + '.ts', context);",
+  '  return next(specifier, context);',
+  '}',
+].join('\n')));
+
+const hook = await import(hookUrl);
+const text = (n) => Array.from({ length: n }, () => 'aaaaaa').join('\n');  // one estimated token per line
+const apiKey = ['c3', 'fake', String(process.pid)].join('-');  // built at run time; the fake fetch drops it
+const results = [];
+for (const c of job.cases) {
+  let handler;
+  await hook.register((name, matcher, fn) => { handler = fn; }, { ...c.options, apiKey });
+  const files = new Map();
+  const urls = [];
+  const $ = {
+    fs: {
+      read: async () => { throw new Error('c3: no persisted output in this test'); },
+      exists: async (path) => files.has(path),
+      write: async (path, data) => {
+        if (c.failRecordWrites && path.startsWith(String(c.options.decisionsDir) + '/')) throw new Error('c3: record write');
+        files.set(path, data);
+      },
+    },
+    env: { get: async () => undefined },
+    settings: { read: async () => ({}) },
+    session: { messages: async () => [] },
+    http: { fetch: async (url) => { urls.push(url); throw new Error('c3: the scorer was reached; nothing is sent'); } },
+    ui: { log: () => {}, toast: () => {} },
+  };
+  const answer = { result: { stdout: text(c.tokens), stderr: '' } };
+  const back = await handler($, { command: 'make fixture', tool_use_id: c.toolUseId }, async () => answer);
+  results.push({ name: c.name, urls, files: Object.fromEntries(files), returnedUnchanged: back === answer });
+}
+console.log(JSON.stringify({ results }));
+"""
+
+RELAY_URL = "http://127.0.0.1:9/v1/systemone"  # port 9 (discard): never reached, the fake fetch throws first
+CHANGE_3_CASES = [
+    {"name": "upstream_defaults", "options": {"minTokensFloor": 0, "minTokens": 0}, "tokens": 60,
+     "toolUseId": "toolu_c3_a"},
+    {"name": "all_three_set", "options": {"minTokensFloor": 0, "minTokens": 0, "baseUrl": RELAY_URL,
+                                          "archiveDir": "scratch/arch", "decisionsDir": "scratch/dec"},
+     "tokens": 60, "toolUseId": "toolu_c3:b"},
+    {"name": "below_the_floor", "options": {"decisionsDir": "scratch/dec"}, "tokens": 60, "toolUseId": "toolu_c3_c"},
+    {"name": "record_write_fails", "options": {"minTokensFloor": 0, "minTokens": 0, "decisionsDir": "scratch/dec"},
+     "tokens": 60, "toolUseId": "toolu_c3_d", "failRecordWrites": True},
+]
+
+
+@pytest.fixture(scope="module")
+def change3_runs():
+    job = {"hook": str(HOOK), "cases": CHANGE_3_CASES}
+    proc = subprocess.run(["node", "--input-type=module", "-e", DRIVER3], input=json.dumps(job),
+                          capture_output=True, text=True, timeout=180, cwd=REPO)
+    assert proc.returncode == 0, proc.stderr[-4000:]
+    return {r["name"]: r for r in json.loads(proc.stdout.strip().splitlines()[-1])["results"]}
+
+
+@needs_strip
+def test_change3_unset_options_keep_the_upstream_url_and_archive(change3_runs):
+    run = change3_runs["upstream_defaults"]
+    assert run["urls"] and set(run["urls"]) == {UPSTREAM_SYSTEM_ONE_URL}
+    assert sorted(run["files"]) == [f"{UPSTREAM_ARCHIVE_DIR}/.gitignore", f"{UPSTREAM_ARCHIVE_DIR}/bash-toolu_c3_a.txt"]
+
+
+@needs_strip
+def test_change3_options_move_the_url_the_archive_and_write_the_records(change3_runs):
+    run = change3_runs["all_three_set"]
+    assert run["urls"] and set(run["urls"]) == {RELAY_URL}
+    archive = sorted(path for path in run["files"] if path.startswith("scratch/arch/"))
+    assert archive == ["scratch/arch/.gitignore", "scratch/arch/bash-toolu_c3:b.txt"]
+    assert not any(path.startswith(UPSTREAM_ARCHIVE_DIR) for path in run["files"])
+    records = sorted(path for path in run["files"] if path.startswith("scratch/dec/"))
+    assert len(records) == 2 and records[1] == "scratch/dec/last.json", records
+    assert re.fullmatch(r"scratch/dec/(\d{4}-\d{2}-\d{2})/\1T\d{9}Z-toolu_c3_b\.json", records[0]), records[0]
+    line = run["files"]["scratch/dec/last.json"]
+    assert run["files"][records[0]] == line and line.endswith("\n") and line.count("\n") == 1
+    record = json.loads(line)
+    assert record["toolUseId"] == "toolu_c3:b" and record["sourceEstimatedTokens"] == 60
+    assert record["decision"] not in ("below_threshold", "missing_key") and record["requests"] >= 1
+    assert record["at"][:10] == records[0][len("scratch/dec/"):][:10]
+    assert "aaaaaa" not in line and "fixture" not in line  # counts only: never the output or the command
+
+
+@needs_strip
+def test_change3_a_call_below_the_floor_writes_the_heartbeat_only(change3_runs):
+    run = change3_runs["below_the_floor"]
+    assert run["urls"] == [] and run["returnedUnchanged"]
+    assert sorted(run["files"]) == ["scratch/dec/last.json"]
+    record = json.loads(run["files"]["scratch/dec/last.json"])
+    assert (record["decision"], record["stage"], record["sourceEstimatedTokens"]) == ("below_threshold", "read_output", 60)
+
+
+@needs_strip
+def test_change3_a_failing_record_write_never_changes_the_result(change3_runs):
+    run = change3_runs["record_write_fails"]
+    assert run["urls"]  # the call went past the floor, so both record writes were attempted
+    assert not any(path.startswith("scratch/dec/") for path in run["files"])
+    assert run["returnedUnchanged"]

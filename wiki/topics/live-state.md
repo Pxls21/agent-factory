@@ -11,6 +11,9 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-01 02:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 02:4xZ): d9de6821; CI run #1202 passed on db077f9 (the 01:3xZ live-state).**
+- **LIVE (as of 02:4xZ):** K2 (task #353, closed) as in the block below. The pruner: our copy `fast-jev-output-floor@agent-factory-vendor` is installed and enabled (floor 1,000 tokens, to the relay, records under `.jev/pruner/`), the upstream `fast-jev-output` disabled; this session still runs the upstream hook it loaded at start, so our copy takes over at the next Claude Code start or /reload-plugins (task #406). The liveness probe `scripts/jev_liveness.py` prints a line in orient's layer 0. **RUNNING:** the Jev relay (pid 12410, 127.0.0.1:47430). No lane is running.
 **2026-10-01 01:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 01:3xZ): 60d01a93; CI run #1201 passed on the K2 landing (151181d).**
 - **LIVE (as of 01:3xZ):** K2 (task #353, closed): the file-pack hook injects a pack on the first touch of a tracked file (PreToolUse on Read, Edit, Write and Bash) and resets at SessionStart; the post-commit hook rebuilds the packs after each commit. Off switch: `.jev/filepacks-off` (it stops injection, not builds). Follow-ups: task #428 (backlog). **RUNNING:** the Jev relay (pid 722, 127.0.0.1:47430). No lane is running.

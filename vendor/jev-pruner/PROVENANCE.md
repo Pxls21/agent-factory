@@ -40,7 +40,7 @@ uncommitted `baseUrl` patch in `plugin.json` and in the hook; it is not copied.
 
 | File | upstream git blob at 47d017c | sha256 here |
 |---|---|---|
-| `.claude-plugin/plugin.json` | `db3a0b1ed98aaae664a4c2ac8c5143c9d2c0b3d6` | `f1f83c08607e7b78bcb049213523d076a180269d131a7a24453d0746c9ebb9ca` |
+| `.claude-plugin/plugin.json` | `db3a0b1ed98aaae664a4c2ac8c5143c9d2c0b3d6` | `06e7e2c70f5a5be3279af16fed548bb9a237ba11ea48da9acc7742b283f8c348` (change 3; `f1f83c08…` after T408) |
 | `.claude-plugin/marketplace.json` | `6b3748fc216ab50a65eccdbbad4197dd2b2a147b` | `486e2105a4a307ef66fcd576ef74775ca3e2497fa7e3b830201aefc565419989` |
 | `hooks/hooks.json` (copied 2026-09-25, unchanged) | `b929bab3cdf8e42c2f8b9abcd6ef27a438ab0e52` | `f880049cfcf59ed9f324e6440ac1b924602945141b0925820d968403c767f240` |
 
@@ -88,7 +88,8 @@ same way from the changed `src/`. Only four files differ from the pinned build: 
 
 ## Local changes (every one, as a diff)
 
-There are TWO local changes, plus the manifests' own (below). Both lower the output-size floor only when asked.
+There are THREE local changes, plus the manifests' own (below). The first two lower the output-size floor only when
+asked; the third adds three options (the scorer's URL, the archive folder, the decision records), each off when unset.
 
 Change 1 (P1, task #231, 2026-09-25) is an explicit option for LIBRARY callers. Upstream floors `minTokens` at
 `MIN_OUTPUT_TOKENS = 10_000` in `exceedsOutputThreshold` (`src/output.ts:81-83` at 47d017c), so a caller cannot trim anything
@@ -311,6 +312,207 @@ and the CLI checks a stored value against `min` (`<title> must be at least <min>
        "source": "./",
        "description": "Trim long Bash output with Jev before the model sees it (Claude Code plugin)",
        "version": "0.1.0",
+```
+
+### Change 3: the scorer's URL, the archive folder and the decision records (task #415, D-123 item 1, 2026-10-01)
+
+Three string options, each unset by default, so with none of them the behavior is upstream's (and change 2's) exactly.
+
+- `baseUrl`: the URL the hook sends Jev requests to (`buildJevRequest` in `src/jev.ts` already takes it at the commit; the
+  hook never passed it). This ports the owner's uncommitted patch in the installed plugin (`HookConfig.baseUrl`, read by
+  `optionString`, passed through `jevAsker`), written here from its lines, which the coordinator read on 2026-10-01 with the
+  owner's leave (D-123 item 1). Its manifest entry is new text, not the installed one.
+- `archiveDir`: where a trimmed output's full text is saved for recovery (upstream: `.claude/fast-jev-output`). Under
+  `.claude/` the archive drifts this repository's vendored-tree manifest (it hashes ignored files there; task #232), so the
+  install points it under `.jev/`.
+- `decisionsDir`: when set, every Bash call rewrites `last.json` there (the heartbeat the liveness probe reads, task #407),
+  and a call whose decision comes after the size floor also writes `<UTC day>/<time>-<tool use id>.json`, one file per
+  call so parallel calls never share a file (the runtime's `$.fs` has no append). A record holds the diagnostics object's
+  counts (upstream's own `diagnostics` line, now built by one function for both) plus `at`; never the command or the
+  output. A failed write is swallowed: a record never changes the tool result. `sourceEstimatedTokens` is computed when
+  either `diagnostics` or `decisionsDir` is on.
+
+`tests/test_jev_pruner_floor.py` drives the real hook for each (four `change3` tests; six hook mutants, each killed by
+them, 2026-10-01). No `src/` file changed, so `dist/` was not rebuilt.
+
+```diff
+--- a/hooks/fast-jev-output.ts
++++ b/hooks/fast-jev-output.ts
+@@ -16,6 +16,11 @@ import type { InformationCategory } from '../src/retention.js';
+ export { looksSecret } from '../src/secrets.js';
+ 
+ const ARCHIVE_DIR = '.claude/fast-jev-output';
++// agent-factory local change 3 (vendor/jev-pruner/PROVENANCE.md): the decisions taken before the size floor. A call
++// that ends on one of them gets the heartbeat record only; any other decision also gets a record of its own.
++const BEFORE_THE_FLOOR = new Set([
++  'denied', 'tool_error', 'missing_result', 'archive_recovery', 'persisted_disabled', 'below_threshold',
++]);
+ const DEFAULT_MAX_SCORING_REQUESTS = 11;
+ const VISIBLE_CHARS_PER_REQUEST = 192;
+ const DEFAULTS = {
+@@ -46,6 +51,10 @@ export type HookFetch = (
+ 
+ export type HookConfig = {
+   apiKey?: string;
++  // agent-factory local change 3: the scorer's URL (the owner's patch, ported), the archive folder, the decision records.
++  baseUrl?: string;
++  archiveDir: string;
++  decisionsDir?: string;
+   chunkChars?: number;
+   diagnostics?: boolean;
+   chunkLines: number;
+@@ -84,12 +93,17 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
+       typeof options.persistedOutputs === 'boolean' ? options.persistedOutputs : true,
+     persistedMaxChars: optionNumber(options, 'persistedMaxChars', DEFAULTS.persistedMaxChars),
+     model: optionString(options, 'model') ?? DEFAULTS.model,
++    archiveDir: optionString(options, 'archiveDir') ?? ARCHIVE_DIR,
+   };
+   const apiKey = optionString(options, 'apiKey');
+   if (apiKey) config.apiKey = apiKey;
+   const chunkChars = optionNumber(options, 'chunkChars', 0);
+   if (chunkChars > 0) config.chunkChars = chunkChars;
+   if (options.diagnostics === true) config.diagnostics = true;
++  const baseUrl = optionString(options, 'baseUrl');
++  if (baseUrl) config.baseUrl = baseUrl;
++  const decisionsDir = optionString(options, 'decisionsDir');
++  if (decisionsDir) config.decisionsDir = decisionsDir;
+   if (options.maxScoringRequests !== undefined) {
+     config.maxScoringRequests = Math.max(0, Math.floor(
+       optionNumber(options, 'maxScoringRequests', DEFAULT_MAX_SCORING_REQUESTS),
+@@ -98,10 +112,10 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
+   return config;
+ }
+ 
+-export function jevAsker(fetchFn: HookFetch, apiKey: string, model: string): JevAsker {
++export function jevAsker(fetchFn: HookFetch, apiKey: string, model: string, baseUrl?: string): JevAsker {
+   return {
+     async ask(state, questions) {
+-      const request = buildJevRequest({ apiKey, model }, state, questions);
++      const request = buildJevRequest({ apiKey, model, baseUrl }, state, questions);
+       const response = await fetchFn(request.url, {
+         method: request.method,
+         headers: request.headers,
+@@ -179,7 +193,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
+       stage = 'read_output';
+       const output = persisted ? await $.fs.read(persisted) : record.stdout;
+       sourceChars = output.length;
+-      if (configured.diagnostics) sourceEstimatedTokens = estimateTokens(output);
++      if (configured.diagnostics || configured.decisionsDir) sourceEstimatedTokens = estimateTokens(output);
+       decision = 'below_threshold';
+       if (!exceedsOutputThreshold(output, configured.minTokens, configured.minTokensFloor)) return answer;
+       decision = 'binary';
+@@ -198,7 +212,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
+       const secret = looksSecret(event.command, combined);
+       const path = secret
+         ? undefined
+-        : persisted ?? `${ARCHIVE_DIR}/bash-${event.tool_use_id ?? Date.now()}.txt`;
++        : persisted ?? `${configured.archiveDir}/bash-${event.tool_use_id ?? Date.now()}.txt`;
+       const footer = recoveryFooter(path);
+       const maxChars = persisted
+         ? Math.min(
+@@ -217,7 +231,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
+       let archived: Promise<void> | undefined;
+       const saveOutput = async (): Promise<void> => {
+         if (!path || persisted) return;
+-        const ignorePath = `${ARCHIVE_DIR}/.gitignore`;
++        const ignorePath = `${configured.archiveDir}/.gitignore`;
+         if (!(await $.fs.exists(ignorePath))) await $.fs.write(ignorePath, '*\n');
+         await $.fs.write(path, combined);
+       };
+@@ -241,6 +255,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
+           },
+           apiKey,
+           configured.model,
++          configured.baseUrl,
+         ),
+         {
+           minTokens: configured.minTokens,
+@@ -279,26 +294,44 @@ export const register: Register = (on: On, options: PluginOptions) => {
+       $.ui.log(`bash output trim skipped (stage=${stage})`);
+       return answer;
+     } finally {
++      const decisionRecord = () => ({
++        version: 1, toolUseId: event.tool_use_id ?? null, decision, stage,
++        informationCategory,
++        persisted: Boolean(original?.persistedOutputPath),
++        modelVisibleCharsBefore: answer.text?.length ?? null,
++        modelVisibleBudgetChars,
++        sourceChars, sourceEstimatedTokens, hookStdoutCharsBefore, hookStdoutCharsAfter,
++        hookStderrCharsBefore: original?.stderr.length ?? null,
++        hookStderrCharsAfter: decision === 'pruned' && original?.persistedOutputPath
++          ? 0 : original?.stderr.length ?? null,
++        chunks: pruning?.chunks ?? 0, kept: pruning?.kept ?? 0, dropped: pruning?.dropped ?? 0,
++        withinChunkOnly: Boolean(pruning?.trimmed && pruning.dropped === 0),
++        requests, requestLimit, elapsedMs: Date.now() - started,
++      });
+       if (configured.diagnostics) {
+         try {
+-          $.ui.log(`fast-jev-output decision ${JSON.stringify({
+-            version: 1, toolUseId: event.tool_use_id ?? null, decision, stage,
+-            informationCategory,
+-            persisted: Boolean(original?.persistedOutputPath),
+-            modelVisibleCharsBefore: answer.text?.length ?? null,
+-            modelVisibleBudgetChars,
+-            sourceChars, sourceEstimatedTokens, hookStdoutCharsBefore, hookStdoutCharsAfter,
+-            hookStderrCharsBefore: original?.stderr.length ?? null,
+-            hookStderrCharsAfter: decision === 'pruned' && original?.persistedOutputPath
+-              ? 0 : original?.stderr.length ?? null,
+-            chunks: pruning?.chunks ?? 0, kept: pruning?.kept ?? 0, dropped: pruning?.dropped ?? 0,
+-            withinChunkOnly: Boolean(pruning?.trimmed && pruning.dropped === 0),
+-            requests, requestLimit, elapsedMs: Date.now() - started,
+-          })}`);
++          $.ui.log(`fast-jev-output decision ${JSON.stringify(decisionRecord())}`);
+         } catch {
+           // Diagnostics cannot change the tool result.
+         }
+       }
++      // agent-factory local change 3: the decision record, counts only (never the command or the output). last.json is
++      // the heartbeat every Bash call rewrites; a decision taken past the size floor also gets a file of its own under
++      // the UTC day, one file per call, so parallel calls never write the same file.
++      if (configured.decisionsDir) {
++        try {
++          const at = new Date(started).toISOString();
++          const line = `${JSON.stringify({ at, ...decisionRecord() })}\n`;
++          await $.fs.write(`${configured.decisionsDir}/last.json`, line);
++          if (!BEFORE_THE_FLOOR.has(decision)) {
++            const id = String(event.tool_use_id ?? 'none').replace(/[^A-Za-z0-9_-]/g, '_');
++            const name = `${at.slice(0, 10)}/${at.replace(/[:.]/g, '')}-${id}.json`;
++            await $.fs.write(`${configured.decisionsDir}/${name}`, line);
++          }
++        } catch {
++          // A decision record cannot change the tool result.
++        }
++      }
+     }
+   });
+ };
+```
+
+```diff
+--- a/.claude-plugin/plugin.json
++++ b/.claude-plugin/plugin.json
+@@ -71,6 +71,21 @@
+       "description": "Additional Jev calls beyond the first, shared by scoring, retries and refinement. The hook also limits total calls to one per 192 visible preview characters, rounded up. 0 permits only the initial call.",
+       "default": 11
+     },
++    "baseUrl": {
++      "type": "string",
++      "title": "System One endpoint URL",
++      "description": "Overrides https://api.typesafe.ai/v1/systemone, e.g. a local relay or a local model server. agent-factory local change 3."
++    },
++    "archiveDir": {
++      "type": "string",
++      "title": "Archive folder",
++      "description": "Where a trimmed output's full text is saved for recovery. Default .claude/fast-jev-output. agent-factory local change 3."
++    },
++    "decisionsDir": {
++      "type": "string",
++      "title": "Decision record folder",
++      "description": "If set, every Bash call rewrites last.json here, and a call past the size floor also writes <UTC day>/<time>-<tool use id>.json. Counts only, never the command or the output. agent-factory local change 3."
++    },
+     "model": {
+       "type": "string",
+       "title": "Jev model",
 ```
 
 ## Rebuilding and re-checking

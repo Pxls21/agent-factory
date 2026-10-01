@@ -1,6 +1,6 @@
 // P1 replay bridge (task #231): runs the VENDORED jev-pruner's own trimOutput (vendor/jev-pruner/dist, pinned 47d017c
 // plus the one local option `minTokensFloor`) on one recorded tool result per stdin line, the way the plugin's tool.call
-// handler drives it (vendor/jev-pruner/hooks/fast-jev-output.ts:156-303), and answers one JSON line on stdout.
+// handler drives it (vendor/jev-pruner/hooks/fast-jev-output.ts:170-336), and answers one JSON line on stdout.
 //
 // The chunking, keep rules and rendering are the pruner's (trimOutput). This file holds only the host side: the handler's
 // parameter glue (mirrored line by line, cited below) and the transport to the local Laya scorer with the seed's fail-open
@@ -15,7 +15,7 @@ import { classifyOutput, exceedsOutputThreshold, looksBinary, looksStructured, r
 import { classifyInformation, isProtectedLine, keepScore } from '../../vendor/jev-pruner/dist/retention.js';
 import { looksSecret } from '../../vendor/jev-pruner/dist/secrets.js';
 
-// hooks/fast-jev-output.ts:18-28 (ARCHIVE_DIR, DEFAULT_MAX_SCORING_REQUESTS, VISIBLE_CHARS_PER_REQUEST, DEFAULTS).
+// hooks/fast-jev-output.ts:18-33 (ARCHIVE_DIR, DEFAULT_MAX_SCORING_REQUESTS, VISIBLE_CHARS_PER_REQUEST, DEFAULTS).
 export const HOOK = {
   archiveDir: '.claude/fast-jev-output',
   defaultMaxScoringRequests: 11,
@@ -42,7 +42,7 @@ export class FailOpen extends Error {
 const now = () => performance.now();
 const round = (ms) => Math.round(ms * 10) / 10;
 
-// hooks/fast-jev-output.ts:115-126.
+// hooks/fast-jev-output.ts:129-140.
 export function goalFromMessages(messages) {
   return messages
     .filter((m) => m.role === 'user' && m.text.trim().length > 0 && (!m.toolResults || m.toolResults.length === 0))
@@ -55,7 +55,7 @@ function refused(error) {
   return error?.cause?.code === 'ECONNREFUSED' || error?.code === 'ECONNREFUSED';
 }
 
-// The host transport: the hook's jevAsker (hooks/fast-jev-output.ts:101-113: buildJevRequest, fetch, parseJevResponse)
+// The host transport: the hook's jevAsker (hooks/fast-jev-output.ts:115-127: buildJevRequest, fetch, parseJevResponse)
 // plus the seed's trips. `tr`: {url, budget_ms, abort_at_budget, enforce_budget, serialize, request_timeout_ms, plan_only}.
 // Modes: live = abort at the budget, refuse a second pending request; replay = the same trips, but an in-flight request
 // is waited for (never abandoned on the shared server) and its real latency kept; unbudgeted = no budget or queue trip,
@@ -212,7 +212,7 @@ export function chunkLabels(sent, result, rendered, footer, keepThreshold) {
   };
 }
 
-// One recorded tool result through the handler's steps (hooks/fast-jev-output.ts:156-277), at the P1 floor.
+// One recorded tool result through the handler's steps (hooks/fast-jev-output.ts:170-292), at the P1 floor.
 export async function runJob(job, archives) {
   const t0 = now();
   const answer = job.answer;

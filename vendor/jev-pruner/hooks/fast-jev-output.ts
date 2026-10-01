@@ -16,6 +16,11 @@ import type { InformationCategory } from '../src/retention.js';
 export { looksSecret } from '../src/secrets.js';
 
 const ARCHIVE_DIR = '.claude/fast-jev-output';
+// agent-factory local change 3 (vendor/jev-pruner/PROVENANCE.md): the decisions taken before the size floor. A call
+// that ends on one of them gets the heartbeat record only; any other decision also gets a record of its own.
+const BEFORE_THE_FLOOR = new Set([
+  'denied', 'tool_error', 'missing_result', 'archive_recovery', 'persisted_disabled', 'below_threshold',
+]);
 const DEFAULT_MAX_SCORING_REQUESTS = 11;
 const VISIBLE_CHARS_PER_REQUEST = 192;
 const DEFAULTS = {
@@ -46,6 +51,10 @@ export type HookFetch = (
 
 export type HookConfig = {
   apiKey?: string;
+  // agent-factory local change 3: the scorer's URL (the owner's patch, ported), the archive folder, the decision records.
+  baseUrl?: string;
+  archiveDir: string;
+  decisionsDir?: string;
   chunkChars?: number;
   diagnostics?: boolean;
   chunkLines: number;
@@ -84,12 +93,17 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
       typeof options.persistedOutputs === 'boolean' ? options.persistedOutputs : true,
     persistedMaxChars: optionNumber(options, 'persistedMaxChars', DEFAULTS.persistedMaxChars),
     model: optionString(options, 'model') ?? DEFAULTS.model,
+    archiveDir: optionString(options, 'archiveDir') ?? ARCHIVE_DIR,
   };
   const apiKey = optionString(options, 'apiKey');
   if (apiKey) config.apiKey = apiKey;
   const chunkChars = optionNumber(options, 'chunkChars', 0);
   if (chunkChars > 0) config.chunkChars = chunkChars;
   if (options.diagnostics === true) config.diagnostics = true;
+  const baseUrl = optionString(options, 'baseUrl');
+  if (baseUrl) config.baseUrl = baseUrl;
+  const decisionsDir = optionString(options, 'decisionsDir');
+  if (decisionsDir) config.decisionsDir = decisionsDir;
   if (options.maxScoringRequests !== undefined) {
     config.maxScoringRequests = Math.max(0, Math.floor(
       optionNumber(options, 'maxScoringRequests', DEFAULT_MAX_SCORING_REQUESTS),
@@ -98,10 +112,10 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
   return config;
 }
 
-export function jevAsker(fetchFn: HookFetch, apiKey: string, model: string): JevAsker {
+export function jevAsker(fetchFn: HookFetch, apiKey: string, model: string, baseUrl?: string): JevAsker {
   return {
     async ask(state, questions) {
-      const request = buildJevRequest({ apiKey, model }, state, questions);
+      const request = buildJevRequest({ apiKey, model, baseUrl }, state, questions);
       const response = await fetchFn(request.url, {
         method: request.method,
         headers: request.headers,
@@ -179,7 +193,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
       stage = 'read_output';
       const output = persisted ? await $.fs.read(persisted) : record.stdout;
       sourceChars = output.length;
-      if (configured.diagnostics) sourceEstimatedTokens = estimateTokens(output);
+      if (configured.diagnostics || configured.decisionsDir) sourceEstimatedTokens = estimateTokens(output);
       decision = 'below_threshold';
       if (!exceedsOutputThreshold(output, configured.minTokens, configured.minTokensFloor)) return answer;
       decision = 'binary';
@@ -198,7 +212,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
       const secret = looksSecret(event.command, combined);
       const path = secret
         ? undefined
-        : persisted ?? `${ARCHIVE_DIR}/bash-${event.tool_use_id ?? Date.now()}.txt`;
+        : persisted ?? `${configured.archiveDir}/bash-${event.tool_use_id ?? Date.now()}.txt`;
       const footer = recoveryFooter(path);
       const maxChars = persisted
         ? Math.min(
@@ -217,7 +231,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
       let archived: Promise<void> | undefined;
       const saveOutput = async (): Promise<void> => {
         if (!path || persisted) return;
-        const ignorePath = `${ARCHIVE_DIR}/.gitignore`;
+        const ignorePath = `${configured.archiveDir}/.gitignore`;
         if (!(await $.fs.exists(ignorePath))) await $.fs.write(ignorePath, '*\n');
         await $.fs.write(path, combined);
       };
@@ -241,6 +255,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
           },
           apiKey,
           configured.model,
+          configured.baseUrl,
         ),
         {
           minTokens: configured.minTokens,
@@ -279,24 +294,42 @@ export const register: Register = (on: On, options: PluginOptions) => {
       $.ui.log(`bash output trim skipped (stage=${stage})`);
       return answer;
     } finally {
+      const decisionRecord = () => ({
+        version: 1, toolUseId: event.tool_use_id ?? null, decision, stage,
+        informationCategory,
+        persisted: Boolean(original?.persistedOutputPath),
+        modelVisibleCharsBefore: answer.text?.length ?? null,
+        modelVisibleBudgetChars,
+        sourceChars, sourceEstimatedTokens, hookStdoutCharsBefore, hookStdoutCharsAfter,
+        hookStderrCharsBefore: original?.stderr.length ?? null,
+        hookStderrCharsAfter: decision === 'pruned' && original?.persistedOutputPath
+          ? 0 : original?.stderr.length ?? null,
+        chunks: pruning?.chunks ?? 0, kept: pruning?.kept ?? 0, dropped: pruning?.dropped ?? 0,
+        withinChunkOnly: Boolean(pruning?.trimmed && pruning.dropped === 0),
+        requests, requestLimit, elapsedMs: Date.now() - started,
+      });
       if (configured.diagnostics) {
         try {
-          $.ui.log(`fast-jev-output decision ${JSON.stringify({
-            version: 1, toolUseId: event.tool_use_id ?? null, decision, stage,
-            informationCategory,
-            persisted: Boolean(original?.persistedOutputPath),
-            modelVisibleCharsBefore: answer.text?.length ?? null,
-            modelVisibleBudgetChars,
-            sourceChars, sourceEstimatedTokens, hookStdoutCharsBefore, hookStdoutCharsAfter,
-            hookStderrCharsBefore: original?.stderr.length ?? null,
-            hookStderrCharsAfter: decision === 'pruned' && original?.persistedOutputPath
-              ? 0 : original?.stderr.length ?? null,
-            chunks: pruning?.chunks ?? 0, kept: pruning?.kept ?? 0, dropped: pruning?.dropped ?? 0,
-            withinChunkOnly: Boolean(pruning?.trimmed && pruning.dropped === 0),
-            requests, requestLimit, elapsedMs: Date.now() - started,
-          })}`);
+          $.ui.log(`fast-jev-output decision ${JSON.stringify(decisionRecord())}`);
         } catch {
           // Diagnostics cannot change the tool result.
+        }
+      }
+      // agent-factory local change 3: the decision record, counts only (never the command or the output). last.json is
+      // the heartbeat every Bash call rewrites; a decision taken past the size floor also gets a file of its own under
+      // the UTC day, one file per call, so parallel calls never write the same file.
+      if (configured.decisionsDir) {
+        try {
+          const at = new Date(started).toISOString();
+          const line = `${JSON.stringify({ at, ...decisionRecord() })}\n`;
+          await $.fs.write(`${configured.decisionsDir}/last.json`, line);
+          if (!BEFORE_THE_FLOOR.has(decision)) {
+            const id = String(event.tool_use_id ?? 'none').replace(/[^A-Za-z0-9_-]/g, '_');
+            const name = `${at.slice(0, 10)}/${at.replace(/[:.]/g, '')}-${id}.json`;
+            await $.fs.write(`${configured.decisionsDir}/${name}`, line);
+          }
+        } catch {
+          // A decision record cannot change the tool result.
         }
       }
     }

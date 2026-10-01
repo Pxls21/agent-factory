@@ -71,6 +71,21 @@
       "description": "Additional Jev calls beyond the first, shared by scoring, retries and refinement. The hook also limits total calls to one per 192 visible preview characters, rounded up. 0 permits only the initial call.",
       "default": 11
     },
+    "baseUrl": {
+      "type": "string",
+      "title": "System One endpoint URL",
+      "description": "Overrides https://api.typesafe.ai/v1/systemone, e.g. a local relay or a local model server. agent-factory local change 3."
+    },
+    "archiveDir": {
+      "type": "string",
+      "title": "Archive folder",
+      "description": "Where a trimmed output's full text is saved for recovery. Default .claude/fast-jev-output. agent-factory local change 3."
+    },
+    "decisionsDir": {
+      "type": "string",
+      "title": "Decision record folder",
+      "description": "If set, every Bash call rewrites last.json here, and a call past the size floor also writes <UTC day>/<time>-<tool use id>.json. Counts only, never the command or the output. agent-factory local change 3."
+    },
     "model": {
       "type": "string",
       "title": "Jev model",
