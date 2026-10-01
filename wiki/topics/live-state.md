@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-01 01:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 01:3xZ): 60d01a93; CI run #1201 passed on the K2 landing (151181d).**
+- **LIVE (as of 01:3xZ):** K2 (task #353, closed): the file-pack hook injects a pack on the first touch of a tracked file (PreToolUse on Read, Edit, Write and Bash) and resets at SessionStart; the post-commit hook rebuilds the packs after each commit. Off switch: `.jev/filepacks-off` (it stops injection, not builds). Follow-ups: task #428 (backlog). **RUNNING:** the Jev relay (pid 722, 127.0.0.1:47430). No lane is running.
+
 **2026-10-01 00:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 00:5xZ): f93bf77f. The K2 registration commit and the commit recording it live ride the next push; CI run #1200 (records and one skill line) runs meanwhile.**
 - **LIVE (as of 00:5xZ):** K2 (task #353, closed): the file-pack hook injects a pack on the first touch of a tracked file (PreToolUse on Read, Edit, Write and Bash) and resets at SessionStart; the post-commit hook rebuilds the packs after each commit. Off switch: `.jev/filepacks-off` (it stops injection, not builds). Follow-ups: task #428 (backlog). **RUNNING:** the Jev relay (pid 722, 127.0.0.1:47430).
