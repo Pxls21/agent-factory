@@ -72,9 +72,29 @@ fast-jev-output-floor@agent-factory-vendor`, `claude plugin configure ... --valu
 a placeholder: the relay drops the caller's Authorization header and adds the codiv key itself, so no pruner holds a real
 key), then `claude plugin disable fast-jev-output@fast-jev-output`.
 
+## Addendum 09:4xZ: the first live decisions, and the history window (local change 4, task #436)
+
+- **The restart.** The container was recycled while the owner was away; the session's resume started a new Claude Code
+  at 09:14:19Z, which loaded our copy (first heartbeat 09:23:22Z). `/reload-plugins` does not run over a remote
+  connection (the owner, 09:22Z: "isn't available over a remote connection in this session").
+- **Relative folders.** The hook resolves a relative `decisionsDir` or `archiveDir` against Claude Code's launch
+  directory (`/home/user` in this cloud session), so the first records landed in `/home/user/.jev/`. Both are now
+  absolute. That option change reloaded the hook at once: the next heartbeat landed in the repo's folder.
+- **The first live decision past the floor (09:26:54Z):** a 220-line `git log`, 7,588 estimated tokens, 11 chunks, 12
+  requests through the relay (0 errors) in 12.7 s, decision `incomplete_coverage`: all 11 chunks kept. The cause:
+  upstream scores every chunk against every slice of the WHOLE session's history and keeps any chunk not scored against
+  all of them, and the hook allows 12 requests per output, far fewer than this session's slices (P1 saw it once,
+  2026-09-25). The relay spaces its sends 1.05 s apart, so the 12 requests cost about 13 s, for nothing.
+- **Local change 4:** `historyTokens`, the newest whole messages that fit that many estimated tokens; set to 3,000, under
+  half of `maxStateTokens` (8,000), so the window is one slice. On a test session of 400 messages: 1 request instead of
+  12, and 13 of 15 chunks dropped instead of none. The task (the last three prompts) still comes from the whole session.
+- **Not live yet.** Installed as version 0.1.1 at 09:41Z; it runs from the next Claude Code start, because an option
+  change reloads the code already loaded (09:41:19Z: the record still lacked the new fields, 12 requests again, 13.8 s).
+  The probe now warns while an installed update is newer than the running Claude Code.
+
 ## NOT done here
 
-- The running session still runs the upstream hook it loaded at start. Our copy takes over at the next Claude Code start
-  or a `/reload-plugins`; the probe (`scripts/jev_liveness.py`, orient's layer 0) warns until its heartbeat appears.
+- The first live decision under the history window: it needs the next Claude Code start (the addendum above).
+- The replay bridge (`scripts/jev_pipes/bridge.mjs`) does not replay the window yet (task #437).
 - The drop rate per size band at the new floor: read it from the decision records after a day, then tune the floor.
 - The saved-output path: whether a larger budget than the preview, or skipping such outputs, serves better.

@@ -66,15 +66,24 @@ def dead_url():
     return f"http://127.0.0.1:{port}"
 
 
-def _tree(tmp_path: Path, relay: str, *, enabled: dict, beat: str | None, bash_finish: str, floor: int = 1000) -> dict:
+STARTED = "2026-10-01T02:00:00Z"  # the Claude Code start the tests pass; the fixture's installs come before it
+
+
+def _tree(tmp_path: Path, relay: str, *, enabled: dict, beat: str | None, bash_finish: str, floor: int = 1000,
+          decisions_dir: str | None = None, updated: str = "2026-10-01T01:00:00Z") -> dict:
     tmp_path.mkdir(parents=True, exist_ok=True)
     key = "fake-" + secrets.token_hex(8)
+    records = tmp_path / ".jev" / "pruner" / "decisions"
     settings = {"enabledPlugins": enabled, "pluginConfigs": {
         OURS: {"options": {"apiKey": key, "baseUrl": relay + "/v1/systemone", "minTokensFloor": floor,
-                           "minTokens": floor, "decisionsDir": ".jev/pruner/decisions"}},
+                           "minTokens": floor, "decisionsDir": decisions_dir or str(records)}},
         UPSTREAM: {"options": {"baseUrl": relay + "/v1/systemone"}}}}
     (tmp_path / "settings.json").write_text(json.dumps(settings))
-    records = tmp_path / ".jev" / "pruner" / "decisions"
+    (tmp_path / "installed.json").write_text(json.dumps({"version": 2, "plugins": {
+        OURS: [{"scope": "project", "version": "0.1.0", "installedAt": "2026-09-30T10:00:00Z",
+                "lastUpdated": "2026-09-30T10:00:00Z"},  # an older row: the newest of the rows counts
+               {"scope": "user", "version": "0.1.1", "installedAt": "2026-10-01T00:30:00Z", "lastUpdated": updated}],
+        UPSTREAM: [{"scope": "user", "version": "0.1.0", "installedAt": "2026-09-22T19:18:25.132Z"}]}}))
     (records / "2026-10-01").mkdir(parents=True)
     if beat:
         (records / "last.json").write_text(json.dumps({"at": beat, "decision": "below_threshold"}) + "\n")
@@ -96,6 +105,7 @@ def _tree(tmp_path: Path, relay: str, *, enabled: dict, beat: str | None, bash_f
 
 def _run(tmp_path: Path, relay: str, dead: str, transcript: Path, *extra: str) -> subprocess.CompletedProcess:
     argv = [sys.executable, str(SCRIPT), "--settings", str(tmp_path / "settings.json"), "--root", str(tmp_path),
+            "--installed", str(tmp_path / "installed.json"), "--claude-started", STARTED,
             "--transcript", str(transcript), "--now", NOW, "--endpoint", f"relay={relay}",
             "--endpoint", f"laya={dead}", "--endpoint", f"qwen={dead}", *extra]
     return subprocess.run(argv, capture_output=True, text=True, timeout=60)
@@ -170,3 +180,30 @@ def test_a_relay_on_other_code_is_named(tmp_path, relay_url, dead_url):
     _Health.identity = {}  # a server with no identity at all: both hashes are named
     run = _run(tmp_path, relay_url, dead_url, tree["transcript"])
     assert run.stdout.count("a stale or foreign relay") == 2
+
+
+def test_an_update_after_the_start_is_named_and_one_before_is_not(tmp_path, relay_url, dead_url):
+    """An update reaches the running hook only at a restart (2026-10-01: 0.1.1 installed at 09:41Z ran the old code)."""
+    tree = _tree(tmp_path, relay_url, enabled={OURS: True}, beat="2026-10-01T02:59:30Z", bash_finish="2026-10-01T02:59:00Z",
+                 updated="2026-10-01T02:30:00Z")
+    run = _run(tmp_path, relay_url, dead_url, tree["transcript"])
+    assert ("  WARN the our copy pruner was installed or updated at 2026-10-01T02:30:00+00:00, after this Claude Code "
+            "started at 2026-10-01T02:00:00+00:00: the running hook is the older code until a restart (a session resume "
+            "restarts it; /reload-plugins does not run over a remote connection)") in run.stdout.splitlines()
+    tree = _tree(tmp_path / "before", relay_url, enabled={OURS: True}, beat="2026-10-01T02:59:30Z",
+                 bash_finish="2026-10-01T02:59:00Z", updated=STARTED)  # the same second is not after
+    run = _run(tmp_path / "before", relay_url, dead_url, tree["transcript"])
+    assert "WARN" not in run.stdout, run.stdout
+
+
+def test_a_relative_record_folder_is_named_not_read(tmp_path, relay_url, dead_url):
+    """The hook resolves a relative decisionsDir against Claude Code's launch directory (/home/user in the cloud
+    session, 2026-10-01), so the probe names it instead of reading the repo's folder and calling the hook dead."""
+    tree = _tree(tmp_path, relay_url, enabled={OURS: True}, beat="2026-10-01T02:40:00Z", bash_finish="2026-10-01T02:59:00Z",
+                 decisions_dir=".jev/pruner/decisions")
+    run = _run(tmp_path, relay_url, dead_url, tree["transcript"])
+    warns = [line for line in run.stdout.splitlines() if "WARN" in line]
+    assert warns == ["  WARN the our copy pruner's decisionsDir is relative (.jev/pruner/decisions): the hook resolves it "
+                     "against Claude Code's launch directory, not the repo, so its records are not read here (set an "
+                     "absolute path with claude plugin configure)"], warns
+    assert "heartbeat" not in run.stdout

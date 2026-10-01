@@ -6,7 +6,10 @@ It only reads; it never sends a Jev request and never prints a key or session te
   each, in parallel, with no proxy;
 - the pruner plugins in Claude Code's user settings: which one is enabled, its size floor, its base URL;
 - the pruner's decision records (vendor/jev-pruner/PROVENANCE.md local change 3): the heartbeat `last.json` and the
-  day's per-decision files;
+  day's per-decision files, from an absolute `decisionsDir` only (the hook resolves a relative one against Claude Code's
+  launch directory);
+- when each pruner was installed or updated (installed_plugins.json) against when the running Claude Code started: an
+  update reaches the running hook only at a restart;
 - the relay's data log for the day: its row count and newest time;
 - the newest finished Bash call in the newest session transcript, which tells a quiet hook from a dead one.
 
@@ -49,6 +52,37 @@ def parse_at(text) -> dt.datetime | None:
         return dt.datetime.fromisoformat(str(text).replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def claude_started() -> dt.datetime | None:
+    """When the Claude Code process above this one started: the plugin code it runs was loaded then."""
+    try:
+        boot = next(int(line.split()[1]) for line in Path("/proc/stat").read_text().splitlines() if line.startswith("btime "))
+        pid = os.getppid()
+        while pid > 1:
+            fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+            argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[:2]
+            if any(arg == b"claude" or arg.endswith(b"/claude") for arg in argv):
+                return dt.datetime.fromtimestamp(boot + int(fields[19]) / os.sysconf("SC_CLK_TCK"), dt.timezone.utc)
+            pid = int(fields[1])
+    except (OSError, ValueError, IndexError, StopIteration):
+        pass
+    return None
+
+
+def installed_at(installed_path: Path) -> dict:
+    """Each plugin's newest install or update time, from Claude Code's installed_plugins.json."""
+    try:
+        plugins = json.loads(installed_path.read_text(encoding="utf-8")).get("plugins") or {}
+    except (OSError, ValueError, AttributeError):
+        return {}
+    out = {}
+    for plugin, rows in plugins.items():
+        times = [parse_at(row.get("lastUpdated") or row.get("installedAt")) for row in rows if isinstance(row, dict)]
+        times = [t for t in times if t]
+        if times:
+            out[plugin] = max(times)
+    return out
 
 
 def pruners(settings_path: Path) -> list[dict]:
@@ -181,18 +215,29 @@ def probe(args) -> tuple[list[str], list[str]]:
     if len(on) > 1:
         warns.append("both pruner plugins are enabled: each wraps every Bash call (enable one)")
     finish = newest_bash_finish(args.transcript)
+    started = parse_at(args.claude_started) if args.claude_started else claude_started()
+    updated = installed_at(args.installed)
     for p in on:
         name = "our copy" if p["plugin"] == OURS else "upstream"
         text = f"pruner {name} ({p['plugin']}) on, floor {p['floor']} tokens, to {p['base_url']}"
+        # An update reaches the running hook only at a restart; an option change reloads the code already loaded.
+        if started and updated.get(p["plugin"]) and updated[p["plugin"]] > started:
+            warns.append(f"the {name} pruner was installed or updated at {updated[p['plugin']].isoformat(timespec='seconds')}, "
+                         f"after this Claude Code started at {started.isoformat(timespec='seconds')}: the running hook is "
+                         "the older code until a restart (a session resume restarts it; /reload-plugins does not run "
+                         "over a remote connection)")
         if p["floor"] >= UPSTREAM_FLOOR:
             warns.append(f"the {name} pruner's floor is {p['floor']} tokens: no inline Bash output reached 10,000 in the "
                          "week measured (docs/research/findings/jev-trim/PRUNER-FLOOR-2026-10-01.md)")
         target = next((n for n, u in endpoints.items() if p["base_url"].startswith(u)), None)
         if target and not states[target]["up"]:
             warns.append(f"the {name} pruner sends to {target}, which is down: outputs past the floor pass untrimmed")
-        if p["decisions_dir"]:
-            record_dir = Path(p["decisions_dir"])
-            record = decisions(record_dir if record_dir.is_absolute() else args.root / record_dir, day)
+        if p["decisions_dir"] and not Path(p["decisions_dir"]).is_absolute():
+            warns.append(f"the {name} pruner's decisionsDir is relative ({p['decisions_dir']}): the hook resolves it "
+                         "against Claude Code's launch directory, not the repo, so its records are not read here (set "
+                         "an absolute path with claude plugin configure)")
+        elif p["decisions_dir"]:
+            record = decisions(Path(p["decisions_dir"]), day)
             last = record["last"] or {}
             beat = parse_at(last.get("at"))
             today = ", ".join(f"{k} {v}" for k, v in sorted(record["today"].items())) or "none"
@@ -211,7 +256,9 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--line", action="store_true", help="one line, for orient's layer 0")
     parser.add_argument("--settings", type=Path, default=Path.home() / ".claude" / "settings.json")
-    parser.add_argument("--root", type=Path, default=ROOT, help="the project root the plugin's relative folders hang off")
+    parser.add_argument("--installed", type=Path, default=Path.home() / ".claude" / "plugins" / "installed_plugins.json")
+    parser.add_argument("--claude-started", help="when Claude Code started, ISO 8601 (tests; default: read from /proc)")
+    parser.add_argument("--root", type=Path, default=ROOT, help="the project root that holds the relay's .jev/relay log")
     parser.add_argument("--transcript", type=Path, help="the session transcript (default: the newest one)")
     parser.add_argument("--endpoint", action="append", default=[], metavar="NAME=URL", help="add or replace an endpoint")
     parser.add_argument("--now", help="the clock, ISO 8601 (tests)")

@@ -5,7 +5,8 @@ import type {
   SessionMessage,
 } from 'claude-code';
 
-import { DEFAULT_MODEL, buildJevRequest, estimateTokens, parseJevResponse } from '../src/jev.js';
+import { DEFAULT_MODEL, buildJevRequest, estimateStateTokens, estimateTokens, parseJevResponse } from '../src/jev.js';
+import { historyEntries } from '../src/history.js';
 import { classifyOutput, exceedsOutputThreshold, looksBinary, MIN_OUTPUT_TOKENS, recoveryFooter, trimOutput } from '../src/output.js';
 import type { TrimOutputResult } from '../src/output.js';
 import type { JevAsker } from '../src/jev.js';
@@ -55,6 +56,8 @@ export type HookConfig = {
   baseUrl?: string;
   archiveDir: string;
   decisionsDir?: string;
+  // agent-factory local change 4: the history Jev scores against is the newest this many estimated tokens of it.
+  historyTokens?: number;
   chunkChars?: number;
   diagnostics?: boolean;
   chunkLines: number;
@@ -104,6 +107,10 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
   if (baseUrl) config.baseUrl = baseUrl;
   const decisionsDir = optionString(options, 'decisionsDir');
   if (decisionsDir) config.decisionsDir = decisionsDir;
+  // agent-factory local change 4: a finite number of at least 1 sets the window; anything else keeps the upstream's
+  // whole-session history.
+  const historyTokens = Math.floor(optionNumber(options, 'historyTokens', 0));
+  if (historyTokens >= 1) config.historyTokens = historyTokens;
   if (options.maxScoringRequests !== undefined) {
     config.maxScoringRequests = Math.max(0, Math.floor(
       optionNumber(options, 'maxScoringRequests', DEFAULT_MAX_SCORING_REQUESTS),
@@ -137,6 +144,21 @@ export function goalFromMessages(messages: readonly SessionMessage[]): string {
     .slice(-3)
     .map((message) => message.text.slice(0, 500))
     .join('\n');
+}
+
+/**
+ * agent-factory local change 4 (vendor/jev-pruner/PROVENANCE.md): the newest run of whole messages whose history
+ * entries fit `historyTokens`. Upstream scores every chunk against every slice of the whole session and keeps any chunk
+ * not scored against all of them, so a session with more slices than the request allowance was never pruned (the live
+ * test of 2026-10-01: 12 requests, 11 chunks, all kept as incomplete_coverage). A window that fits the history's share
+ * of `maxStateTokens` (at least half) is one slice. The newest message alone over the budget gives an empty window.
+ */
+export function recentMessages(messages: readonly SessionMessage[], historyTokens: number): SessionMessage[] {
+  let start = messages.length;
+  while (start > 0 && estimateStateTokens(JSON.stringify(historyEntries(messages.slice(start - 1)))) <= historyTokens) {
+    start -= 1;
+  }
+  return messages.slice(start);
 }
 
 /** Key lookup order: plugin option, TYPESAFE_API_KEY, EVAL_TYPESAFE_API_KEY, settings env. */
@@ -177,6 +199,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
     let sourceEstimatedTokens: number | null = null;
     let modelVisibleBudgetChars: number | null = null;
     let requestLimit: number | null = null;
+    let sessionMessages: number | null = null;
+    let historyMessages: number | null = null;
     let pruning: TrimOutputResult | undefined;
     let informationCategory: InformationCategory | null = null;
     const original = answer.deny === undefined && !answer.isError ? answer.result : undefined;
@@ -209,6 +233,10 @@ export const register: Register = (on: On, options: PluginOptions) => {
       stage = 'history';
       const messages = await $.session.messages();
       const goal = goalFromMessages(messages);
+      // agent-factory local change 4: Jev reads the newest historyTokens of the history; the task stays whole.
+      const history = configured.historyTokens ? recentMessages(messages, configured.historyTokens) : messages;
+      sessionMessages = messages.length;
+      historyMessages = history.length;
       const secret = looksSecret(event.command, combined);
       const path = secret
         ? undefined
@@ -240,7 +268,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
         {
           command: event.command,
           goal,
-          messages,
+          messages: history,
           output,
           fullOutputPath: path,
         },
@@ -307,6 +335,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
         chunks: pruning?.chunks ?? 0, kept: pruning?.kept ?? 0, dropped: pruning?.dropped ?? 0,
         withinChunkOnly: Boolean(pruning?.trimmed && pruning.dropped === 0),
         requests, requestLimit, elapsedMs: Date.now() - started,
+        sessionMessages, historyMessages,  // agent-factory local change 4
       });
       if (configured.diagnostics) {
         try {

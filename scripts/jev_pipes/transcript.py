@@ -6,7 +6,7 @@ Two passes over a transcript pinned at a byte length (the main session's file ke
   compaction boundaries, the tool inputs and assistant texts in order (the miss lookahead), and the candidate tool results
   with their pointers (transcript path + byte offset of the record that holds the result).
 - `windows` (pass 2): rebuilds, in file order, what the plugin runtime's `$.session.messages()` returns at each wanted
-  result (the jev-pruner hook reads its history there, `vendor/jev-pruner/hooks/fast-jev-output.ts:210`). The shape is the
+  result (the jev-pruner hook reads its history there, `vendor/jev-pruner/hooks/fast-jev-output.ts:234`). The shape is the
   runtime's `SessionMessage` (`types/claude-code.d.ts` at jev-pruner 47d017c): one entry per user or assistant message,
   `text` = its text blocks joined, `toolUses` with `text`/`result`/`isError` once the transcript holds the answer,
   `toolResults` on user messages, the newest 4,096 messages, and after a compaction only the summary and what follows.

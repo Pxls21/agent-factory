@@ -11,6 +11,9 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-01 09:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 09:4xZ): 9e409400; CI run #1205 passed on e316fa5 (the turn-end retro).**
+- **LIVE (as of 09:4xZ):** our pruner copy LOADED since the 09:14:19Z restart (task #406 running: its decisions so far keep everything, `incomplete_coverage`); version 0.1.1 with the history window (task #436) installed and configured, running from the next Claude Code start (the probe warns until then); the probe's line in orient's layer 0; K2. **RUNNING:** the Jev relay (pid 654, 127.0.0.1:47430). No lane is running. **NEXT:** step 3 of D-123 (D-124).
 **2026-10-01 03:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 03:5xZ): 0a700964; CI run #1203 passed on f2d9f5b (the pruner landing: D-123, tasks #415 and #407).**
 - **LIVE (as of 03:5xZ):** as in the 02:4xZ block below: our pruner copy installed and enabled, waiting for the next Claude Code start or /reload-plugins (task #406); the probe's line in orient's layer 0; K2. **RUNNING:** the Jev relay (pid 12410, 127.0.0.1:47430). No lane is running.

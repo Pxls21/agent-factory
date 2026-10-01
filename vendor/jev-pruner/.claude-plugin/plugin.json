@@ -1,6 +1,6 @@
 {
   "name": "fast-jev-output-floor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Trim long Bash output with Jev before the model sees it (Claude Code plugin)",
   "license": "MIT",
   "userConfig": {
@@ -85,6 +85,11 @@
       "type": "string",
       "title": "Decision record folder",
       "description": "If set, every Bash call rewrites last.json here, and a call past the size floor also writes <UTC day>/<time>-<tool use id>.json. Counts only, never the command or the output. agent-factory local change 3."
+    },
+    "historyTokens": {
+      "type": "number",
+      "title": "History window tokens",
+      "description": "If set (1 or more), Jev scores against the newest whole messages that fit this many estimated tokens instead of every slice of the session; the task (the last three prompts) is unchanged. Keep it at or under half of maxStateTokens so the window is one slice. Unset, a long session leaves every chunk unscored and kept. agent-factory local change 4."
     },
     "model": {
       "type": "string",

@@ -7,7 +7,8 @@
   `scripts/vendored_manifest.py` (`VENDORED_ROOTS`) and `sandbox-kit/VENDORED-FROM.md`.
 - **Vendored:** 2026-09-25 by the P1 build lane (task #231, seed `seeds/seed-jev-pipes-p1-v1.yaml`, D-087).
 - **Changed:** 2026-09-30 by the T408 build lane (task #408, D-118 item 2): local change 2 (the floor as a hook option)
-  and the plugin manifests, so the copy installs as a plugin of its own (below).
+  and the plugin manifests, so the copy installs as a plugin of its own (below); 2026-10-01 by the coordinator: local
+  change 3 (task #415) and local change 4 with the version 0.1.1 (task #436).
 - **Role:** advisory. The replay harness `scripts/jev_pipes/replay_pruner.py` runs this copy's own chunking, keep rules and
   rendering. It is never a gate and never sits in a fail-closed path.
 
@@ -40,13 +41,14 @@ uncommitted `baseUrl` patch in `plugin.json` and in the hook; it is not copied.
 
 | File | upstream git blob at 47d017c | sha256 here |
 |---|---|---|
-| `.claude-plugin/plugin.json` | `db3a0b1ed98aaae664a4c2ac8c5143c9d2c0b3d6` | `06e7e2c70f5a5be3279af16fed548bb9a237ba11ea48da9acc7742b283f8c348` (change 3; `f1f83c08…` after T408) |
-| `.claude-plugin/marketplace.json` | `6b3748fc216ab50a65eccdbbad4197dd2b2a147b` | `486e2105a4a307ef66fcd576ef74775ca3e2497fa7e3b830201aefc565419989` |
+| `.claude-plugin/plugin.json` | `db3a0b1ed98aaae664a4c2ac8c5143c9d2c0b3d6` | `801d2d6109ac2b12827f34d3138c32259b33626a129a50afbd4bb51e99c455ae` (change 4; `06e7e2c7…` after change 3, `f1f83c08…` after T408) |
+| `.claude-plugin/marketplace.json` | `6b3748fc216ab50a65eccdbbad4197dd2b2a147b` | `d7520ca6a8719e3e4308ac0bdf078683a2d4f42478e0df4a51ec012fe1295e1e` (change 4's version; `486e2105…` before) |
 | `hooks/hooks.json` (copied 2026-09-25, unchanged) | `b929bab3cdf8e42c2f8b9abcd6ef27a438ab0e52` | `f880049cfcf59ed9f324e6440ac1b924602945141b0925820d968403c767f240` |
 
 The plugin needs no other file to load. `claude plugin validate` (Claude Code 2.1.285, run under `unshare --net` on scratch
 copies of the commit) follows the hook's imports: `plugin.json`, `hooks/hooks.json`, `hooks/fast-jev-output.ts` and
-`src/{jev,output,history,retention,secrets}.ts` pass; without `src/history.ts` it reports `cannot import "./history.js"`;
+`src/{jev,output,history,retention,secrets}.ts` pass; without `src/history.ts` it reports `cannot import "./history.js"` (since change 4 the hook's own import:
+`cannot import "../src/history.js" (from hooks/fast-jev-output.ts)`);
 without `package.json` it still passes. Still not copied: `types/` and `tsconfig.hooks.json` (they type-check the hook,
 `npm run typecheck:hooks`; its `claude-code` import is type-only and empty at run time), `.codex-plugin/`, `codex/`,
 `.agents/`, `tests/`, `evals/`, `demo/`, `package-lock.json`, `.gitignore`, `node_modules/`.
@@ -88,8 +90,9 @@ same way from the changed `src/`. Only four files differ from the pinned build: 
 
 ## Local changes (every one, as a diff)
 
-There are THREE local changes, plus the manifests' own (below). The first two lower the output-size floor only when
-asked; the third adds three options (the scorer's URL, the archive folder, the decision records), each off when unset.
+There are FOUR local changes, plus the manifests' own (below). The first two lower the output-size floor only when
+asked; the third adds three options (the scorer's URL, the archive folder, the decision records), each off when unset;
+the fourth adds one (the history window, off when unset) and raises the copy's version.
 
 Change 1 (P1, task #231, 2026-09-25) is an explicit option for LIBRARY callers. Upstream floors `minTokens` at
 `MIN_OUTPUT_TOKENS = 10_000` in `exceedsOutputThreshold` (`src/output.ts:81-83` at 47d017c), so a caller cannot trim anything
@@ -513,6 +516,163 @@ them, 2026-10-01). No `src/` file changed, so `dist/` was not rebuilt.
      "model": {
        "type": "string",
        "title": "Jev model",
+```
+
+### Change 4: the history window and the version (task #436, 2026-10-01)
+
+One number option, unset by default, so without it the behavior is change 3's exactly; and the copy's version, raised
+to 0.1.1 in both manifests, because `claude plugin update` installs only a new version (with the version unchanged it
+reports `already at the latest version (0.1.0)`).
+
+- `historyTokens`: upstream partitions the WHOLE session's messages into slices that fit the state budget and scores
+  every chunk against every slice; a chunk not scored against all of them is kept (`incomplete_coverage`). The hook allows
+  12 requests per output, so in a session longer than about 12 slices nothing is ever pruned. Live on 2026-10-01 at
+  09:26Z: a 7,588-token output, 11 chunks, 12 requests through the relay, all 11 kept. With the option the hook passes
+  `trimOutput` only the newest run of whole messages whose history entries fit `historyTokens` estimated tokens
+  (`recentMessages`, measured with the library's own `historyEntries` and `estimateStateTokens`), so a window at or under
+  half of `maxStateTokens` is one slice. The task (`goal`, the last three prompts) is still read from the whole session.
+  A newest message that alone is over the budget gives an empty window: Jev then scores against the task and the command.
+  The option takes a finite number of at least 1 (rounded down); anything else leaves the whole session.
+- The decision record gains `sessionMessages` and `historyMessages` (counts only), the live sign that the window runs.
+
+`tests/test_jev_pruner_floor.py` drives the real hook on a 400-message session of more than 100,000 estimated tokens with
+a scorer that answers noul 0 for every chunk: without the option, 12 requests and nothing pruned (`incomplete_coverage`);
+with `historyTokens` 2000, one request and 13 of 15 chunks dropped, the task still the session's last three prompts. Four
+`change4` tests; nine hook mutants, each killed by them (2026-10-01). No `src/` file changed, so `dist/` was not rebuilt.
+An update reaches a running Claude Code only at its next start: an option change reloads the hook code already loaded
+(measured 2026-10-01: 0.1.1 installed at 09:41Z, an option changed, and the next record still lacked the new fields).
+
+```diff
+--- a/hooks/fast-jev-output.ts
++++ b/hooks/fast-jev-output.ts
+@@ -5,7 +5,8 @@ import type {
+   SessionMessage,
+ } from 'claude-code';
+ 
+-import { DEFAULT_MODEL, buildJevRequest, estimateTokens, parseJevResponse } from '../src/jev.js';
++import { DEFAULT_MODEL, buildJevRequest, estimateStateTokens, estimateTokens, parseJevResponse } from '../src/jev.js';
++import { historyEntries } from '../src/history.js';
+ import { classifyOutput, exceedsOutputThreshold, looksBinary, MIN_OUTPUT_TOKENS, recoveryFooter, trimOutput } from '../src/output.js';
+ import type { TrimOutputResult } from '../src/output.js';
+ import type { JevAsker } from '../src/jev.js';
+@@ -55,6 +56,8 @@ export type HookConfig = {
+   baseUrl?: string;
+   archiveDir: string;
+   decisionsDir?: string;
++  // agent-factory local change 4: the history Jev scores against is the newest this many estimated tokens of it.
++  historyTokens?: number;
+   chunkChars?: number;
+   diagnostics?: boolean;
+   chunkLines: number;
+@@ -104,6 +107,10 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
+   if (baseUrl) config.baseUrl = baseUrl;
+   const decisionsDir = optionString(options, 'decisionsDir');
+   if (decisionsDir) config.decisionsDir = decisionsDir;
++  // agent-factory local change 4: a finite number of at least 1 sets the window; anything else keeps the upstream's
++  // whole-session history.
++  const historyTokens = Math.floor(optionNumber(options, 'historyTokens', 0));
++  if (historyTokens >= 1) config.historyTokens = historyTokens;
+   if (options.maxScoringRequests !== undefined) {
+     config.maxScoringRequests = Math.max(0, Math.floor(
+       optionNumber(options, 'maxScoringRequests', DEFAULT_MAX_SCORING_REQUESTS),
+@@ -139,6 +146,21 @@ export function goalFromMessages(messages: readonly SessionMessage[]): string {
+     .join('\n');
+ }
+ 
++/**
++ * agent-factory local change 4 (vendor/jev-pruner/PROVENANCE.md): the newest run of whole messages whose history
++ * entries fit `historyTokens`. Upstream scores every chunk against every slice of the whole session and keeps any chunk
++ * not scored against all of them, so a session with more slices than the request allowance was never pruned (the live
++ * test of 2026-10-01: 12 requests, 11 chunks, all kept as incomplete_coverage). A window that fits the history's share
++ * of `maxStateTokens` (at least half) is one slice. The newest message alone over the budget gives an empty window.
++ */
++export function recentMessages(messages: readonly SessionMessage[], historyTokens: number): SessionMessage[] {
++  let start = messages.length;
++  while (start > 0 && estimateStateTokens(JSON.stringify(historyEntries(messages.slice(start - 1)))) <= historyTokens) {
++    start -= 1;
++  }
++  return messages.slice(start);
++}
++
+ /** Key lookup order: plugin option, TYPESAFE_API_KEY, EVAL_TYPESAFE_API_KEY, settings env. */
+ export async function getApiKey(
+   $: {
+@@ -177,6 +199,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
+     let sourceEstimatedTokens: number | null = null;
+     let modelVisibleBudgetChars: number | null = null;
+     let requestLimit: number | null = null;
++    let sessionMessages: number | null = null;
++    let historyMessages: number | null = null;
+     let pruning: TrimOutputResult | undefined;
+     let informationCategory: InformationCategory | null = null;
+     const original = answer.deny === undefined && !answer.isError ? answer.result : undefined;
+@@ -209,6 +233,10 @@ export const register: Register = (on: On, options: PluginOptions) => {
+       stage = 'history';
+       const messages = await $.session.messages();
+       const goal = goalFromMessages(messages);
++      // agent-factory local change 4: Jev reads the newest historyTokens of the history; the task stays whole.
++      const history = configured.historyTokens ? recentMessages(messages, configured.historyTokens) : messages;
++      sessionMessages = messages.length;
++      historyMessages = history.length;
+       const secret = looksSecret(event.command, combined);
+       const path = secret
+         ? undefined
+@@ -240,7 +268,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
+         {
+           command: event.command,
+           goal,
+-          messages,
++          messages: history,
+           output,
+           fullOutputPath: path,
+         },
+@@ -307,6 +335,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
+         chunks: pruning?.chunks ?? 0, kept: pruning?.kept ?? 0, dropped: pruning?.dropped ?? 0,
+         withinChunkOnly: Boolean(pruning?.trimmed && pruning.dropped === 0),
+         requests, requestLimit, elapsedMs: Date.now() - started,
++        sessionMessages, historyMessages,  // agent-factory local change 4
+       });
+       if (configured.diagnostics) {
+         try {
+```
+
+```diff
+--- a/.claude-plugin/plugin.json
++++ b/.claude-plugin/plugin.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "fast-jev-output-floor",
+-  "version": "0.1.0",
++  "version": "0.1.1",
+   "description": "Trim long Bash output with Jev before the model sees it (Claude Code plugin)",
+   "license": "MIT",
+   "userConfig": {
+@@ -86,6 +86,11 @@
+       "title": "Decision record folder",
+       "description": "If set, every Bash call rewrites last.json here, and a call past the size floor also writes <UTC day>/<time>-<tool use id>.json. Counts only, never the command or the output. agent-factory local change 3."
+     },
++    "historyTokens": {
++      "type": "number",
++      "title": "History window tokens",
++      "description": "If set (1 or more), Jev scores against the newest whole messages that fit this many estimated tokens instead of every slice of the session; the task (the last three prompts) is unchanged. Keep it at or under half of maxStateTokens so the window is one slice. Unset, a long session leaves every chunk unscored and kept. agent-factory local change 4."
++    },
+     "model": {
+       "type": "string",
+       "title": "Jev model",
+```
+
+```diff
+--- a/.claude-plugin/marketplace.json
++++ b/.claude-plugin/marketplace.json
+@@ -9,7 +9,7 @@
+       "name": "fast-jev-output-floor",
+       "source": "./",
+       "description": "Trim long Bash output with Jev before the model sees it (Claude Code plugin)",
+-      "version": "0.1.0",
++      "version": "0.1.1",
+       "license": "MIT"
+     }
+   ]
 ```
 
 ## Rebuilding and re-checking

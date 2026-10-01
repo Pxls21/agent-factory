@@ -42,6 +42,9 @@ UPSTREAM_MIN_TOKENS_DESCRIPTION = (
 )
 PLUGIN_NAME, MARKETPLACE_NAME = "fast-jev-output-floor", "agent-factory-vendor"
 CHANGE_3_OPTIONS = ("baseUrl", "archiveDir", "decisionsDir")  # PROVENANCE.md local change 3
+CHANGE_4_OPTIONS = ("historyTokens",)  # PROVENANCE.md local change 4
+# PROVENANCE.md local change 4: our copy's version, raised so `claude plugin update` installs a new landing
+UPSTREAM_VERSION, OUR_VERSION = "0.1.0", "0.1.1"
 UPSTREAM_SYSTEM_ONE_URL = "https://api.typesafe.ai/v1/systemone"  # src/jev.ts:1 at 47d017c
 UPSTREAM_ARCHIVE_DIR = ".claude/fast-jev-output"  # hooks/fast-jev-output.ts ARCHIVE_DIR at 47d017c
 
@@ -281,16 +284,17 @@ def test_plugin_manifest_is_the_upstream_one_plus_the_local_changes():
     assert config["minTokens"]["default"] == UPSTREAM_FLOOR
     description = config["minTokens"]["description"]
     assert "minTokensFloor" in description and description != UPSTREAM_MIN_TOKENS_DESCRIPTION
-    # local change 3: three string options, in this order, between maxScoringRequests and model
+    # local changes 3 and 4: three string options, then one number option with no default, in this order, between
+    # maxScoringRequests and model
     names = list(config)
-    assert names[names.index("maxScoringRequests") + 1:names.index("model")] == list(CHANGE_3_OPTIONS)
-    for name in CHANGE_3_OPTIONS:
-        assert set(config[name]) == {"type", "title", "description"} and config[name]["type"] == "string"
-        assert config[name]["title"].strip() and "local change 3" in config[name]["description"]
+    assert names[names.index("maxScoringRequests") + 1:names.index("model")] == [*CHANGE_3_OPTIONS, *CHANGE_4_OPTIONS]
+    for name, kind, change in [*((n, "string", 3) for n in CHANGE_3_OPTIONS), *((n, "number", 4) for n in CHANGE_4_OPTIONS)]:
+        assert set(config[name]) == {"type", "title", "description"} and config[name]["type"] == kind
+        assert config[name]["title"].strip() and f"local change {change}" in config[name]["description"]
     assert manifest["name"] == PLUGIN_NAME != UPSTREAM_NAME
 
     upstream = text
-    for name in ("minTokensFloor", *CHANGE_3_OPTIONS):
+    for name in ("minTokensFloor", *CHANGE_3_OPTIONS, *CHANGE_4_OPTIONS):
         blocks = re.findall(r'^    "' + name + r'": \{\n(?:      .*\n)+?    \},\n', upstream, re.M)
         assert len(blocks) == 1, name
         upstream = upstream.replace(blocks[0], "")
@@ -298,6 +302,8 @@ def test_plugin_manifest_is_the_upstream_one_plus_the_local_changes():
     upstream = upstream.replace(json.dumps(description), json.dumps(UPSTREAM_MIN_TOKENS_DESCRIPTION))
     assert upstream.count(f'"name": "{PLUGIN_NAME}"') == 1
     upstream = upstream.replace(f'"name": "{PLUGIN_NAME}"', f'"name": "{UPSTREAM_NAME}"')
+    assert manifest["version"] == OUR_VERSION and upstream.count(f'"version": "{OUR_VERSION}"') == 1
+    upstream = upstream.replace(f'"version": "{OUR_VERSION}"', f'"version": "{UPSTREAM_VERSION}"')
     assert _git_blob_id(upstream.encode()) == UPSTREAM_PLUGIN_JSON_BLOB
 
 
@@ -336,6 +342,8 @@ def test_marketplace_is_the_upstream_one_renamed_and_names_a_plugin_path_that_ex
         assert text.count(f'"name": "{name}"') == 1
     upstream = text.replace(f'"name": "{MARKETPLACE_NAME}"', f'"name": "{UPSTREAM_NAME}"')
     upstream = upstream.replace(f'"name": "{PLUGIN_NAME}"', f'"name": "{UPSTREAM_NAME}"')
+    assert upstream.count(f'"version": "{OUR_VERSION}"') == 1
+    upstream = upstream.replace(f'"version": "{OUR_VERSION}"', f'"version": "{UPSTREAM_VERSION}"')
     assert _git_blob_id(upstream.encode()) == UPSTREAM_MARKETPLACE_JSON_BLOB
 
 
@@ -392,7 +400,9 @@ def test_claude_cli_validates_the_plugin_and_the_marketplace(tmp_path):
     (copy / ".claude-plugin" / "plugin.json").write_text(PLUGIN_JSON.read_text())
     (copy / "src" / "history.ts").unlink()
     broken = _validate(copy / ".claude-plugin" / "plugin.json", tmp_path / "home")
-    assert not broken["success"] and any('cannot import "./history.js"' in error for error in _errors(broken))
+    # since local change 4 the hook imports src/history.ts itself, so the validator names the hook's own import
+    assert not broken["success"] and any('cannot import "../src/history.js" (from hooks/fast-jev-output.ts)' in error
+                                         for error in _errors(broken))
 
 
 # Local change 3 (PROVENANCE.md): the scorer's URL, the archive folder and the decision records, through the real hook.
@@ -508,3 +518,176 @@ def test_change3_a_failing_record_write_never_changes_the_result(change3_runs):
     assert run["urls"]  # the call went past the floor, so both record writes were attempted
     assert not any(path.startswith("scratch/dec/") for path in run["files"])
     assert run["returnedUnchanged"]
+
+
+# Local change 4 (PROVENANCE.md): Jev scores against the newest historyTokens of the session, through the real hook. The
+# fake scorer answers noul 0 for every chunk it is asked about, so whether a chunk is dropped turns on coverage alone.
+DRIVER4 = r"""
+import { register } from 'node:module';
+import { pathToFileURL } from 'node:url';
+
+const input = [];
+for await (const chunk of process.stdin) input.push(chunk);
+const job = JSON.parse(Buffer.concat(input).toString('utf8'), (key, value) =>
+  value !== null && typeof value === 'object' && typeof value.$number === 'string' ? Number(value.$number) : value);
+const hookUrl = pathToFileURL(job.hook).href;
+const rootUrl = new URL('../', hookUrl).href;
+const outputUrl = new URL('src/output.ts', rootUrl).href;
+// A pass-through wrapper around the real trimOutput: it records the input the handler passes, then calls it unchanged.
+const wrapperUrl = 'data:text/javascript,' + encodeURIComponent([
+  `import { trimOutput as realTrimOutput } from ${JSON.stringify(outputUrl)};`,
+  `export * from ${JSON.stringify(outputUrl)};`,
+  'export async function trimOutput(input, asker, options) {',
+  '  globalThis.c4Inputs.push(input);',
+  '  return realTrimOutput(input, asker, options);',
+  '}',
+].join('\n'));
+register('data:text/javascript,' + encodeURIComponent([
+  `const HOOK = ${JSON.stringify(hookUrl)}, ROOT = ${JSON.stringify(rootUrl)}, WRAPPER = ${JSON.stringify(wrapperUrl)};`,
+  'export async function resolve(specifier, context, next) {',
+  "  if (context.parentURL === HOOK && specifier === '../src/output.js') return { url: WRAPPER, shortCircuit: true };",
+  "  if (context.parentURL && context.parentURL.startsWith(ROOT) && (specifier.startsWith('./') || specifier.startsWith('../'))",
+  "      && specifier.endsWith('.js')) return next(specifier.slice(0, -3) + '.ts', context);",
+  '  return next(specifier, context);',
+  '}',
+].join('\n')));
+
+globalThis.c4Inputs = [];
+const hook = await import(hookUrl);
+const { estimateStateTokens } = await import(new URL('src/jev.ts', rootUrl).href);
+const { historyEntries } = await import(new URL('src/history.ts', rootUrl).href);
+const cost = (messages) => estimateStateTokens(JSON.stringify(historyEntries(messages)));
+
+// The session: 380 prompts and replies, then 10 tool cycles with no prompt in them, so the task (the last three prompts)
+// lies outside a short window; more than 100,000 estimated tokens in all.
+const words = (n, tag) => Array.from({ length: n }, (_, i) => `${tag}word${String.fromCharCode(97 + (i % 26))}`).join(' ');
+const session = [];
+for (let i = 0; i < 380; i += 1) {
+  session.push(i % 2 === 0
+    ? { role: 'user', text: `PROMPT-${i} ` + words(280, 'p'), toolUses: [] }
+    : { role: 'assistant', text: words(280, 'r'), toolUses: [] });
+}
+for (let i = 0; i < 10; i += 1) {
+  session.push({ role: 'assistant', text: '', toolUses: [{ tool_use_id: `toolu_c4_${i}`, tool: 'Bash', input: { command: 'ls' } }] });
+  session.push({ role: 'user', text: '', toolUses: [], toolResults: [{ tool_use_id: `toolu_c4_${i}`, text: words(250, 'o') }] });
+}
+const output = Array.from({ length: 300 }, (_, i) => `row ${String(i).padStart(4, '0')} alpha beta gamma delta epsilon`).join('\n');
+const apiKey = ['c4', 'fake', String(process.pid)].join('-');  // built at run time; the fake fetch drops it
+
+const results = [];
+for (const c of job.cases) {
+  const resolved = hook.resolveHookConfig(c.options);
+  if (!c.run) { results.push({ name: c.name, historyTokens: resolved.historyTokens ?? 'absent' }); continue; }
+  let handler;
+  await hook.register((name, matcher, fn) => { handler = fn; }, { ...c.options, apiKey });
+  const files = new Map();
+  let fetches = 0;
+  const $ = {
+    fs: {
+      read: async () => { throw new Error('c4: no persisted output in this test'); },
+      exists: async (path) => files.has(path),
+      write: async (path, data) => { files.set(path, data); },
+    },
+    env: { get: async () => undefined },
+    settings: { read: async () => ({}) },
+    session: { messages: async () => session },
+    http: { fetch: async (url, init) => {
+      fetches += 1;
+      const answers = Object.fromEntries(Object.keys(JSON.parse(init.body).questions).map((id) => [id, { noul: 0 }]));
+      return { status: 200, ok: true, text: JSON.stringify({ answers }) };
+    } },
+    ui: { log: () => {}, toast: () => {} },
+  };
+  const answer = { result: { stdout: output, stderr: '' } };
+  const before = globalThis.c4Inputs.length;
+  const back = await handler($, { command: 'make fixture', tool_use_id: `toolu_c4_${c.name}` }, async () => answer);
+  const passed = globalThis.c4Inputs.slice(before);
+  const stdout = (back.result ?? answer.result).stdout;
+  results.push({
+    name: c.name, historyTokens: resolved.historyTokens ?? 'absent', fetches, trimCalls: passed.length,
+    record: JSON.parse(files.get(`${c.options.decisionsDir}/last.json`)),
+    returnedUnchanged: back === answer, stdoutChars: stdout.length, outputChars: output.length,
+    omittedMarker: /\[\d+ lines omitted\]/.test(stdout),
+    goal: passed[0]?.goal ?? null, goalOfSession: hook.goalFromMessages(session),
+    windowLength: passed[0]?.messages.length ?? null,
+    windowIsTheNewest: passed[0] ? passed[0].messages.every((m, i, w) => m === session[session.length - w.length + i]) : null,
+  });
+}
+// recentMessages itself: at a budget equal to the cost of the newest k messages it returns exactly k; one token under,
+// k - 1.
+const unit = [];
+for (const k of [1, 3, 7]) {
+  const exact = cost(session.slice(-k));
+  unit.push({ k, exact, at: hook.recentMessages(session, exact).length,
+              under: hook.recentMessages(session, exact - 1).length, nextCost: cost(session.slice(-(k + 1))) });
+}
+const tooBig = [{ role: 'user', text: words(500, 'x'), toolUses: [] }];
+console.log(JSON.stringify({ results, unit, sessionLength: session.length, sessionCost: cost(session),
+  empty: hook.recentMessages([], 1000).length, tooBig: hook.recentMessages(tooBig, 10).length }));
+"""
+
+CHANGE_4_BASE = {"minTokensFloor": 0, "minTokens": 0, "maxStateTokens": 8000, "decisionsDir": "scratch/dec",
+                 "archiveDir": "scratch/arch"}
+CHANGE_4_CASES = [
+    {"name": "whole_session", "options": CHANGE_4_BASE, "run": True},
+    {"name": "window", "options": {**CHANGE_4_BASE, "historyTokens": 2000}, "run": True},
+    {"name": "negative", "options": {**CHANGE_4_BASE, "historyTokens": -5}, "run": True},
+    # the option's resolution only
+    {"name": "absent", "options": {}}, {"name": "one", "options": {"historyTokens": 1}},
+    {"name": "fraction", "options": {"historyTokens": 2000.7}}, {"name": "half", "options": {"historyTokens": 0.5}},
+    {"name": "zero", "options": {"historyTokens": 0}}, {"name": "nan", "options": {"historyTokens": NAN}},
+    {"name": "inf", "options": {"historyTokens": INF}}, {"name": "minus_inf", "options": {"historyTokens": -INF}},
+    {"name": "string", "options": {"historyTokens": "2000"}},
+]
+
+
+@pytest.fixture(scope="module")
+def change4_runs():
+    job = {"hook": str(HOOK), "cases": CHANGE_4_CASES}
+    proc = subprocess.run(["node", "--input-type=module", "-e", DRIVER4], input=json.dumps(_for_node(job), allow_nan=False),
+                          capture_output=True, text=True, timeout=300, cwd=REPO)
+    assert proc.returncode == 0, proc.stderr[-4000:]
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    out["by_name"] = {r["name"]: r for r in out["results"]}
+    return out
+
+
+@needs_strip
+def test_change4_the_option_takes_a_finite_number_of_at_least_one(change4_runs):
+    got = {r["name"]: r["historyTokens"] for r in change4_runs["results"]}
+    assert got == {"whole_session": "absent", "window": 2000, "negative": "absent", "absent": "absent", "one": 1,
+                   "fraction": 2000, "half": "absent", "zero": "absent", "nan": "absent", "inf": "absent",
+                   "minus_inf": "absent", "string": "absent"}
+
+
+@needs_strip
+def test_change4_the_whole_session_outruns_the_requests_and_nothing_is_pruned(change4_runs):
+    """The upstream behaviour, and the negative control for the window: the same session and scorer, no window."""
+    assert change4_runs["sessionLength"] == 400 and change4_runs["sessionCost"] > 100_000
+    for name in ("whole_session", "negative"):
+        run = change4_runs["by_name"][name]
+        record = run["record"]
+        assert record["decision"] == "incomplete_coverage" and record["dropped"] == 0, (name, record)
+        assert run["fetches"] == record["requests"] == record["requestLimit"] == 12, (name, record)
+        assert run["returnedUnchanged"] and run["trimCalls"] == 1
+        assert run["windowLength"] == record["historyMessages"] == record["sessionMessages"] == 400
+
+
+@needs_strip
+def test_change4_the_window_prunes_and_the_task_stays_whole(change4_runs):
+    run = change4_runs["by_name"]["window"]
+    record = run["record"]
+    assert record["decision"] == "pruned" and record["dropped"] > 0, record
+    assert run["fetches"] == record["requests"] < record["requestLimit"], record
+    assert not run["returnedUnchanged"] and run["omittedMarker"] and run["stdoutChars"] < run["outputChars"]
+    assert record["sessionMessages"] == 400 and 0 < record["historyMessages"] == run["windowLength"] < 20
+    assert run["windowIsTheNewest"] is True
+    # the task: the session's last three prompts, all older than the window
+    assert run["goal"] == run["goalOfSession"] and run["goal"].count("PROMPT-") == 3
+
+
+@needs_strip
+def test_change4_recent_messages_is_the_longest_newest_run_that_fits(change4_runs):
+    for row in change4_runs["unit"]:
+        assert (row["at"], row["under"]) == (row["k"], row["k"] - 1) and row["nextCost"] > row["exact"], row
+    assert change4_runs["empty"] == 0 and change4_runs["tooBig"] == 0
