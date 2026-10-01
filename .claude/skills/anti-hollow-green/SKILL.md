@@ -199,6 +199,13 @@ expansion.
    **A key's public prefix is a window hit (2026-09-29):** a ledger line that named the codiv key's prefix in backticks
    read `whole=0 windows=2/42`; a file holding the prefix alone reads the same two windows, and the ledger before that
    line read 0/42. In committed text, describe a key's prefix in words, so the check's zero stays a zero.
+   **A display prefix is part of the key, and a value check sees only the keys of its own machine (2026-10-01,
+   AF-AP-257):** OmniRoute shows a key's first 12 characters to identify it (`sk-` and 9 random characters); a doc
+   copied that "prefix" from its `api_keys` table on 2026-09-05, into a public repository. Only a vendor's fixed format
+   prefix is public; every character after it is the secret. Every screen missed it for 26 days: the sandbox's check
+   holds only the sandbox's keys, and this key lives only on the PC. Run the value check where each key lives, over
+   everything that leaves: every export, and the repository's tree and its history (`git cat-file
+   --batch-all-objects --batch` streams every blob once).
 
 9. **Verify input ownership at MINT time, not launch time.** A launch-time existence check on a
    shared append-only artifact is NOT a race guard: a concurrent writer (a test suite calling the
