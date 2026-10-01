@@ -4,7 +4,7 @@ The view is built and ready for you to land. One thing first: the tree changed w
 
 The harness also refused my report file write ("Subagents should return findings as text"). I did not work around it, so this message is the report. The file `tasks/briefs/jev-laya/S3-5-VIEW-report.md` in the tree is stale: I wrote it by heredoc at the start, before the refusal. It holds only sections 1 and 2 and the STATUS line "IN PROGRESS". Overwrite it with this message when you land.
 
-Started 2026-10-01 20:2xZ at HEAD 610cb123. Finished 2026-10-01T21:25:38Z (from `date -u`) at HEAD 48f08d5c.
+Started 2026-10-01 20:2xZ at HEAD 610cb123. Finished 2026-10-01T21:25:38Z (from `date -u`) at the HEAD whose subject is "AF-AP-256 corrected" [coordinator, at landing: a local commit id here and in section 0 replaced by its subject; the push rewrote those ids].
 
 ## STATUS
 - **Files:** I created the four boundary files and touched nothing else in the tree.
@@ -27,7 +27,7 @@ Started 2026-10-01 20:2xZ at HEAD 610cb123. Finished 2026-10-01T21:25:38Z (from 
 - **First measurement (verified):** the new commits are yours: dd14c6c2 at 20:47 (AF-AP-257) and 426d37a2 at 20:51 (transcripts).
   - The read-set diff since 610cb123 printed 0 lines. It covered the seven premise files, `laya_ft/`, `tests/conftest.py`, `pyproject.toml`, `test_summary.sh`, `pc_suite.sh`, `ap_screen.py`, `decide-harvest`, the three `docs/research/findings` folders and the edit-snapshot hook.
   - The working tree against HEAD under `scripts/`, `tests/`, `pyproject.toml`, `docs/research/findings/` and `.claude/hooks/` also printed 0.
-- **Second measurement at 21:21:05Z:** HEAD 48f08d5c, after four more of your commits (3f9d0321, 814dadb7, 3f1341f2, 48f08d5c). No tracked file is dirty. The read set since 610cb123, under `scripts`, `src`, `tests`, `pyproject.toml`, `docs/research/findings` and `.claude/hooks`, printed 0 committed and 0 in the working tree.
+- **Second measurement at 21:21:05Z:** HEAD "AF-AP-256 corrected", after four more of your commits (3f9d0321, 814dadb7, then two local ones: the 21:0xZ live-state block and "AF-AP-256 corrected"). No tracked file is dirty. The read set since 610cb123, under `scripts`, `src`, `tests`, `pyproject.toml`, `docs/research/findings` and `.claude/hooks`, printed 0 committed and 0 in the working tree.
 - **What I touched after 20:58Z:** only my four files and my scratchpad. The mutants ran in scratch copies made with `git archive 610cb123`. Every driver run printed `SHARED TREE FILES UNCHANGED: True`.
 
 **Where I read the brief one way (a choice the brief does not make word for word):**
