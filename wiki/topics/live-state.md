@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-01 20:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 20:0xZ): this block's commit (D-127; the S3-5-VIEW brief, task #444), after the retro bdcbfb67 and the landing 5cf654e5 (task #439; CI run #1214 passed), GATED-PENDING-VERIFY.**
+- **LIVE (as of 20:0xZ):** as in the block below. **RUNNING:** VERIFY-SESSION-EXPORT-R3 (as below); S3-5-VIEW (task #444: a sandbox code-implementer on `tasks/briefs/jev-laya/S3-5-VIEW-brief.md`, PIN f7f78165; fixtures only). **HELD:** the re-made export, until R3's verdict. **NEXT:** task #454 (SGLang, D-127 item 3): the evidence lane's brief, then an A/B in a GPU test window; R3's harvest, the ship and the PC-side check; S3-5-VIEW's landing and its real run (the prototype: 1,091 of 1,091 ids found once); then task #441, task #448.
+
 **2026-10-01 19:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 19:0xZ): c0f87ffc (the R3 brief), after the landing 5cf654e5 (the session export's known-value pass and the R2 follow-ups, task #439; CI run #1214 passed), GATED-PENDING-VERIFY.**
 - **LIVE (as of 19:0xZ):** as in the block below. **RUNNING:** VERIFY-SESSION-EXPORT-R3 (the original verifier, resumed on `tasks/briefs/jev-laya/VERIFY-SESSION-EXPORT-R3-brief.md`, PIN 5cf654e5). **HELD:** the re-made 2026-10-01 export (the coordinator's scratch, made at the PIN through the pass: gate total 0, the 16-form check NO HIT, 56 occurrences of the codiv key's windows cut), until the verifier's verdict; the older export (it holds one 11-character piece of the key) is deleted after the harvest. **NEXT:** the harvest; the ship and the PC-side check; then task #444 (measured: all 1,091 injection ids of the frozen S1 build are in the export's stream), task #441, task #448.
