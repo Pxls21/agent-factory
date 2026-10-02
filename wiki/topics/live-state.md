@@ -11,7 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
-**2026-10-02 13:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+**2026-10-02 14:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 14:3xZ):** 2e6f4609 (CI #1241 passed) carries task #472's home, task #460's close, F3's reader check and the 13:2xZ retro. Local, pushed with the evaluation's outcome: this retro (the stack sampler, skill `pc-bridge-lanes`).
+- **LIVE (as of 14:3xZ):** the evaluation of record on the PC (started 13:26:03Z). Its 40-minute figure was an extrapolation; the stage sampler (`~/s1-train/evalprog.sh`, py-spy without locals every 120 s) measured one procedure at about 14 minutes, so EVAL-DONE is expected near 15:50Z. **NEXT:** as in the block below.
+
+**2026-10-02 13:2xZ — WHAT IS LIVE NOW (superseded by the block above).**
 - **Origin (as of 13:2xZ):** this push carries task #472's home (VERIFY-S4-3-HEADS MERGE-READY-WITH-FOLLOWUPS; task #476 (backlog)); task #460's close (round 4 MERGE-READY-WITH-FOLLOWUPS; the four follow-ups closed by tests that the round's three real survivors fail); F3's reader check (the criterion MET on both files); the retro (a quirk baked; task #477 (backlog), the harvest label's `save=` option).
 - **LIVE (as of 13:2xZ):** the evaluation of record on the PC (`~/s1-train/eval441.sh`, started 13:26:03Z, about 40 minutes; `--read-repeat` and `--twice`). No sandbox lane is live. The `qwen` unit is restored and checked. **NEXT:** read the record (numbers only, screened), write the findings record under `docs/research/findings/s1-train/`, and land task #441's outcome by the pre-registration's §7 (PASS: task #473, then task #448; NOT SHOWN or FAILED: the controls' readings and the next step to the owner).
 
