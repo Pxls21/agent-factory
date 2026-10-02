@@ -14,12 +14,21 @@
 # Built from abwin.sh (window 1). Changed: the plan; a warm-up request after each boot, so first-use kernel builds do
 # not land in a measured run; a deadline after which no run starts (lanes wait for the GPU); a cap on each run.
 # vLLM is restored on every exit (the EXIT trap); the test port binds 127.0.0.1 only.
+# ABWIN_ARMS (default "S2 S3") names the arms to run. Window 2 ran S2, and S3's boot failed: S2's container outlived
+# two `podman rm -f` calls whose output was dropped, and `podman run` refused its name. gone() now removes the
+# container and waits until podman says it is gone, with rm's error lines in the log.
 set -u
 WL1=${1:?usage: abwin2.sh <workload-1.json> <workload-2.json>}
 WL2=${2:?usage: abwin2.sh <workload-1.json> <workload-2.json>}
 for f in "$WL1" "$WL2"; do
   [ -s "$f" ] || { echo "abwin2: no workload file: $f" >&2; exit 2; }
 done
+ARMS=${ABWIN_ARMS-S2 S3}
+for a in $ARMS; do
+  case "$a" in S2|S3) ;; *) echo "abwin2: ABWIN_ARMS names an unknown arm: $a" >&2; exit 2 ;; esac
+done
+[ -n "${ARMS// /}" ] || { echo "abwin2: ABWIN_ARMS names no arm" >&2; exit 2; }
+want() { case " $ARMS " in *" $1 "*) return 0 ;; esac; return 1; }
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 OUT=$HOME/sglang-ab/$STAMP
@@ -38,7 +47,7 @@ RUN_CAP=1800  # seconds; one run's ceiling
 
 restore() {
   trap '' INT TERM
-  podman rm -f "$NAME" >/dev/null 2>&1
+  gone  # a GONE-TIMEOUT is logged; vLLM starts either way
   systemctl --user start qwen
   for i in $(seq 1 120); do
     if python3 - "$KEYF" <<'PY'
@@ -58,6 +67,16 @@ PY
   log "RESTORE-FAILED vLLM did not answer /v1/models in 20 min"
 }
 leave() { trap '' INT TERM; exit "$1"; }  # every exit once the traps are armed (AF-AP-145)
+
+gone() { # the test container is removed, and podman says so, within 180 s; rm's error lines go to the log
+  local i
+  for i in $(seq 1 36); do
+    podman container exists "$NAME"; [ $? = 1 ] && return 0  # 1: no such container (125, an error, is not gone)
+    podman rm -f "$NAME" 2>&1 >/dev/null | sed 's/^/podman rm: /' >> "$LOG"
+    sleep 5
+  done
+  log "GONE-TIMEOUT: the container $NAME is still there after 180 s"; return 1
+}
 
 load() { # arm workload chats label [chat_load flags]; returns 1 when the deadline has passed
   local arm=$1 wl=$2 c=$3 label=$4 dir
@@ -103,8 +122,8 @@ PY
 }
 
 sgl_up() { # name of the arm; the rest are extra launch flags; env pairs go first as -e args via ENVS
-  local arm=$1; shift
-  podman rm -f "$NAME" >/dev/null 2>&1
+  local arm=$1 rc; shift
+  gone || { log "BOOT-FAILED $arm: the previous $NAME container is still there"; return 1; }
   podman run -d --name "$NAME" --device nvidia.com/gpu=all --ipc=host \
     -p 127.0.0.1:$TPORT:30000 \
     -e CUDA_DEVICE_ORDER=PCI_BUS_ID -e HF_HUB_OFFLINE=1 -e SGLANG_EXL3_EMBED_HOST=1 -e SGLANG_EXL3_KERNEL=auto \
@@ -117,6 +136,8 @@ sgl_up() { # name of the arm; the rest are extra launch flags; env pairs go firs
     --speculative-algorithm NEXTN --speculative-num-steps 3 --speculative-eagle-topk 1 \
     --speculative-num-draft-tokens 4 --speculative-token-map /opt/sglang-exl3/tokenmaps/qwen38_hot32k_v2.pt \
     --enable-metrics "$@" >> "$LOG" 2>&1
+  rc=$?
+  [ "$rc" = 0 ] || { log "BOOT-FAILED $arm: podman run exited $rc"; return 1; }
   for i in $(seq 1 150); do
     if ! podman ps --format '{{.Names}}' | grep -qx "$NAME"; then
       log "BOOT-FAILED $arm: the container exited"; podman logs --tail 60 "$NAME" > "$OUT/$arm-boot.log" 2>&1; return 1; fi
@@ -135,12 +156,12 @@ sgl_down() { # arm
   grep -ciE 'retract' "$OUT/$1-server.log" | sed "s/^/retract-lines /" >> "$LOG"
   grep -ciE 'abort' "$OUT/$1-server.log" | sed "s/^/abort-lines /" >> "$LOG"
   grep -ciE 'out of memory|CUDA error|Traceback' "$OUT/$1-server.log" | sed "s/^/error-lines /" >> "$LOG"
-  podman rm -f "$NAME" >/dev/null 2>&1
+  gone
 }
 
 trap restore EXIT
 trap 'trap "" INT TERM; log "signal; restoring"; exit 1' INT TERM  # the ignore first (AF-AP-145)
-log "WINDOW start; workloads $WL1 $(sha256sum "$WL1" | cut -c1-16) $WL2 $(sha256sum "$WL2" | cut -c1-16); out $OUT; deadline $(date -u -d @$DEADLINE +%TZ); gpu: $(nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader | tr '\n' ' ')"
+log "WINDOW start; arms $ARMS; workloads $WL1 $(sha256sum "$WL1" | cut -c1-16) $WL2 $(sha256sum "$WL2" | cut -c1-16); out $OUT; deadline $(date -u -d @$DEADLINE +%TZ); gpu: $(nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader | tr '\n' ' ')"
 
 # the window proper: vLLM stops here and comes back in restore()
 systemctl --user stop qwen
@@ -159,7 +180,7 @@ BASE="--context-length 131072 --mem-fraction-static 0.80 --max-running-requests 
 ENVS="-e SGLANG_OPT_MAMBA_SKIP_DECODE_LOCK=1 -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
 
 # S2: S1 with lpm and the cache report; the cut run first, it answers the question the switch depends on
-if sgl_up S2 $BASE --chunked-prefill-size 4096 --max-prefill-tokens 4096; then
+if want S2 && sgl_up S2 $BASE --chunked-prefill-size 4096 --max-prefill-tokens 4096; then
   warmup S2
   load S2 "$WL1" 4 w1-c4-cut $CUT
   load S2 "$WL1" 4 w1-c4
@@ -174,7 +195,9 @@ if sgl_up S2 $BASE --chunked-prefill-size 4096 --max-prefill-tokens 4096; then
 fi
 
 # S3: S2 with a prefill chunk of 8192; the prefill CUDA graph (S1: 252 s and 2.27 GB at boot) gives way to it
-if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+if ! want S3; then
+  :
+elif [ "$(date +%s)" -ge "$DEADLINE" ]; then
   log "SKIP S3: past the window's deadline"
 elif sgl_up S3 $BASE --chunked-prefill-size 8192 --max-prefill-tokens 8192 --disable-prefill-cuda-graph; then
   warmup S3
