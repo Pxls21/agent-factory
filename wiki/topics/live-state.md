@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-02 06:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 06:4xZ):** d2408a84 (CI run #1229 failed on two task #460 tests that pinned the interpreter's wording for a NUL in a path; the test-only fix, the records and D-133 widened went out at 06:4xZ, and CI run #1230 runs on them). Held locally: the S1-MICRO-MAP brief, this dispatch entry and this block.
+- **LIVE (as of 06:4xZ):** two sandbox lanes, both touching no tracked file: VERIFY-S1-VIEW-GUARDS (task #460's verify, since 05:5xZ, PIN 0555298e; told the test fix is expected) and S1-MICRO-MAP (task #467's evidence map, since 06:4xZ, PIN d2408a84). The PC's `qwen` container runs SGLang without the prefill CUDA graphs since 04:15:19Z; the vLLM unit waits as the fallback. **NEXT:** CI run #1230's verdict; harvest both lanes; from the map, the design note for task #467 (D-133: the micro-output is hybrid and general); task #464 (SGLang follow-ups) and task #466 (the request-shape check) when the owner wants them.
+
 **2026-10-02 05:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 05:5xZ):** 0555298e (the five commits: the retro, report section K7, the close of task #454 and the landing of task #460; CI runs on it). Held locally: the VERIFY-S1-VIEW-GUARDS brief, this dispatch's ledger entry and this block, for the next push.
 - **LIVE (as of 05:5xZ):** the VERIFY-S1-VIEW-GUARDS lane (task #460's verify, a sandbox adversarial-verifier, dispatched 05:5xZ; it touches no tracked file). The PC's `qwen` container runs SGLang without the prefill CUDA graphs since 04:15:19Z; the vLLM unit waits as the fallback (`~/.config/qwen-serving/qwen-vllm.container`). Task #460's build lane finished at 05:28:15Z; its real run found all 1,091 ids, dropped none and wrote the same `view.jsonl` as task #444's run. **NEXT:** harvest the verify lane and grade it; push the brief and these records once CI has read the landing; task #464 (SGLang follow-ups) and task #466 (the request-shape check) when the owner wants them.
