@@ -11,7 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
-**2026-10-02 12:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+**2026-10-02 13:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 13:2xZ):** this push carries task #472's home (VERIFY-S4-3-HEADS MERGE-READY-WITH-FOLLOWUPS; task #476 (backlog)); task #460's close (round 4 MERGE-READY-WITH-FOLLOWUPS; the four follow-ups closed by tests that the round's three real survivors fail); F3's reader check (the criterion MET on both files); the retro (a quirk baked; task #477 (backlog), the harvest label's `save=` option).
+- **LIVE (as of 13:2xZ):** the evaluation of record on the PC (`~/s1-train/eval441.sh`, started 13:26:03Z, about 40 minutes; `--read-repeat` and `--twice`). No sandbox lane is live. The `qwen` unit is restored and checked. **NEXT:** read the record (numbers only, screened), write the findings record under `docs/research/findings/s1-train/`, and land task #441's outcome by the pre-registration's §7 (PASS: task #473, then task #448; NOT SHOWN or FAILED: the controls' readings and the next step to the owner).
+
+**2026-10-02 12:1xZ — WHAT IS LIVE NOW (superseded by the block above).**
 - **Origin (as of 12:1xZ):** pushed together: the 11:3xZ retro (AF-AP-262, orchestration 0r); task #460's REDESIGN (D-134: the view refuses an `--out` with a `..` part) and the VERIFY-S4-2-READ report (MERGE-READY-WITH-FOLLOWUPS; task #474 (backlog) holds its follow-ups, with F3's reader check stated before it runs); window 1's record and this retro (AF-AP-260's echo; task #475 (backlog), the `gate` label).
 - **LIVE (as of 12:1xZ):** VERIFY-S4-3-HEADS (PIN daa20757), a sandbox adversarial-verifier. Window 1 of task #441 closed rc 0 at 11:51:43Z: the features hold 1,091 rows, the repeat's minimum cosine is 0.9999243, and the restored `qwen` unit passed every request shape with 0 restarts. **NEXT:** F3's reader check in window 2 (`~/s1-train/runf3.sh`, file 4 at segment 997 and file 5 at segment 8); VERIFY-S1-VIEW-GUARDS resumed at the post-push PIN (D-134's one round); the evaluation of record on the PC after VERIFY-S4-3-HEADS.
 

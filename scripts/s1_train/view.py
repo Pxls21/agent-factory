@@ -41,8 +41,9 @@ TypeError or ValueError while the manifest, an export file, an event or the buil
 made or written.
 
 usage: view.py --build <S1 build dir> --export <export dir> --out <dir>
-  --out must not exist, or be an empty directory; it must not be a symbolic link, nor lie inside a git work tree (a
-  .git entry in it or in any parent of it or of its nearest existing parent; D-10): view.jsonl holds injected texts.
+  --out must not exist, or be an empty directory; it must hold no '..' part (D-134), must not be a symbolic link, nor
+  lie inside a git work tree (a .git entry in it or in any parent of it or of its nearest existing parent; D-10):
+  view.jsonl holds injected texts.
   Writes view.jsonl (one row per found id, sorted by src, state_event, id) and summary.json (counts and digests, no
   session text); the same inputs give byte-identical outputs (no clock, no host path, no randomness).
 exit: 0 done (stdout: one line of counts); 2 refused (the reason on stderr; nothing written).
@@ -422,7 +423,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--build", required=True, help="a frozen S1 build: train/, heldout/ and summary.json")
     ap.add_argument("--export", required=True, help="a session export (scripts/session_export.py export)")
-    ap.add_argument("--out", required=True, help="a new or empty directory, not a symbolic link, outside git")
+    ap.add_argument("--out", required=True,
+                    help="a new or empty directory with no '..' part, not a symbolic link, outside git")
     args = ap.parse_args(argv)
     try:
         check_out(args.out)

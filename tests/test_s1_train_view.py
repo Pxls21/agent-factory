@@ -499,12 +499,12 @@ def make_build(out, inj, rows=ROWS, source=None, extra=None):
 
 # ---------------------------------------------------------------- helpers
 
-def _run(*args, timeout=600):
-    return subprocess.run([sys.executable, *map(str, args)], capture_output=True, text=True, timeout=timeout)
+def _run(*args, timeout=600, cwd=None):
+    return subprocess.run([sys.executable, *map(str, args)], capture_output=True, text=True, timeout=timeout, cwd=cwd)
 
 
-def _view(build, export, out):
-    return _run(VIEW, "--build", build, "--export", export, "--out", out, timeout=300)
+def _view(build, export, out, cwd=None):
+    return _run(VIEW, "--build", build, "--export", export, "--out", out, timeout=300, cwd=cwd)
 
 
 def _sha(path):
@@ -1315,11 +1315,13 @@ def test_an_out_that_is_a_link_after_a_dotdot_is_refused(world, tmp_path, form):
     assert os.listdir(target) == []
 
 
-@pytest.mark.parametrize("case", ["m1", "m4", "d1", "d2"])
+@pytest.mark.parametrize("case", ["m1", "m4", "d1", "d2", "rel-m1", "rel-d1", "lead"])
 def test_an_out_with_a_missing_part_before_a_dotdot_is_refused(world, tmp_path, case):
     # VERIFY-S1-VIEW-GUARDS round 3 (B1 and B2): a part that does not exist yet changes what a later '..' names once
     # os.makedirs creates it, so these four wrote through a link (m1, m4) or over a full directory's outputs (m4, d1,
-    # d2), with a stray directory left behind. D-134 refuses every '..' part: exit 2, nothing written, nothing made
+    # d2), with a stray directory left behind. D-134 refuses every '..' part: exit 2, nothing written, nothing made.
+    # Round 4 (F1, F2): a relative --out is refused too (rel-m1 and rel-d1 are m1 and d1 run from tmp_path), and so is
+    # a leading '..' (lead, run from c)
     b, c, f = tmp_path / "b", tmp_path / "c", tmp_path / "f"
     for d in (b / "sub", c, f / "e", f / "wd", tmp_path / "t", tmp_path / "e2"):
         d.mkdir(parents=True)
@@ -1329,19 +1331,25 @@ def test_an_out_with_a_missing_part_before_a_dotdot_is_refused(world, tmp_path, 
     os.symlink(b / "sub", c / "hop")
     os.symlink(tmp_path / "t", b / "link")
     os.symlink(tmp_path / "e2", b / "link_ne")
-    out = {"m1": c / "hop" / "missing" / ".." / ".." / "link", "m4": c / "hop" / "missing" / ".." / ".." / "link_ne",
-           "d1": f / "missing" / ".." / "e", "d2": f / "wd" / "missing" / ".."}[case]
-    _refused(_view(world.build, world.export, out), "--out %s holds a '..' part" % out, out)
+    out, cwd = {"m1": (c / "hop" / "missing" / ".." / ".." / "link", None),
+                "m4": (c / "hop" / "missing" / ".." / ".." / "link_ne", None),
+                "d1": (f / "missing" / ".." / "e", None), "d2": (f / "wd" / "missing" / "..", None),
+                "rel-m1": ("c/hop/missing/../../link", tmp_path), "rel-d1": ("f/missing/../e", tmp_path),
+                "lead": ("../new", c)}[case]
+    _refused(_view(world.build, world.export, out, cwd=cwd), "--out %s holds a '..' part" % out,
+             out if cwd is None else cwd / out)
     assert os.listdir(tmp_path / "t") == []
     for full in (f / "e", f / "wd", tmp_path / "e2"):
         assert sorted(os.listdir(full)) == ["summary.json", "view.jsonl"]
         assert all((full / name).read_text() == "keep\n" for name in ("view.jsonl", "summary.json"))
     assert sorted(os.listdir(b / "sub")) == [] and sorted(os.listdir(f)) == ["e", "wd"]
+    assert sorted(os.listdir(tmp_path)) == ["b", "c", "e2", "f", "t"]          # lead's ../new was not made either
 
 
-@pytest.mark.parametrize("part", ["v..1", "..."])
+@pytest.mark.parametrize("part", ["v..1", "...", ".. ", " .."], ids=["v..1", "...", "dotdot-blank", "blank-dotdot"])
 def test_an_out_whose_part_only_holds_dots_is_written(world, tmp_path, part):
-    # D-134 refuses a part that is exactly '..'; a name that holds dots is an ordinary directory
+    # D-134 refuses a part that is exactly '..'; a name that holds dots, a blank beside them included, is an ordinary
+    # directory (VERIFY-S1-VIEW-GUARDS round 4 F3: a rule that stripped the blanks would refuse '.. ' and ' ..')
     out = pathlib.Path(_out(tmp_path)) / part / "out"
     r = _view(world.build, world.export, out)
     assert r.returncode == 0, r.stderr[-800:]
