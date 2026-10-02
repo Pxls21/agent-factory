@@ -11,7 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
-**2026-10-02 19:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+**2026-10-02 21:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 21:1xZ):** this push carries D-136, the heat guard (task #481: deployed, enabled at boot, proven on the PC), the qwen units' `CPUQuota=300%` and `Requires=heat-guard.service`, and task #482's registration. A container restart at about 21:15Z rolled the sandbox's disk back to the origin tip; the work was rebuilt (the deploy files from the PC by hash, the rest from the transcript) before this push.
+- **LIVE (as of 21:1xZ):** the heat guard runs on the PC, enabled at boot. The `qwen` unit (SGLang) is stopped: both of today's watched starts overheated the CPU with boost on (92.5°C at 20:30Z; 94.8°C at 20:53Z under an 80% CPU cap, the guard's stop about 5 s before ready), so the local route is down. `laya-systemone` holds 1,972 MiB of the GPU. Tctl 64.0°C at 21:16Z. A board sensor, AUXTIN0, reads about 88°C with its alarm flag whether the CPU is hot or idle; its source is unknown. **NEXT:** the owner turns boost off (`echo 0 | sudo tee /sys/devices/system/cpu/cpufreq/boost`); then SGLang starts under the guard and task #478's proof runs; task #482 (a mounted Triton cache) cuts the start's CPU work; task #479 (the heads on the GPU) comes before task #441's rerun on the GPU.
+
+**2026-10-02 19:0xZ — WHAT IS LIVE NOW (superseded by the block above).**
 - **Origin (as of 19:0xZ):** this push carries the crash records (D-135, AF-AP-263, the incident entry), SGLang's `--sleep-on-idle` (task #478) and the GPU path's registration (task #479).
 - **LIVE (as of 19:0xZ):** nothing runs on the PC. The evaluation of record died with the PC at 15:04:55Z (no record, no held-out score seen). The `qwen` unit is stopped on the owner's word (18:33:16Z), so the PC's local route is down; its unit file carries `--sleep-on-idle`, deployed, not started. `laya-systemone` holds 1,972 MiB of the GPU. Tctl about 61°C at idle; the cooler is old, its pipes propped at an angle. **NEXT (amended 19:2xZ):** the owner's answer to one question, where task #441's evaluation reruns: in the sandbox on its CPU (recommended: no PC load, no code change, the pre-registered one CPU thread; SGLang then starts with the fix, watched, stopped at 90°C) or on the PC's GPU (task #479 first; SGLang stays off until the run ends).
 

@@ -1,0 +1,22 @@
+# The PC's CPU heat guard for the qwen model server (D-136, AF-AP-263): deploy/heat_guard.sh stops the qwen unit after
+# three readings of the CPU's Tctl at or above 90 C, or unreadable, five seconds apart. Rootless user unit (linger on):
+#   cp deploy/heat_guard.sh ~/.config/qwen-serving/heat_guard.sh
+#   cp deploy/heat-guard.service ~/.config/systemd/user/heat-guard.service
+#   systemctl --user daemon-reload ; systemctl --user enable --now heat-guard
+# Both qwen units (deploy/qwen.container, deploy/qwen-vllm.container) require it and start after it, so the model
+# server never runs unwatched; stopping this unit stops the qwen unit too. Its log: journalctl --user -u heat-guard.
+# Never `systemctl --user restart heat-guard` while a lane is live: Requires= restarts the qwen unit with it, and every
+# lane dies mid-turn. To load a new script, `systemctl --user kill heat-guard`; the guard restarts by itself.
+[Unit]
+Description=CPU heat guard for the qwen model server (D-136)
+
+[Service]
+ExecStart=/bin/bash %h/.config/qwen-serving/heat_guard.sh qwen
+Restart=always
+RestartSec=5
+# A guard that dies restarts without restarting the qwen unit. With the default RestartMode=normal, systemd 257 on the
+# PC restarted a Requires= dependent on the required unit's automatic restart; with direct, it did not (2026-10-02).
+RestartMode=direct
+
+[Install]
+WantedBy=default.target

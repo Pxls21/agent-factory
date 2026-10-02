@@ -228,6 +228,17 @@ question; the containment proof itself does not depend on cgroups. Platform: sys
 - **`scripts/gpu_side_by_side.sh` refuses the SGLang unit** (it copies only the vLLM unit's shape: the
   `Entrypoint=` key stops it, exit 3, nothing started). A side-by-side run of SGLang beside the RWKV reader is not
   built; with the vLLM fallback in place the job runs as before.
+- **The heat guard (2026-10-02, D-136, task #481):** `heat-guard.service` (`deploy/heat-guard.service`, deployed to
+  `~/.config/systemd/user/`, enabled at boot) runs `deploy/heat_guard.sh` (deployed to
+  `~/.config/qwen-serving/heat_guard.sh`), which stops the `qwen` unit after three readings of Tctl at or above 90°C,
+  or unreadable, 5 s apart. Both qwen units require it (`Requires=` with `After=`) and cap their CPU at three threads
+  (`CPUQuota=300%`). Deploy: copy both files, `systemctl --user daemon-reload`, `systemctl --user enable --now
+  heat-guard`, then `journalctl --user -u heat-guard -o cat` shows `heat_guard: watching qwen`. Never `systemctl
+  --user restart heat-guard` while a lane is live: `Requires=` restarts the `qwen` unit with it. To load a new script,
+  `systemctl --user kill heat-guard`: it restarts by itself, and `RestartMode=direct` keeps the model server running
+  (measured on the PC's systemd 257: without it, an automatic restart of the guard restarted the model server too).
+  The guard's stop took 17 s (podman's stop timeout). With CPU boost on, SGLang's start went past 90°C twice on
+  2026-10-02 (D-136).
 - **Never stop or restart it while a local-route lane is live** — it holds the 3090, and a restart kills every lane
   mid-turn (the `.lanes/*/lane.pid` guard rule, AF-AP-79 / D-030, applies to this container too).
 

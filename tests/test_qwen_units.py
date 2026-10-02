@@ -76,6 +76,9 @@ def test_both_units_are_the_qwen_container_and_service(path):
     assert one(u, "Container", "ContainerName") == "qwen"   # the name gpu_window.sh and the guards stop and start
     assert one(u, "Container", "PublishPort") == "8080:8080"  # OmniRoute's qwen-local node
     assert one(u, "Service", "Restart") == "always" and one(u, "Install", "WantedBy") == "default.target"
+    assert one(u, "Service", "CPUQuota") == "300%"  # at most three CPU threads, whichever unit serves (D-136)
+    # never unwatched: the heat guard starts first, and stopping it stops the model server (D-136)
+    assert one(u, "Unit", "Requires") == "heat-guard.service" and "heat-guard.service" in u[("Unit", "After")]
     assert re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", one(u, "Container", "Image"))
     assert "/home/rocco/.config/qwen-builder/api-key:/app/api_key.txt:ro" in u[("Container", "Volume")]
 

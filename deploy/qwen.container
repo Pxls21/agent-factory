@@ -27,6 +27,9 @@
 Description=Qwen3.8-27B SGLang local model server (behind OmniRoute; D-129)
 Wants=network-online.target
 After=network-online.target
+# The CPU heat guard (deploy/heat-guard.service, D-136): this unit starts after it and stops when it is stopped.
+Requires=heat-guard.service
+After=heat-guard.service
 
 [Container]
 ContainerName=qwen
@@ -60,6 +63,9 @@ PodmanArgs=--ipc=host --device nvidia.com/gpu=all
 [Service]
 Restart=always
 RestartSec=10
+# At most three of the PC's twelve CPU threads, spread over any cores (D-136): the PC went down four times on 2026-10-02
+# while SGLang loaded beside an old cooler (AF-AP-263); its measured start used about 1.2 threads on average.
+CPUQuota=300%
 
 [Install]
 WantedBy=default.target

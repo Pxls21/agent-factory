@@ -17,6 +17,9 @@
 Description=Qwen3.8-27B vLLM local model server (behind OmniRoute; D-032)
 Wants=network-online.target
 After=network-online.target
+# The CPU heat guard (deploy/heat-guard.service, D-136), as in the SGLang unit.
+Requires=heat-guard.service
+After=heat-guard.service
 
 [Container]
 ContainerName=qwen
@@ -43,6 +46,8 @@ PodmanArgs=--ipc=host --device nvidia.com/gpu=all
 [Service]
 Restart=always
 RestartSec=10
+# The SGLang unit's CPU cap, so a swap to this fallback keeps it (D-136).
+CPUQuota=300%
 
 [Install]
 WantedBy=default.target

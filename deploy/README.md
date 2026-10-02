@@ -7,6 +7,7 @@ No runnable production Compose file is included yet. The first-party adapters, p
 ## Deployed non-spine units
 
 - `qwen.container` — the PC-side rootless Quadlet for the Qwen3.8-27B local model server, the keeper build/verify backend behind OmniRoute: SGLang v0.5.20 with EXL3 weights (D-129; pinned in `pc-lane.lock.yaml`, D-131), started by `sglang_start.py`, which keeps the API key off the command line and out of the log. `qwen-vllm.container` is the vLLM unit it replaced (D-032), kept as the fallback. This is real, running dev/build infrastructure on the owner's PC — NOT part of the production spine below, which is still planned. It sits behind OmniRoute (rule 3), never a direct egress. See `docs/research/findings/VLLM-MIGRATION.md` and `PC-BRIDGE.md`.
+- `heat-guard.service` with `heat_guard.sh`: the PC's CPU heat guard (D-136, AF-AP-263), a rootless user service that starts at boot. Every 5 s it reads the CPU's Tctl; after three readings in a row at or above 90°C, or unreadable, it stops the `qwen` unit. Both qwen units require it (`Requires=` with `After=`), so the model server does not start without it and stops when it is stopped; both also cap their CPU at three threads (`CPUQuota=300%`). It watches the model server only: other CPU load on the PC is not guarded. The PC went down four times on 2026-10-02 while SGLang started beside an old cooler. Like the units above, it is dev infrastructure on the owner's PC, not the production spine.
 
 ## Planned production deployables
 
