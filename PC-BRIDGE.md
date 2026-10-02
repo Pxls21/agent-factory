@@ -209,7 +209,10 @@ question; the containment proof itself does not depend on cgroups. Platform: sys
 - **Operate:** `bash scripts/pc.sh 'export XDG_RUNTIME_DIR=/run/user/$(id -u); systemctl --user status qwen'`;
   `podman logs --tail 50 qwen` for the boot (key-free by the start script); `/v1/models` with the api-key bearer.
   Change the unit: edit `deploy/qwen.container`, copy it (and `deploy/sglang_start.py` when that changed) into place,
-  `systemctl --user daemon-reload`, `systemctl --user restart qwen`.
+  `systemctl --user daemon-reload`, `systemctl --user restart qwen`. A changed unit is not proven by `/v1/models`
+  answering: before a lane uses it, send it every request shape the clients send, forced output on long cold prompts
+  among them, and read `nvidia-smi` and the alarm count after (report section K6 item 6; AF-AP-260). The check lives
+  only in a scratch script so far; task #466 commits it.
 - **Fall back to vLLM** (`deploy/qwen-vllm.container`, the D-032 unit, deployed to
   `~/.config/qwen-serving/qwen-vllm.container`, outside Quadlet's directory so it never starts by itself; same name
   and port, so OmniRoute is unaffected): `cp ~/.config/qwen-serving/qwen-vllm.container
