@@ -17,6 +17,10 @@ in the run's record as a deviation.
 | The reading runtime | the PC's `~/venv-rwkv-b` (torch 2.7.1+cu128, transformers 4.53.3, fla 0.3.0, triton 3.3.1), on the 3090 |
 | The serving runtime (the comparison, §6) | llama.cpp build 0c1e570 as vendored in llama-cpp-python 0.3.36 (sdist sha256 832db0699007f1be95a7e41ef12e88926b02ba836461e36a36372db2760c1a2e), CPU; the Q8_0 file sha256 52294392f54da107a50bf7cfb2ef189cd5892beb0ddfa88f969f7fcf77e449fa |
 
+Measured 2026-10-02 09:1xZ: `view.py` as committed after task #460's B1 repair (sha256 4629e0c7…) reproduces this
+`view.jsonl` byte for byte over the same build and export; its `summary.json` differs only in view.py's own code
+sha256.
+
 The rows: train 871 (513 yes), held-out 220 (147 yes); labels and split are the build's, never recomputed. Held-out by
 kind (no / yes): edit-snapshot 48 / 17, system1-context 24 / 111, filepacks 0 / 11, wiki-context 1 / 7,
 search-intercept 0 / 1.
