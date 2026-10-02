@@ -33,3 +33,27 @@ lane_context_plugins:
       digest: "sha256:223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7"
       from: "tiktoken 0.14.0 tiktoken_ext/openai_public.py:75-79 (the URL and expected_hash); the cache file is sha1(url) under TIKTOKEN_CACHE_DIR (tiktoken/load.py:35-58); an altered file is deleted and fetched again (load.py:60-66)"
     adopted: "2026-09-29 (owner, D-108 item 7: LCM-X for Hermes, H1)"
+
+# The PC's local model server on :8080 (task #454's switch; D-129 adopted SGLang, D-131 pins it here). It serves only the
+# PC lanes and the System-1 tools, outside the production system, so it sits in this file under D-110's exception and
+# upstream.lock.yaml is not edited: S0-06 and S0-12 attest that file's bytes (proofs/registry.yaml
+# extra_attested_inputs). upstream.lock.yaml's local_model_server row (vLLM, D-032) stays in place, and after the switch it
+# names the fallback, not the server that runs. tests/test_qwen_units.py holds the unit, the start script and this entry
+# in step. Provenance: tasks/briefs/serving/SGLANG-EVIDENCE-report.md A1.1 (the digest is the tag), A1.7 and A1.8 (the
+# image's labels name the SGLang commit; the tag v0.5.20 peels to it), A4.1 (the model revision is the 3.00bpw head).
+local_model_servers:
+  sglang-exl3:
+    image: ghcr.io/0xsero/sglang-exl3
+    tag: v0.5.1-ampere
+    digest: "sha256:84f75f3424c99a3d63392a4e0348292bdeba9cf7efba2ff1aa9b85c8fc0131e8"
+    sglang_version: v0.5.20
+    sglang_revision: "94602c9c2b7cbdb8efd5c52802dac6a1c180089e"
+    model: turboderp/Qwen3.8-27B-exl3
+    model_variant: 3.00bpw
+    model_revision: "6fe61ad620abfe97c5b49f9722c2bceeea4ccc28"
+    unit: deploy/qwen.container
+    start_script: deploy/sglang_start.py
+    start_script_sha256: "6b8d58738c135338a66bd9be2972d6b42ef17f8e42a61bbc0c56c00aca62f342"
+    served_model_names: [qwen3.8-27b-local]
+    fallback: "deploy/qwen-vllm.container: vLLM, the image upstream.lock.yaml pins (local_model_server.qwen38-27b-rtx3090, D-032), under the same unit name and port"
+    full_migration_owed: "task #463 (D-131 item 2): at the next re-mint of S0-06 and S0-12, this pin moves into upstream.lock.yaml in place of the vLLM row, both proofs are re-minted, and the owner signs both tags again"

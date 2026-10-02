@@ -5,8 +5,9 @@ reader probe. Here those are replaced at the system boundary only, as tests/test
 `podman` (a state file stands in for the container; every argv is logged as JSON) and `nvidia-smi` (a number); the REAL
 curl behind a shim that logs its argv; a loopback HTTP server that answers /v1/models 200 only while the fake container
 is "up" AND the request carries the right bearer key; and a fake reader probe on the SBS_PROBE seam. The unit is the
-repo's own deploy/qwen.container with only the key path moved into the test's tree, so a key the job does not copy
-turns these tests red. The key is a FAKE string.
+repo's own deploy/qwen-vllm.container, the vLLM unit this job copies, with only the key path moved into the test's
+tree, so a key the job does not copy turns these tests red. Since task #454's switch the live unit
+(deploy/qwen.container) is SGLang, which the job refuses. The key is a FAKE string.
 
 The probe (docs/research/findings/jev-pipes/rwkv_sbs_probe.py) is driven in process with a fake engine (no torch, no
 GPU) and a loopback fake chat server. Nothing here is a measurement: the GPU phases run only on the PC, in a window.
@@ -39,7 +40,7 @@ RUNNER = ROOT / "scripts" / "gpu_window.sh"
 PROBE = ROOT / "docs" / "research" / "findings" / "jev-pipes" / "rwkv_sbs_probe.py"
 JOBS = ROOT / "docs" / "research" / "findings" / "jev-pipes" / "sbs-window.jobs"
 G0 = ROOT / "docs" / "research" / "findings" / "j2b-variants" / "rwkv7_g0.py"
-REAL_UNIT = (ROOT / "deploy" / "qwen.container").read_text()
+REAL_UNIT = (ROOT / "deploy" / "qwen-vllm.container").read_text()
 REAL_KEY_PATH = "/home/rocco/.config/qwen-builder/api-key"
 KEY = "SBS7-fake-side-by-side-key-41d9"
 REAL_CURL = shutil.which("curl")
@@ -418,6 +419,17 @@ def test_a_missing_unit_refuses(sbs):
     sbs.unit.unlink()
     r = _job(sbs)
     assert r.returncode == 3 and "cannot read the unit" in r.stderr, r.stderr
+    _nothing_started(sbs)
+
+
+def test_the_live_sglang_unit_is_refused_and_starts_nothing(sbs):
+    # the job copies the vLLM unit's shape only; the SGLang unit deployed since the switch (task #454) is refused
+    sglang = (ROOT / "deploy" / "qwen.container").read_text()
+    assert REAL_KEY_PATH in sglang
+    sbs.unit.write_text(sglang.replace(REAL_KEY_PATH, str(sbs.key)))
+    r = _job(sbs)
+    assert r.returncode == 3 and ("key 'Entrypoint' is not one this job copies" in r.stderr
+                                  or "continues on the next line" in r.stderr), r.stderr
     _nothing_started(sbs)
 
 

@@ -1,41 +1,52 @@
-# Qwen3.8-27B vLLM local model server (keeper local backend behind OmniRoute; D-032).
-# Provenance: agent-factory docs/research/findings/VLLM-MIGRATION.md + upstream.lock.yaml (digest pin).
-# Reconciles the served name to qwen3.8-27b-local (what OmniRoute's agentfactory-*-local combos forward),
-# and answers the bare qwen3.8-27b too. Adds boot persistence + restart. Replaces the manual `podman run`.
+# Qwen3.8-27B SGLang local model server, behind OmniRoute (the switch of task #454; D-129; pinned in pc-lane.lock.yaml, D-131).
+# Provenance: tasks/briefs/serving/SGLANG-EVIDENCE-report.md (sections J and K, the two GPU windows that chose these
+# flags) and pc-lane.lock.yaml (the image digest, the SGLang commit, the model revision, the start script's hash).
 #
 # This is the deployed copy of the PC-side rootless Quadlet at
 #   ~/.config/containers/systemd/qwen.container  (systemctl --user, linger on).
-# Deploy: copy to that path, `systemctl --user daemon-reload`, `systemctl --user start qwen`.
-# It requires the syv-ai rootless CDI spec (~/cdi/nvidia.yaml + containers.conf cdi_spec_dirs),
-# the prepared model tree at ~/qwen-serving/models, and the api-key file at
-# ~/.config/qwen-builder/api-key (mounted read-only to /app/api_key.txt; the entrypoint reads it).
-# Fallback = the llama.cpp qwen-builder unit (D-027), which serves the SAME name on the SAME port:
-#   systemctl --user stop qwen ; podman rm -f qwen ; systemctl --user reset-failed qwen-builder ; systemctl --user start qwen-builder
+# Deploy: copy deploy/sglang_start.py to ~/.config/qwen-serving/sglang_start.py and this file to that path,
+# `systemctl --user daemon-reload`, `systemctl --user restart qwen` (only with no local-route lane live).
+# The key: deploy/sglang_start.py reads the key file (mounted read-only to /app/api_key.txt) and starts SGLang with
+# --config, so the key is on no command line, and it replaces the key in every line the server logs (SGLang logs its
+# arguments, the key among them, at startup). MAX_LEN is the one statement of the context: the start script passes it
+# to SGLang, and harness-ports/bin/lane-profile.sh reads it for every lane profile.
+# It serves qwen3.8-27b-local, the name OmniRoute's qwen-local node and the agentfactory-*-local combos forward; SGLang
+# does not check a request's model name, so the bare qwen3.8-27b still answers. /health, /ready and /metrics need no key.
+# Fallback = the vLLM unit (deploy/qwen-vllm.container, D-032; deployed beside the start script), same name, same port:
+#   cp ~/.config/qwen-serving/qwen-vllm.container ~/.config/containers/systemd/qwen.container ;
+#   systemctl --user daemon-reload ; systemctl --user restart qwen
 [Unit]
-Description=Qwen3.8-27B vLLM local model server (behind OmniRoute; D-032)
+Description=Qwen3.8-27B SGLang local model server (behind OmniRoute; D-129)
 Wants=network-online.target
 After=network-online.target
 
 [Container]
 ContainerName=qwen
-Image=ghcr.io/syv-ai/qwen38-27b-rtx3090@sha256:c52d9033527df5249d2f7306b35173a47f4f87d45bb60927fbe93fdb4986aacb
-Exec=batch
+Image=ghcr.io/0xsero/sglang-exl3@sha256:84f75f3424c99a3d63392a4e0348292bdeba9cf7efba2ff1aa9b85c8fc0131e8
+Entrypoint=/opt/entrypoint.sh
+Exec=python3 /af/sglang_start.py \
+  --model-path /models/turboderp-Qwen3.8-27B-exl3-3.00bpw --quantization exl3 --trust-remote-code \
+  --host 0.0.0.0 --port 8080 --served-model-name qwen3.8-27b-local \
+  --kv-cache-dtype fp8_e4m3 --mamba-ssm-dtype bfloat16 --reasoning-parser qwen3 --tool-call-parser qwen3_coder \
+  --speculative-algorithm NEXTN --speculative-num-steps 3 --speculative-eagle-topk 1 --speculative-num-draft-tokens 4 \
+  --speculative-token-map /opt/sglang-exl3/tokenmaps/qwen38_hot32k_v2.pt \
+  --enable-metrics --enable-cache-report \
+  --mem-fraction-static 0.80 --max-running-requests 4 --max-mamba-cache-size 12 --cuda-graph-max-bs-decode 4 \
+  --chunked-prefill-size 4096 --max-prefill-tokens 4096 --prefill-decode-interval 16 \
+  --mamba-radix-cache-strategy no_buffer --disable-overlap-schedule \
+  --enable-hierarchical-cache --hicache-size 24 --hicache-write-policy write_through --schedule-policy lpm
 PublishPort=8080:8080
-Volume=qwen-cache:/cache
-Volume=/home/rocco/qwen-serving/models:/app/models
+Volume=/home/rocco/models/qwen3.8-27b-exl3-3.0bpw:/models/turboderp-Qwen3.8-27B-exl3-3.00bpw:ro
 Volume=/home/rocco/.config/qwen-builder/api-key:/app/api_key.txt:ro
-Environment=PORT=8080
-Environment=SPEC=mtp
+Volume=/home/rocco/.config/qwen-serving/sglang_start.py:/af/sglang_start.py:ro
 Environment=MAX_LEN=131072
-Environment=PREFIX_CACHE=1
-# GPU_UTIL (owner ruling D-099, 2026-09-26: "Reduce the kv cache a little so they both fit"): the image's
-# batch/start_qwen.sh default is 0.972. laya-systemone (the System-1 server, on the CPU) keeps a 256 MiB CUDA
-# context from its device probe; at 0.972 that left vLLM 63 MiB of slack, a four-request load hit a CUDA OOM
-# in the DeltaNet prefill workspace (07:52Z), and every restart then failed the startup free-memory check
-# (22.8 GiB free, 22.9 GiB wanted). 0.96 gives back the slack vLLM had before laya (about 0.7 GiB) for a
-# KV pool about 0.28 GiB smaller.
-Environment=GPU_UTIL=0.96
-Environment="EXTRA_ARGS=--served-model-name qwen3.8-27b-local qwen3.8-27b"
+Environment=CUDA_DEVICE_ORDER=PCI_BUS_ID
+Environment=HF_HUB_OFFLINE=1
+Environment=SGLANG_EXL3_EMBED_HOST=1
+Environment=SGLANG_EXL3_KERNEL=auto
+Environment=SGLANG_EXL3_MODEL_PATH=/models/turboderp-Qwen3.8-27B-exl3-3.00bpw
+Environment=SGLANG_OPT_MAMBA_SKIP_DECODE_LOCK=1
+Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 PodmanArgs=--ipc=host --device nvidia.com/gpu=all
 
 [Service]
