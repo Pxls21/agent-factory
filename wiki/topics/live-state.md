@@ -11,7 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
-**2026-10-02 09:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+**2026-10-02 10:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 10:5xZ):** task #471 (the reading program, `scripts/s1_train/read.py`) landed GATED-PENDING-VERIFY as b9f835de, with the 09:5xZ retro entry (a8e88c6c); CI run #1235 had passed on 0e2c202c. The verify brief and this block are pushed before the verifier's dispatch.
+- **LIVE (as of 10:5xZ):** the task #472 build lane (the heads and the evaluator, sandbox, PIN b1df2d35); VERIFY-S4-2-READ (a sandbox adversarial-verifier, brief `tasks/briefs/jev-laya/VERIFY-S4-2-READ-brief.md`, PIN b9f835de); on the PC, the tokens step of task #441 (`~/s1-train/tokens.sh`, detached, started 10:49:55Z, the code of the detached worktree `~/s1-code-b9f835de`; outputs `~/s1-train/tokens` and `~/s1-train/tails`, outside any git work tree). Task #460 still waits on the owner's D-115 choice. **NEXT:** the window (`~/s1-train/run441.sh`: smoke, read, the repeat read, then the request-shape check of the restored `qwen` unit) once the tokens are checked; harvest and gate task #472; the evaluation waits for both verifies (the 220 held-out rows give one claim).
+
+**2026-10-02 09:3xZ — WHAT IS LIVE NOW (superseded by the block above).**
 - **Origin (as of 09:3xZ):** the task #441 plan and pre-registration (e35bc330) and the features format (b1df2d35), pushed at 09:3xZ after CI run #1233 passed on 536c8782; then the two lane briefs and the dispatch entry, pushed before the dispatch (that push supersedes the CI run on b1df2d35: the same code).
 - **LIVE (as of 09:3xZ):** two sandbox build lanes, PIN b1df2d35, disjoint files: task #471 (`scripts/s1_train/read.py`, brief `tasks/briefs/jev-laya/S4-2-READ-brief.md`) and task #472 (`scripts/s1_train/heads.py` and `evaluate.py`, brief `tasks/briefs/jev-laya/S4-3-HEADS-brief.md`); they meet only through `scripts/s1_train/features.py`. Task #460 still waits on the owner's D-115 choice. **NEXT:** harvest both lanes and gate them; then the tokens step on the PC, the window (smoke, read, the repeat read), the evaluation.
 
