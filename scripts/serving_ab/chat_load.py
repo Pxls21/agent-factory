@@ -11,6 +11,11 @@ decode rate, its token counts, its status and a loop flag; a first turn's record
 planned prompt size, so a server whose tokenizer or chat template differs shows up in the summary. The
 server's /metrics text is saved before and after the run, and nvidia-smi is sampled during it.
 
+--cut-after S emulates the path a lane's request takes: OmniRoute ends a request that has sent no event within its
+first-event limit, and Hermes sends it again. An attempt with no SSE event S seconds after it began is cut (the
+connection is closed, so the server sees the client leave) and sent again, byte for byte, up to --retries times. A
+turn's ttft_s then counts from its first attempt, as the lane waits; attempt_ttft_s is the answering attempt's own.
+
 The API key is read from a file in process and never printed.
 
 Exit codes: 0 the run finished (its records say how each request went), 2 a bad argument or input.
@@ -42,8 +47,11 @@ def looped(text, tail=2000):
     return len(t) >= 1500 and len(zlib.compress(t.encode())) / len(t.encode()) < 0.15
 
 
-def stream_request(url, key, body, timeout):
-    """One streamed chat completion. Returns the record fields; never raises on a server error."""
+def stream_request(url, key, body, timeout, cut_after=0.0):
+    """One streamed chat completion. Returns the record fields; never raises on a server error.
+
+    With cut_after > 0 the attempt is cut when no SSE event has come cut_after seconds after it began ("cut": true);
+    a timeout after the first event stays an ordinary error. The connection is always closed on return."""
     u = urllib.parse.urlsplit(url)
     conn_cls = http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection
     headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
@@ -51,21 +59,43 @@ def stream_request(url, key, body, timeout):
         headers["Authorization"] = f"Bearer {key}"
     rec = {"status": None, "error": None, "ttft_s": None, "total_s": None, "decode_tok_s": None,
            "prompt_tokens": None, "completion_tokens": None, "cached_tokens": None, "loop": False,
-           "usage_seen": False}
+           "usage_seen": False, "cut": False, "_t_first": None}
     content, t0, t_first = [], time.monotonic(), None
+    state = {"event": False, "cut_bound": False}
+    conn = sock = resp = None
+
+    def arm():
+        # Before the first event a read may wait only until the cut; after it, the ordinary timeout.
+        wait, state["cut_bound"] = timeout, False
+        if cut_after and not state["event"]:
+            left = t0 + cut_after - time.monotonic()
+            if left < timeout:
+                state["cut_bound"] = True
+                if left <= 0:
+                    raise TimeoutError("the cut came between two reads")
+                wait = left
+        sock.settimeout(wait)
+
     try:
         conn = conn_cls(u.hostname, u.port, timeout=timeout)
         conn.request("POST", u.path.rstrip("/") + "/chat/completions", body=json.dumps(body), headers=headers)
+        sock = conn.sock  # kept: getresponse() drops conn.sock when the response will close the connection
+        arm()
         resp = conn.getresponse()
         rec["status"] = resp.status
         if resp.status != 200:
             rec["error"] = resp.read(400).decode(errors="replace").replace("\n", " ")
             return rec, ""
         usage = None
-        for raw in resp:
+        while True:
+            arm()
+            raw = resp.readline()
+            if not raw:
+                break
             line = raw.decode(errors="replace").strip()
             if not line.startswith("data:"):
                 continue
+            state["event"] = True
             data = line[5:].strip()
             if data == "[DONE]":
                 break
@@ -91,11 +121,25 @@ def stream_request(url, key, body, timeout):
             rec["cached_tokens"] = details.get("cached_tokens")
             if t_first is not None and rec["completion_tokens"] and t_end > t_first:
                 rec["decode_tok_s"] = round(rec["completion_tokens"] / (t_end - t_first), 2)
+    except TimeoutError as e:  # socket.timeout is TimeoutError since Python 3.10
+        if state["cut_bound"]:
+            rec["cut"], rec["error"] = True, f"cut: no event in {cut_after:g} s"
+        else:
+            rec["error"] = f"{type(e).__name__}: {e}"[:400]
+        rec["total_s"] = round(time.monotonic() - t0, 3)
     except (OSError, http.client.HTTPException, json.JSONDecodeError) as e:
         rec["error"] = f"{type(e).__name__}: {e}"[:400]
         rec["total_s"] = round(time.monotonic() - t0, 3)
+    finally:
+        # Both closed, so the socket really closes: a cut attempt's server sees its client leave, as it does when
+        # OmniRoute ends a request (the response holds the socket's file until it is closed).
+        if resp is not None:
+            resp.close()
+        if conn is not None:
+            conn.close()
     text = "".join(content)
     rec["loop"] = looped(text)
+    rec["_t_first"] = t_first
     return rec, text
 
 
@@ -109,9 +153,16 @@ def run_chat(args, key, wl, system, chat, out, lock, start_delay):
                 "temperature": args.temperature, "seed": args.seed * 1000 + chat["idx"] * 100 + turn}
         if wl["thinking"] != "server":
             body["chat_template_kwargs"] = {"enable_thinking": wl["thinking"] == "on"}
-        t_wall = time.time()
-        rec, reply = stream_request(args.base_url, key, body, args.timeout)
+        t_wall, t_turn = time.time(), time.monotonic()
+        for attempt in range(1, args.retries + 2):  # a cut attempt is sent again, the same body (Hermes retries)
+            rec, reply = stream_request(args.base_url, key, body, args.timeout, args.cut_after)
+            if not rec["cut"]:
+                break
+        t_first = rec.pop("_t_first")
+        rec["attempt_ttft_s"] = rec["ttft_s"]
+        rec["ttft_s"] = round(t_first - t_turn, 3) if t_first is not None else None  # the lane's wait
         rec.update({"arm": args.arm, "chat": chat["idx"], "turn": turn, "t_start_unix": round(t_wall, 3),
+                    "attempts": attempt, "cuts": attempt if rec["cut"] else attempt - 1,
                     "planned_prompt_tokens": chat["first_prompt_tokens"] if turn == 1 else None,
                     "over_limit": rec["ttft_s"] is None or rec["ttft_s"] > args.ttft_limit})
         with lock:
@@ -167,6 +218,8 @@ def summarize(path, wall_s, limit):
         "turn1_plan_diff_max": max(plan, default=None),
         "loops": sum(1 for r in recs if r["loop"]),
         "no_usage": sum(1 for r in recs if r["status"] == 200 and not r["usage_seen"]),
+        "cut_requests": sum(1 for r in recs if r["cuts"]),  # cut at least once
+        "unanswered": sum(1 for r in recs if r["ttft_s"] is None),  # no first token on any attempt
         "wall_s": round(wall_s, 1),
     }
 
@@ -183,11 +236,19 @@ def main(argv=None):
     ap.add_argument("--stagger-s", type=float, default=30.0)
     ap.add_argument("--ttft-limit", type=float, default=80.0, help="OmniRoute's first-event limit")
     ap.add_argument("--timeout", type=float, default=900.0)
+    ap.add_argument("--cut-after", type=float, default=0.0,
+                    help="cut an attempt with no SSE event this many seconds after it began, as OmniRoute ends a "
+                         "request at its first-event limit (0: never)")
+    ap.add_argument("--retries", type=int, default=0, help="attempts after a cut, each the same request (0 to 10)")
     ap.add_argument("--seed", type=int, default=454)
     ap.add_argument("--stop-chat-on-error", action="store_true")
     ap.add_argument("--nvsmi", action="store_true", help="sample nvidia-smi every 2 s during the run")
     ap.add_argument("--out", required=True, help="a directory that does not exist yet")
     args = ap.parse_args(argv)
+    if not math.isfinite(args.cut_after) or args.cut_after < 0:
+        die("--cut-after must be a finite number of seconds, 0 or more")
+    if not 0 <= args.retries <= 10:
+        die("--retries must be 0 to 10")
     out = pathlib.Path(args.out)
     if out.exists():
         die(f"--out exists: {out}")

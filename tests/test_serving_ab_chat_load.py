@@ -2,8 +2,9 @@
 OpenAI-compatible one (task #462).
 
 It checks the harness's own accounting (first-token time, decode rate, usage, errors, the loop flag, the
-plan check, the summary) and that the replay sends the workload's text byte for byte; the A/B itself runs
-only against the real servers."""
+plan check, the summary), the cut and retry of a request with no first event (task #454's second window),
+and that the replay sends the workload's text byte for byte; the A/B itself runs only against the real
+servers."""
 import http.server
 import json
 import pathlib
@@ -21,8 +22,14 @@ RUN_ID_LINE = "Run id: 00000000."
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    """Modes: ok (first event after 0.3 s); err (503); loop (a looping reply); slow_first (the first attempt of each
+    request waits 1.0 s before its first event, a later attempt of the same request 0.1 s: a server that kept the
+    work of the cut attempt); always_slow (every attempt waits 1.0 s); stall (the first event after 0.1 s, then 1.0 s
+    of nothing)."""
     mode = "ok"
     seen = []
+    attempts = {}
+    disconnects = 0
 
     def log_message(self, *a):
         pass
@@ -63,21 +70,32 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
-        time.sleep(0.3)  # the first token arrives after 0.3 s
+        delay = 0.3  # the first token arrives after 0.3 s
+        if Handler.mode in ("slow_first", "always_slow"):
+            k = json.dumps(req["messages"], sort_keys=True)
+            n = Handler.attempts.get(k, 0)
+            Handler.attempts[k] = n + 1
+            delay = 1.0 if Handler.mode == "always_slow" or n == 0 else 0.1
+        elif Handler.mode == "stall":
+            delay = 0.1
+        time.sleep(delay)
         words = ["ab " * 1000] if Handler.mode == "loop" else ["Hello", " there", "."]
-        for w in words:
-            ev = {"choices": [{"index": 0, "delta": {"content": w}}]}
-            self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
-            self.wfile.flush()
-            time.sleep(0.1)
-        usage = {"prompt_tokens": 1234, "completion_tokens": 30, "prompt_tokens_details": {"cached_tokens": 1000}}
-        self.wfile.write(f"data: {json.dumps({'choices': [], 'usage': usage})}\n\n".encode())
-        self.wfile.write(b"data: [DONE]\n\n")
+        try:
+            for i, w in enumerate(words):
+                ev = {"choices": [{"index": 0, "delta": {"content": w}}]}
+                self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
+                self.wfile.flush()
+                time.sleep(1.0 if Handler.mode == "stall" and i == 0 else 0.1)
+            usage = {"prompt_tokens": 1234, "completion_tokens": 30, "prompt_tokens_details": {"cached_tokens": 1000}}
+            self.wfile.write(f"data: {json.dumps({'choices': [], 'usage': usage})}\n\n".encode())
+            self.wfile.write(b"data: [DONE]\n\n")
+        except (BrokenPipeError, ConnectionResetError):
+            Handler.disconnects += 1  # the client left first
 
 
 @pytest.fixture()
 def server():
-    Handler.mode, Handler.seen = "ok", []
+    Handler.mode, Handler.seen, Handler.attempts, Handler.disconnects = "ok", [], {}, 0
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     th = threading.Thread(target=srv.serve_forever, daemon=True)
     th.start()
@@ -119,8 +137,10 @@ def test_records_and_summary(server, tmp_path, capsys):
         assert r["prompt_tokens"] == 1234 and r["completion_tokens"] == 30 and r["cached_tokens"] == 1000
         assert r["decode_tok_s"] > 0 and not r["loop"] and not r["over_limit"]
         assert r["planned_prompt_tokens"] == ({0: 1234, 1: 1200}[r["chat"]] if r["turn"] == 1 else None)
+        assert r["attempts"] == 1 and r["cuts"] == 0 and not r["cut"] and abs(r["attempt_ttft_s"] - r["ttft_s"]) < 0.01
     s = json.loads((out / "summary.json").read_text())
     assert s["requests"] == 4 and s["ok"] == 4 and s["errors"] == 0 and s["missed_80s"] == 0
+    assert s["cut_requests"] == 0 and s["unanswered"] == 0
     assert s["turn1_plan_diff_max"] == 34  # chat 1 planned 1200, the server counted 1234
     assert (out / "metrics-before.txt").read_text().splitlines() == [
         "vllm:num_preemptions_total 0.0", "vllm:prefix_cache_hits_total 5.0"]
@@ -211,3 +231,62 @@ def test_wrong_key_is_refused_and_recorded(server, tmp_path):
 def test_wrong_path_is_refused(server, tmp_path):
     rc, out = run(server.rsplit("/v1", 1)[0] + "/v2", tmp_path, "--stop-chat-on-error")
     assert all(r["status"] == 404 for r in records(out))
+
+
+def test_a_cut_request_is_sent_again_and_answered(server, tmp_path):
+    # OmniRoute ends a request with no event in its limit; Hermes sends it again. Here the server kept the cut
+    # attempt's work, so the second attempt answers fast; the lane's wait still counts from the first attempt.
+    Handler.mode = "slow_first"
+    rc, out = run(server, tmp_path, "--cut-after", "0.5", "--retries", "2")
+    recs = records(out)
+    assert rc == 0 and len(recs) == 4
+    for r in recs:
+        assert r["status"] == 200 and r["error"] is None and not r["cut"], r
+        assert r["attempts"] == 2 and r["cuts"] == 1
+        assert r["attempt_ttft_s"] < 0.5 <= r["ttft_s"] < 1.0, r
+    s = json.loads((out / "summary.json").read_text())
+    assert s["cut_requests"] == 4 and s["unanswered"] == 0 and s["errors"] == 0 and s["ok"] == 4
+    bodies = [json.dumps(x["req"], sort_keys=True) for x in Handler.seen]
+    assert len(bodies) == 8 and all(bodies.count(b) == 2 for b in bodies)  # each retry resends the same request
+    time.sleep(1.5)  # each cut attempt's handler wakes after 1.0 s and finds its client gone
+    assert Handler.disconnects == 4
+
+
+def test_a_request_cut_on_every_attempt_is_unanswered(server, tmp_path):
+    Handler.mode = "always_slow"
+    rc, out = run(server, tmp_path, "--cut-after", "0.3", "--retries", "1", "--stop-chat-on-error")
+    recs = records(out)
+    assert rc == 0 and len(recs) == 2
+    for r in recs:
+        assert r["cut"] and r["attempts"] == 2 and r["cuts"] == 2 and r["ttft_s"] is None and r["over_limit"]
+        assert r["error"] == "cut: no event in 0.3 s", r["error"]
+    s = json.loads((out / "summary.json").read_text())
+    assert s["unanswered"] == 2 and s["cut_requests"] == 2 and s["missed_80s"] == 2 and s["errors"] == 2
+
+
+def test_without_cut_after_a_slow_first_event_is_waited_for(server, tmp_path):
+    Handler.mode = "always_slow"
+    rc, out = run(server, tmp_path)
+    recs = records(out)
+    assert len(recs) == 4
+    assert all(r["attempts"] == 1 and r["cuts"] == 0 and not r["cut"] and r["ttft_s"] >= 1.0 for r in recs)
+
+
+def test_a_stall_after_the_first_event_is_a_timeout_not_a_cut(server, tmp_path):
+    Handler.mode = "stall"
+    rc, out = run(server, tmp_path, "--cut-after", "0.3", "--retries", "2", "--timeout", "0.5", "--stop-chat-on-error")
+    recs = records(out)
+    assert len(recs) == 2
+    for r in recs:
+        assert not r["cut"] and r["attempts"] == 1 and r["cuts"] == 0 and r["ttft_s"] is not None
+        assert r["error"].startswith("TimeoutError"), r["error"]
+
+
+@pytest.mark.parametrize("flag,value", [("--cut-after", "-1"), ("--cut-after", "nan"), ("--cut-after", "inf"),
+                                        ("--retries", "-1"), ("--retries", "11")])
+def test_refuses_a_bad_cut_or_retry_setting(server, tmp_path, capsys, flag, value):
+    with pytest.raises(SystemExit) as e:
+        run(server, tmp_path, flag, value)
+    # the tool's own refusal, not argparse's ("unrecognized arguments" also exits 2)
+    assert e.value.code == 2 and f"chat_load: {flag} " in capsys.readouterr().err
+    assert not (tmp_path / "out").exists() and Handler.seen == []
