@@ -374,13 +374,17 @@ def view(build, export):
 
 
 def check_out(out):
-    """--out is not a symbolic link, to anything, and does not lie inside a git work tree: no .git entry in its resolved
-    path or any parent of it (D-10; `link/` and `link/.` name the link too). It must not exist, or be an empty
-    directory (D-6)."""
+    """--out has no '..' part (D-10 and D-6 as amended by D-134), is not a symbolic link, to anything, and does not lie
+    inside a git work tree: no .git entry in its resolved path or any parent of it (D-10; `link/` and `link/.` name the
+    link too). It must not exist, or be an empty directory (D-6)."""
     try:
-        # The entry --out names: trailing '/' and '.' parts are dropped, but a '..' stays for the kernel to resolve, since
-        # after a link it names another entry than abspath's text (VERIFY-S1-VIEW-GUARDS B1: `hop/../link`, hop a
-        # link). The abspath check stays as well. Both run before lexists, so a dangling link is refused here too.
+        # D-134: a '..' part is refused first. A part that does not exist yet changes what a later '..' names once
+        # os.makedirs creates it (VERIFY-S1-VIEW-GUARDS B1 and B2: `hop/missing/../../link` wrote through a link,
+        # `missing/../E` over a full directory), so no check of the text can tell which entry the kernel will open.
+        # Without a '..' the text names that entry, and the checks below are exact: trailing '/' and '.' parts are
+        # dropped for the link check, and both link checks run before lexists, so a dangling link is refused too.
+        if ".." in out.split("/"):
+            raise Refused("--out %s holds a '..' part" % out)
         named = out.split("/")
         while len(named) > 1 and named[-1] in ("", "."):
             named.pop()

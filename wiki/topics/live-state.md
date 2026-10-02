@@ -11,7 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
-**2026-10-02 11:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+**2026-10-02 11:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 11:5xZ):** as at 11:3xZ; local and pushed together next: the 11:3xZ retro (AF-AP-262, orchestration 0r), task #460's REDESIGN (D-134: the view refuses an `--out` with a `..` part) and the VERIFY-S4-2-READ report (MERGE-READY-WITH-FOLLOWUPS; task #474 (backlog) holds its follow-ups).
+- **LIVE (as of 11:5xZ):** VERIFY-S4-3-HEADS (PIN daa20757), a sandbox adversarial-verifier; on the PC, task #441's GPU window: the read finished all 39 files (11:5xZ); the repeat read, the `qwen` unit's restore, its request-shape check and the repeat comparison follow. **NEXT:** after the push, VERIFY-S1-VIEW-GUARDS resumed at the post-push PIN (D-134's one round); the window's results (AF-AP-260's check of the restored unit); F3's reader check in the next GPU window (the criterion is in the ledger, written before it runs); the evaluation of record on the PC after VERIFY-S4-3-HEADS.
+
+**2026-10-02 11:3xZ — WHAT IS LIVE NOW (superseded by the block above).**
 - **Origin (as of 11:3xZ):** as at 11:1xZ (task #472's landing daa20757 and its verify brief 28c8e708), plus a transcripts commit (6b8c026b) and this retro (AF-AP-262; orchestration 0r: a brief quotes a frozen document's rule, and a change to the rule is an amendment of the document first).
 - **LIVE (as of 11:3xZ):** VERIFY-S4-2-READ (PIN b9f835de) and VERIFY-S4-3-HEADS (PIN daa20757), two sandbox adversarial-verifiers; on the PC, task #441's GPU window (`~/s1-train/run441.sh` through `scripts/gpu_window.sh --max-minutes 90`): the smoke passed and the read runs, the largest file first (20,387,757 of the 29,087,106 tokens; at 11:33Z, 12 minutes in, no file finished). Task #460 still waits on the owner's D-115 choice. **NEXT:** the window's end (the repeat read of the two smallest files, the `qwen` unit restored and its request shapes checked, the repeat comparison); then the evaluation of record on the PC, from a worktree of the latest commit, only after both verifies.
 

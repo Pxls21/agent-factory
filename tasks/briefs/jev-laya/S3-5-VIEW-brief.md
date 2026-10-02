@@ -127,7 +127,9 @@ load through `common.load_dataset`, and each `labels.jsonl` matches its manifest
 2, nothing written.
 
 **D-6 The outputs.** The CLI: `python3 scripts/s1_train/view.py --build <S1 build dir> --export <export dir> --out
-<dir>`. `--out` must not exist, or be an empty directory (else exit 2); it lives outside git.
+<dir>`. `--out` must not exist, or be an empty directory (else exit 2); it lives outside git. AMENDED 2026-10-02
+11:5xZ (D-134): an `--out` with a `..` part is refused (exit 2), since a missing part before it let `missing/../E` replace
+a full directory's outputs (task #460's B2).
 `view.jsonl`: one row per found id, sorted by (`src`, `state_event`, `id`), exactly the keys `id, item_id, split, label
 (a JSON boolean), source, time (the build source's), src (the manifest entry's src: the transcript file the stream
 came from; its stream file is that entry's output), carrier (the kind

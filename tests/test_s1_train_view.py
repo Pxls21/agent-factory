@@ -1298,7 +1298,8 @@ def test_an_out_that_is_a_symbolic_link_is_refused(world, tmp_path, form):
 @pytest.mark.parametrize("form", ["", "/", "/.", "/./."], ids=["dotdot", "dotdot-slash", "dotdot-dot", "dotdot-dot-dot"])
 def test_an_out_that_is_a_link_after_a_dotdot_is_refused(world, tmp_path, form):
     # VERIFY-S1-VIEW-GUARDS B1: in `hop/../link`, hop a link, the kernel resolves '..' from hop's target, so the path
-    # names a link that its text (abspath) does not show; the view wrote through it into the link's target
+    # names a link that its text (abspath) does not show; the view wrote through it into the link's target. Since D-134
+    # every '..' part is refused first
     (tmp_path / "b" / "sub").mkdir(parents=True)
     (tmp_path / "c").mkdir()
     target = tmp_path / "target"
@@ -1310,8 +1311,41 @@ def test_an_out_that_is_a_link_after_a_dotdot_is_refused(world, tmp_path, form):
     out = named + form
     r = _view(world.build, world.export, out)
     assert (r.returncode, r.stdout) == (2, ""), r.stderr[-800:]
-    assert "s1-view: refused: --out %s is a symbolic link" % out in r.stderr, r.stderr[-800:]
+    assert "s1-view: refused: --out %s holds a '..' part" % out in r.stderr, r.stderr[-800:]
     assert os.listdir(target) == []
+
+
+@pytest.mark.parametrize("case", ["m1", "m4", "d1", "d2"])
+def test_an_out_with_a_missing_part_before_a_dotdot_is_refused(world, tmp_path, case):
+    # VERIFY-S1-VIEW-GUARDS round 3 (B1 and B2): a part that does not exist yet changes what a later '..' names once
+    # os.makedirs creates it, so these four wrote through a link (m1, m4) or over a full directory's outputs (m4, d1,
+    # d2), with a stray directory left behind. D-134 refuses every '..' part: exit 2, nothing written, nothing made
+    b, c, f = tmp_path / "b", tmp_path / "c", tmp_path / "f"
+    for d in (b / "sub", c, f / "e", f / "wd", tmp_path / "t", tmp_path / "e2"):
+        d.mkdir(parents=True)
+    for full in (f / "e", f / "wd", tmp_path / "e2"):
+        for name in ("view.jsonl", "summary.json"):
+            (full / name).write_text("keep\n")
+    os.symlink(b / "sub", c / "hop")
+    os.symlink(tmp_path / "t", b / "link")
+    os.symlink(tmp_path / "e2", b / "link_ne")
+    out = {"m1": c / "hop" / "missing" / ".." / ".." / "link", "m4": c / "hop" / "missing" / ".." / ".." / "link_ne",
+           "d1": f / "missing" / ".." / "e", "d2": f / "wd" / "missing" / ".."}[case]
+    _refused(_view(world.build, world.export, out), "--out %s holds a '..' part" % out, out)
+    assert os.listdir(tmp_path / "t") == []
+    for full in (f / "e", f / "wd", tmp_path / "e2"):
+        assert sorted(os.listdir(full)) == ["summary.json", "view.jsonl"]
+        assert all((full / name).read_text() == "keep\n" for name in ("view.jsonl", "summary.json"))
+    assert sorted(os.listdir(b / "sub")) == [] and sorted(os.listdir(f)) == ["e", "wd"]
+
+
+@pytest.mark.parametrize("part", ["v..1", "..."])
+def test_an_out_whose_part_only_holds_dots_is_written(world, tmp_path, part):
+    # D-134 refuses a part that is exactly '..'; a name that holds dots is an ordinary directory
+    out = pathlib.Path(_out(tmp_path)) / part / "out"
+    r = _view(world.build, world.export, out)
+    assert r.returncode == 0, r.stderr[-800:]
+    assert sorted(os.listdir(out)) == ["summary.json", "view.jsonl"]
 
 
 @pytest.mark.parametrize("where", ["a_work_tree", "a_new_path_below", "a_git_file", "through_a_link"])

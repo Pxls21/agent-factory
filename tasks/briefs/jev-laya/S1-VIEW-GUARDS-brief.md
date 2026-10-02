@@ -80,6 +80,10 @@ Catch them where the input is read, never with a bare `except Exception` around 
 directory included (F14). Also refuse one whose path, or whose nearest existing parent, lies inside a git work tree: a
 `.git` entry, file or directory, in that directory or any parent. D-6 already says the output lives outside git. Use
 no subprocess. Both `check_out` calls apply both rules.
+AMENDED 2026-10-02 11:5xZ (D-134, the owner's REDESIGN after the D-115 review of task #460): first refuse (exit 2,
+nothing written) an `--out` with a `..` part. A part that does not exist yet changes what a later `..` names once
+`os.makedirs` creates it, so no check of the text can tell which entry the kernel will open (rounds 2 and 3: B1 and
+B2). Without a `..` the two rules above are exact.
 
 **D-11 Three input facts (D-5's verification, extended; F9, F10, F12):**
 - a manifest entry's `output` must resolve, after symbolic links, inside the export directory;
