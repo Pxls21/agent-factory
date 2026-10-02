@@ -11,7 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
-**2026-10-02 10:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+**2026-10-02 11:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 11:1xZ):** task #472 (the heads and the one evaluator) landed GATED-PENDING-VERIFY as daa20757, with the pre-registration's 11:0xZ amendment (§3's same-state mask, the evaluator's readings G-1 to G-11 frozen, the run of record with `--read-repeat` and `--twice`; the §8 block unchanged). The second verify brief and this block are pushed before that verifier's dispatch.
+- **LIVE (as of 11:1xZ):** VERIFY-S4-2-READ (PIN b9f835de) and VERIFY-S4-3-HEADS (PIN daa20757), two sandbox adversarial-verifiers; on the PC, task #441's tails step (`~/s1-train/tokens.sh`; its tokens step ended rc 0 at 11:04:13Z: 39 files, 1,091 rows, 361 candidates, 29,087,106 tokens in 88,779 blocks, 858 s). Task #460 still waits on the owner's D-115 choice. **NEXT:** the window once the tails are done (`~/s1-train/run441.sh`: smoke, read, the repeat read, then the request-shape check of the restored `qwen` unit, then the repeat comparison); the evaluation (on the PC, from a worktree of daa20757 or later) only after both verifies.
+
+**2026-10-02 10:5xZ — WHAT IS LIVE NOW (superseded by the block above).**
 - **Origin (as of 10:5xZ):** task #471 (the reading program, `scripts/s1_train/read.py`) landed GATED-PENDING-VERIFY as b9f835de, with the 09:5xZ retro entry (a8e88c6c); CI run #1235 had passed on 0e2c202c. The verify brief and this block are pushed before the verifier's dispatch.
 - **LIVE (as of 10:5xZ):** the task #472 build lane (the heads and the evaluator, sandbox, PIN b1df2d35); VERIFY-S4-2-READ (a sandbox adversarial-verifier, brief `tasks/briefs/jev-laya/VERIFY-S4-2-READ-brief.md`, PIN b9f835de); on the PC, the tokens step of task #441 (`~/s1-train/tokens.sh`, detached, started 10:49:55Z, the code of the detached worktree `~/s1-code-b9f835de`; outputs `~/s1-train/tokens` and `~/s1-train/tails`, outside any git work tree). Task #460 still waits on the owner's D-115 choice. **NEXT:** the window (`~/s1-train/run441.sh`: smoke, read, the repeat read, then the request-shape check of the restored `qwen` unit) once the tokens are checked; harvest and gate task #472; the evaluation waits for both verifies (the 220 held-out rows give one claim).
 
