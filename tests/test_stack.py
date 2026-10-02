@@ -1053,14 +1053,17 @@ def real(tmp_path, *args, timeout=300):
 
 NOTES = {   # issue #80's pre-wiring list (VERIFY-LS-B9 round 3), each under its stack, and the round-4 brief's eighth;
             # the gate's second and harvest's first are amended for round 4's R3-F1 and R3-F3 fixes (the report says how);
-            # changes' and fix-echo's are task #385's (LS-B12: how to read their output)
+            # changes' and fix-echo's are task #385's (LS-B12: how to read their output); the gate's fourth is the
+            # 2026-10-02 22:2xZ retro's (the union section past the print cap)
     "harvest": ["On a resumed lane, check the `report:` line: the report window opens at the resume message, so no "
                 "earlier round's text is this round's report (R3-F3).",
                 "`report=` names an existing file to lint and hash; the hand-back itself is saved under the run "
                 "directory as `handback.md`."],
     "gate": ["`runs=2` re-runs the pytest files only; `setid` covers the pytest files only.",
              "Read the counts line; `mode=run` refuses more than `max_files` (40).",
-             "Pass `graph=no` where ripwire is missing and for a deleted path (F-18)."],
+             "Pass `graph=no` where ripwire is missing and for a deleted path (F-18).",
+             "With many paths the `union` section passes the print cap: take the list from the `union.out` file its "
+             "cut line names (2026-10-02: a grep of the cut section missed 2 of 29 files)."],
     "ctx": ["`ctx` does not show a missing ripwire as unmapped (F-6)."],
     "review": ["`review mode=save` overwrites the shared sentrux baseline (F-5).",
                "`review`'s sentrux section is advisory; `tool exit N` is the only sign of a failed run."],

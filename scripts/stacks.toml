@@ -116,6 +116,7 @@ notes = [
   "`runs=2` re-runs the pytest files only; `setid` covers the pytest files only.",
   "Read the counts line; `mode=run` refuses more than `max_files` (40).",
   "Pass `graph=no` where ripwire is missing and for a deleted path (F-18).",
+  "With many paths the `union` section passes the print cap: take the list from the `union.out` file its cut line names (2026-10-02: a grep of the cut section missed 2 of 29 files).",
 ]
 
 [stacks.gate.params.paths]

@@ -11,7 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
-**2026-10-02 21:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+**2026-10-02 22:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 22:2xZ):** 85d7286d (transcripts: the fixed exporter grew the day to 849 turns) on 4b8a49d2 (task #483; CI pending); this push carries the retro (AF-AP-264's echo and task #484, a `gate` label note, the restart line pointing at `scripts/resume-heal.sh`).
+- **LIVE (as of 22:2xZ):** unchanged on the PC since the 21:1xZ block: the heat guard runs, enabled at boot; the `qwen` unit (SGLang) is stopped; boost is on (Tctl 62.4°C at idle at 22:07Z). The relay is down (its key went with the restart). **NEXT:** the owner turns boost off; then SGLang starts under the guard and task #478's proof runs; task #482 (a mounted Triton cache, scoped: `/root/.triton` holds nothing in the image); task #479 before task #441's rerun on the GPU.
+
+**2026-10-02 21:5xZ — WHAT IS LIVE NOW (superseded by the block above).**
 - **Origin (as of 21:5xZ):** 63eb635b (CI run #1245) carries the heat guard and its records; 818de1ff restores the day's chat digest that the push's transcript sync cut after a container restart; this push carries the exporter fix (task #483), AF-AP-264 and the restart lessons.
 - **LIVE (as of 21:5xZ):** unchanged on the PC since the 21:1xZ block: the heat guard runs, enabled at boot; the `qwen` unit (SGLang) is stopped, boost is on, the local route is down. In the sandbox the relay is down: its key file went with the restart, and only the owner can paste it again. **NEXT:** the owner turns boost off; then SGLang starts under the guard and task #478's proof runs; task #482 (a mounted Triton cache); task #479 before task #441's rerun on the GPU.
 
