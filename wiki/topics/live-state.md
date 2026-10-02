@@ -11,7 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
-**2026-10-02 09:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+**2026-10-02 09:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 09:3xZ):** the task #441 plan and pre-registration (e35bc330) and the features format (b1df2d35), pushed at 09:3xZ after CI run #1233 passed on 536c8782; then the two lane briefs and the dispatch entry, pushed before the dispatch (that push supersedes the CI run on b1df2d35: the same code).
+- **LIVE (as of 09:3xZ):** two sandbox build lanes, PIN b1df2d35, disjoint files: task #471 (`scripts/s1_train/read.py`, brief `tasks/briefs/jev-laya/S4-2-READ-brief.md`) and task #472 (`scripts/s1_train/heads.py` and `evaluate.py`, brief `tasks/briefs/jev-laya/S4-3-HEADS-brief.md`); they meet only through `scripts/s1_train/features.py`. Task #460 still waits on the owner's D-115 choice. **NEXT:** harvest both lanes and gate them; then the tokens step on the PC, the window (smoke, read, the repeat read), the evaluation.
+
+**2026-10-02 09:1xZ — WHAT IS LIVE NOW (superseded by the block above).**
 - **Origin (as of 09:1xZ):** 536c8782 (the retro: AF-AP-261, the anti-hollow-green corollary) and a transcripts sync (57a3f136), pushed at 08:4xZ; CI run #1233 runs on 536c8782. Held locally: the task #441 plan below.
 - **LIVE (as of 09:1xZ):** no lane. Task #441 (the first S1 training) is planned: `tasks/s1-heads-breakdown.md` (nine pinned decisions, five increments, tasks #470 to #473) and its pre-registration `docs/research/findings/s1-train/PREREG-441.md` (PASS: more than 178 of the 220 held-out rows right and a one-sided exact McNemar p < 0.05 against the kind rule). The reading pass runs on the 3090 in a D-088 window (about 15 minutes of GPU work); the heads train on the CPU. Task #460 still waits on the owner's D-115 choice; the view's output the plan reads is not affected. **NEXT:** push after CI run #1233; then two sandbox build lanes in parallel, task #471 (`scripts/s1_train/read.py`) and task #472 (the heads and the evaluator); then the window.
 
