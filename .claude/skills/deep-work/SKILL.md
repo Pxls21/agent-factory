@@ -48,6 +48,7 @@ hash gate for four increments — caught only when a downstream cross-check re-r
   PAPER wiring.
 - **Inventory what is already built:** one line per touched component — "we already have X
   (`module:fn`) — it does Y" — before designing anything that could duplicate it.
+- **A tool, repo or feature the owner names is researched from its OWN sources, aimed at the problem the owner named (2026-10-01, D-128, AF-AP-258).** Read its docs and its source at a pinned tag for the behaviour the owner's problem turns on, and compare the full feature sets; a metric of the tool in place is a premise, never the comparison. D-127 asked for SGLang against vLLM for this project's lane ceiling and its crashes; the first answer weighed SGLang's radix tree against the live vLLM's 68% prefix-cache hit rate and called it a better cache, and the owner read an evidence report still empty on those questions. The reading that answered them took fifteen minutes: SGLang's retraction when the KV pool is full (`schedule_batch.py:3168` at v0.5.20), HiCache's host-RAM tier, the model's KV cost per token from its own `config.json`, and vLLM's preemption (`scheduler.py:1336` at v0.28.0).
 
 **Phase 2 — measure before designing.**
 - **Count what the agent actually does, not the tool named for the action (2026-09-29, VERIFY-K1 F3, AF-AP-240).** K1's

@@ -228,6 +228,14 @@ subordinate to, the Anthropic docs.
    calls per compaction was low; K1 round 2 measured +3.9 to +4.1 and VERIFY-K1 round 2 confirmed it).
 
 
+0q. **An evidence brief asks for the substance first, in the order of the owner's question (2026-10-01, D-128,
+   AF-AP-258).** The SGLANG-EVIDENCE brief opened with a premise re-run and per-row marking rules and left the owner's
+   questions (how many chats run at once, what happens when memory runs out, the Hermes fit) to later sections; 70
+   minutes in, the report held its premise checks and the recipe's image details, those sections were empty, and the
+   owner read it. Write the owner's question as the brief's first section, ask for the sections that answer it first
+   (each within a stated time), and keep the premise to the lines the answer depends on. Before the brief, the
+   coordinator reads the named tool's own docs and source for the behaviour in question (skill `deep-work`, Phase 1),
+   so the brief's framing is not the incumbent's metric.
 0h. **A brief that changes a SHAPE runs every test that pins the shape, not only the changed file's own suite (2026-09-25, K265, AF-AP-215).** The K265 brief changed the Laya server's per-chunk state order and measured the server's own suite at the PIN; `tests/test_laya_ft.py` pinned the same shape as the fine-tune's train/serve invariant (the dataset's `{"query", "chunk"}` rows equal what the server sends), so the contract broke it and the lane stopped at its boundary (one round). Before a brief changes a function's output shape or order, find every test and consumer that reads it (graft for the callers, a literal grep of `tests/` for the function and module names), run those tests at the PIN, and paste the set with its counts in the premise block; a consumer that pins the old shape is a design input, never a surprise for the lane.
 
 1. **Briefs state GOAL + CONSTRAINTS + EVIDENCE DEMANDS, not enumerated steps.** Let the model
