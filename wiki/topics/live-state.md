@@ -11,7 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
-**2026-10-02 08:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+**2026-10-02 09:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 09:1xZ):** 536c8782 (the retro: AF-AP-261, the anti-hollow-green corollary) and a transcripts sync (57a3f136), pushed at 08:4xZ; CI run #1233 runs on 536c8782. Held locally: the task #441 plan below.
+- **LIVE (as of 09:1xZ):** no lane. Task #441 (the first S1 training) is planned: `tasks/s1-heads-breakdown.md` (nine pinned decisions, five increments, tasks #470 to #473) and its pre-registration `docs/research/findings/s1-train/PREREG-441.md` (PASS: more than 178 of the 220 held-out rows right and a one-sided exact McNemar p < 0.05 against the kind rule). The reading pass runs on the 3090 in a D-088 window (about 15 minutes of GPU work); the heads train on the CPU. Task #460 still waits on the owner's D-115 choice; the view's output the plan reads is not affected. **NEXT:** push after CI run #1233; then two sandbox build lanes in parallel, task #471 (`scripts/s1_train/read.py`) and task #472 (the heads and the evaluator); then the window.
+
+**2026-10-02 08:0xZ — WHAT IS LIVE NOW (superseded by the block above).**
 - **Origin (as of 08:1xZ):** 6e14aa97 (the commit with both lanes' reports, the micro-output design and the deadlock review) and a transcripts sync, pushed at 08:1xZ; CI runs on 6e14aa97. Held locally: this retro (AF-AP-261, the anti-hollow-green corollary).
 - **LIVE (as of 08:0xZ):** no lane. Task #460 waits on the owner's D-115 choice (REDESIGN recommended: refuse a `..` part in `--out`, measured in scratch; B1 and B2 are one class). Task #467 is parked in the backlog with its design note (`docs/research/findings/s1-micro/S1-MICRO-DESIGN.md`). The PC's `qwen` container runs SGLang without the prefill CUDA graphs since 04:15:19Z; the vLLM unit waits as the fallback. **NEXT:** the owner's choice on task #460; the pre-registration of task #441 (the first S1 training); task #468 (the view's follow-ups) before any new export is viewed for training.
 
