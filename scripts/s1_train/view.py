@@ -17,19 +17,34 @@ The state (D-3) ends where the run of hook events that holds the carrier begins 
 right before it): the hooks of one call run in parallel and never see each other's output. The run's first event (the
 carrier when no hook precedes it) is state_event; state_end is the offset where its block starts. The rendered text must
 hold the id nowhere before state_end (text.find(id) >= state_end, else refused). For a PreToolUse or PostToolUse
-carrier and a tool_result carrier, the tool call with the carrier's call id before state_event is its step
+carrier and a tool_result carrier, the LAST tool call with the carrier's call id before state_event is its step
 (step_event: that call's seq; counted step_found).
+
+The guards (D-8; task #460, after VERIFY-S3-5-VIEW's F1 to F3). The run is found by adjacency, so two record orders
+put into the state what D-3 keeps out of it, and an exporter cut takes the middle out of a candidate. An id with one
+carrier is checked, in this order: same_call_hook_in_state, its call id is not null and an event before state_event is a
+hook event whose text parses as a JSON dict that renders, whose toolUseID is that call id and whose hookEvent is the
+row's hook_event (a run split by a non-hook event); own_result_in_state, a PreToolUse carrier that is not a tool_result
+has a tool_result with its call id before state_event (the call's own output); carrier_truncated, the exporter cut the
+carrier event (its `truncated` is not null: the candidate lost its middle). Such an id is neither written nor counted
+found: it is counted once, under the first guard it meets, in not_found. The source refusal and the id-before-state
+refusal are checked first and still refuse the whole view.
 
 Inputs are verified before use (D-5): each export file's sha256 against its manifest entry; its xz data read whole by
 one lzma.LZMADecompressor, refused when the stream is cut or bytes follow it (AF-AP-255); every line one event of the
-export's schema, seq strictly increasing; a manifest that names a src or an output twice is refused (AF-AP-254). Each
-split loads through common.load_dataset; its labels.jsonl matches its manifest's sha256; every row joins its label
-(common.join_labels), whose target is [0.0, 1.0] (true) or [1.0, 0.0] (false); a source id sits in one row only.
+export's schema whose src is its entry's, seq strictly increasing; a manifest that names a src or an output twice is
+refused (AF-AP-254), and so is an output that resolves, after symbolic links, outside the export directory or to the
+file of another entry (D-11). Each split loads through common.load_dataset; its labels.jsonl matches its manifest's
+sha256; every row joins its label (common.join_labels), whose target is [0.0, 1.0] (true) or [1.0, 0.0] (false); a
+source id sits in one row only. An input that cannot be read or checked is refused too (D-9): a RecursionError,
+TypeError or ValueError while the manifest, an export file, an event or the build is read; an OSError while --out is
+made or written.
 
 usage: view.py --build <S1 build dir> --export <export dir> --out <dir>
-  --out must not exist, or be an empty directory; keep it outside git (view.jsonl holds injected texts). Writes
-  view.jsonl (one row per found id, sorted by src, state_event, id) and summary.json (counts and digests, no session
-  text); the same inputs give byte-identical outputs (no clock, no host path, no randomness).
+  --out must not exist, or be an empty directory; it must not be a symbolic link, nor lie inside a git work tree (a
+  .git entry in it or in any parent of it or of its nearest existing parent; D-10): view.jsonl holds injected texts.
+  Writes view.jsonl (one row per found id, sorted by src, state_event, id) and summary.json (counts and digests, no
+  session text); the same inputs give byte-identical outputs (no clock, no host path, no randomness).
 exit: 0 done (stdout: one line of counts); 2 refused (the reason on stderr; nothing written).
 """
 import argparse
@@ -49,8 +64,9 @@ import s1_scores as S  # noqa: E402  the ONE reading of what a hook handed the m
 from laya_ft import build_s1 as B  # noqa: E402
 from laya_ft import common as C  # noqa: E402
 
-VERSION = "s1-view-v1"
+VERSION = "s1-view-v2"
 SPLITS = ("train", "heldout")
+GUARDS = ("same_call_hook_in_state", "own_result_in_state", "carrier_truncated")   # D-8, in the order they are met
 LABELS_FILE = "labels.jsonl"
 BUILD_FILES = ("summary.json",) + tuple("%s/%s" % (s, f) for s in SPLITS
                                         for f in (C.DATASET_FILE, LABELS_FILE, C.MANIFEST_FILE))
@@ -91,7 +107,7 @@ def read_build(bdir):
     try:
         raw = {name: (bdir / name).read_bytes() for name in BUILD_FILES}   # each file read once, here
         commit = json.loads(raw["summary.json"].decode("utf-8"))["commit"]
-    except (OSError, ValueError, KeyError, TypeError) as e:
+    except (OSError, RecursionError, ValueError, KeyError, TypeError) as e:
         raise Refused("the build: %s" % e)
     files = {name: C.sha256_hex(data) for name, data in raw.items()}
     ids = {}
@@ -99,13 +115,14 @@ def read_build(bdir):
         name = split + "/"
         try:
             rows, manifest = C.load_dataset(bdir / split)
-        except (C.DatasetError, C.HeldOutError, C.HeldOutLeak, OSError, ValueError, KeyError, TypeError) as e:
+        except (C.DatasetError, C.HeldOutError, C.HeldOutLeak, OSError, RecursionError, ValueError, KeyError,
+                TypeError) as e:
             raise Refused("the build's %s split: %s" % (split, e))
         try:                       # load_dataset read its two files again: the bytes it verified are the bytes hashed
             same = json.loads(raw[name + C.MANIFEST_FILE].decode("utf-8")) == manifest \
                 and manifest["dataset"]["sha256"] == files[name + C.DATASET_FILE]
             labels_sha = manifest["labels"]["sha256"]
-        except (ValueError, KeyError, TypeError) as e:
+        except (RecursionError, ValueError, KeyError, TypeError) as e:
             raise Refused("the build's %s manifest: %s" % (split, e))
         if not same:
             raise Refused("the build's %s split changed while it was read" % split)
@@ -134,7 +151,7 @@ def read_build(bdir):
                         raise Refused("source id %s is in two rows of the build" % s["id"])
                     ids[s["id"]] = {"item_id": row["item_id"], "split": split, "label": label,
                                     "source": s.get("source"), "time": s.get("time"), "chunk": row["state"]["chunk"]}
-        except (C.LabelError, ValueError, KeyError, TypeError) as e:
+        except (C.LabelError, RecursionError, ValueError, KeyError, TypeError) as e:
             raise Refused("the build's %s labels: %s" % (split, e))
     return ids, {"commit": commit, "files": files}
 
@@ -142,28 +159,42 @@ def read_build(bdir):
 # ---------------------------------------------------------------- the export (D-5)
 
 def read_manifest(edir):
-    """(manifest, sources): the export's manifest.json and its entries, each naming one src, its output file and that
-    file's sha256."""
+    """(manifest, sources, paths): the export's manifest.json and its entries, each naming one src, its output file and
+    that file's sha256; paths: {src: its output resolved after symbolic links, inside the export directory}."""
     try:
         manifest = json.loads((Path(edir) / "manifest.json").read_bytes().decode("utf-8"))
         sources = list(manifest["sources"])
         whole = all(isinstance(s.get(k), str) for s in sources for k in ("src", "output", "output_sha256"))
-    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+    except (OSError, RecursionError, ValueError, KeyError, TypeError, AttributeError) as e:
         raise Refused("the export's manifest.json: %s" % e)
     if not whole:
         raise Refused("the export's manifest.json: an entry without src, output and output_sha256")
     for k in ("src", "output"):                # AF-AP-254: a file named twice would be read twice
         if len({s[k] for s in sources}) != len(sources):
             raise Refused("the export's manifest.json names the same %s twice" % k)
-    return manifest, sources
+    root, paths, named = os.path.realpath(edir), {}, {}
+    for s in sources:                          # D-11: another spelling of a file, or a file outside, is refused too
+        try:
+            path = os.path.realpath(os.path.join(root, s["output"]))
+        except (OSError, ValueError) as e:     # D-9: a NUL in the output raises ValueError
+            raise Refused("the export's manifest.json: the output of %s: %s" % (s["src"], e))
+        if path == root or os.path.commonpath((root, path)) != root:
+            raise Refused("the export's manifest.json: the output of %s resolves outside the export directory"
+                          % s["src"])
+        if path in named:
+            raise Refused("the export's manifest.json: the outputs of %s and %s resolve to one file"
+                          % (named[path], s["src"]))
+        paths[s["src"]], named[path] = path, s["src"]
+    return manifest, sources, paths
 
 
-def stream_events(edir, entry):
-    """The events of one export file, verified: the sha256 of its bytes, one xz stream read whole with nothing after it,
-    one event of the export's schema per line, seq strictly increasing."""
+def stream_events(path, entry):
+    """The events of one export file (`path`: its output, resolved), verified: the sha256 of its bytes, one xz stream
+    read whole with nothing after it, one event of the export's schema per line whose src is the entry's, seq strictly
+    increasing."""
     src = entry["src"]
     try:
-        data = (Path(edir) / entry["output"]).read_bytes()   # one read: the hash and the xz data are the same bytes
+        data = Path(path).read_bytes()         # one read: the hash and the xz data are the same bytes
     except OSError as e:
         raise Refused("%s: %s" % (src, e))
     if hashlib.sha256(data).hexdigest() != entry["output_sha256"]:
@@ -184,11 +215,13 @@ def stream_events(edir, entry):
             if not (isinstance(ev, dict) and set(ev) == EVENT_KEYS and isinstance(ev["text"], str)
                     and type(ev["seq"]) is int):
                 raise Refused("%s: line %d is not an event of the export's schema" % (src, n))
+            if ev["src"] != src:               # D-11: two entries swapped, each with its file's sha256 (F12)
+                raise Refused("%s: line %d holds the src %r, not its manifest entry's" % (src, n, ev["src"]))
             if last is not None and ev["seq"] <= last:
                 raise Refused("%s: seq %d comes after seq %d" % (src, ev["seq"], last))
             last = ev["seq"]
             events.append(ev)
-    except ValueError as e:
+    except (RecursionError, ValueError) as e:  # D-9: a line nested past the recursion limit
         raise Refused("%s: %s" % (src, e))
     return events
 
@@ -221,23 +254,42 @@ def carriers(events, ids):
 
 
 def facts_of(src, events, text, starts, ids):
-    """[(id, facts)]: for each carrier of a build id in one file, where its state ends, its step and its candidate."""
-    calls = {}
+    """[(id, facts)]: for each carrier of a build id in one file, where its state ends, its step, its candidate and the
+    first guard of D-8 it meets (None: it meets none)."""
+    calls, results, hooks = {}, [], []
+    ends = starts[1:] + [len(text)]
     for k, ev in enumerate(events):
         if ev["kind"] == "tool_call" and ev["call_id"] is not None:
             calls.setdefault(ev["call_id"], []).append(k)
+        elif ev["kind"] == "tool_result":
+            results.append((k, ev["call_id"]))
+        elif ev["kind"] == "hook" and ends[k] > starts[k]:   # it renders: render.block(event) != "" (D-1's starts)
+            try:
+                a = json.loads(ev["text"])
+            except ValueError:
+                continue
+            if isinstance(a, dict):
+                hooks.append((k, a.get("toolUseID"), a.get("hookEvent")))
     out = []
     for i, kind, event, call_id, (sid, source, stamped) in carriers(events, ids):
         j = i
         while j > 0 and events[j - 1]["kind"] == "hook":     # back over the run of hooks that holds the carrier
             j -= 1
+        if call_id is not None and any(k < j and t == call_id and e == event for k, t, e in hooks):
+            guard = "same_call_hook_in_state"                # a hook of its own call and event, before a split
+        elif event == "PreToolUse" and kind != "tool_result" and any(k < j and c == call_id for k, c in results):
+            guard = "own_result_in_state"                    # the call's own output, before its PreToolUse run
+        elif events[i]["truncated"] is not None:
+            guard = "carrier_truncated"                      # the exporter cut the carrier: the candidate's middle
+        else:
+            guard = None
         has_step = kind == "tool_result" or event in STEP_EVENTS
         before = [k for k in calls.get(call_id, []) if k < j] if has_step else []
         whole = stamped.rstrip("\n").split("\n")[-1] == HC.request(sid)
         out.append((sid, {"src": src, "carrier": kind, "hook_event": event, "call_id": call_id, "has_step": has_step,
                           "step_event": events[before[-1]]["seq"] if before else None,
                           "state_event": events[j]["seq"], "state_end": starts[j], "run_before": i - j,
-                          "source": source, "ts": events[i]["ts"], "whole": whole,
+                          "source": source, "ts": events[i]["ts"], "whole": whole, "guard": guard,
                           "candidate": R.clean(B.chunk_of(stamped, whole)), "first": text.find(sid)}))
     return out
 
@@ -247,14 +299,15 @@ def facts_of(src, events, text, starts, ids):
 def view(build, export):
     """(rows, summary, line): the view of a frozen S1 build over a session export."""
     ids, build_inputs = read_build(build)
-    manifest, sources = read_manifest(export)
+    manifest, sources, paths = read_manifest(export)
     rendered = {"cut": 0, "hook_unparsed": 0, "scrub_changed": 0, "events": 0, "blocks": 0, "chars": 0}
     streams, found = {}, {}
     for entry in sources:
-        events = stream_events(export, entry)
-        try:
+        events = stream_events(paths[entry["src"]], entry)
+        try:                                   # D-9: an event the render or the reader cannot take (UnknownPair too)
             text, starts = R.render(events, rendered)
-        except R.UnknownPair as e:
+            facts = facts_of(entry["src"], events, text, starts, ids)
+        except (RecursionError, TypeError, ValueError) as e:
             raise Refused("%s: %s" % (entry["src"], e))
         blocks = sum(1 for a, b in zip(starts, starts[1:] + [len(text)]) if b > a)
         streams[entry["src"]] = {"events": len(events), "rendered": blocks, "chars": len(text),
@@ -262,10 +315,11 @@ def view(build, export):
         rendered["events"] += len(events)
         rendered["blocks"] += blocks
         rendered["chars"] += len(text)
-        for sid, facts in facts_of(entry["src"], events, text, starts, ids):
-            found.setdefault(sid, []).append(facts)
+        for sid, f in facts:
+            found.setdefault(sid, []).append(f)
 
-    counts = {"build_ids": len(ids), "found": 0, "not_found": {"ambiguous": 0, "not_in_export": 0}, "carrier": {},
+    counts = {"build_ids": len(ids), "found": 0,
+              "not_found": dict({"ambiguous": 0, "not_in_export": 0}, **dict.fromkeys(GUARDS, 0)), "carrier": {},
               "hook_event": {}, "split": {s: 0 for s in SPLITS}, "label": {"false": 0, "true": 0},
               "step_found": {"false": 0, "true": 0}, "time_equal": {"false": 0, "true": 0},
               "candidate_vs_chunk": {"differs": 0, "equal": 0, "equal_prefix": 0}, "hook_run_before": {"0": 0, "1+": 0},
@@ -283,6 +337,9 @@ def view(build, export):
             raise Refused("%s: the rendered stream of %s holds the id %s" % (
                 sid, f["src"], "nowhere" if f["first"] < 0 else "before its state ends (offset %d < %d)" % (
                     f["first"], f["state_end"])))
+        if f["guard"] is not None:             # D-8: counted once, under the first guard it meets; never written
+            counts["not_found"][f["guard"]] += 1
+            continue
         chunk = R.newlines(b["chunk"]).strip()
         _inc(counts["carrier"], f["carrier"])
         _inc(counts["hook_event"], str(f["hook_event"]))
@@ -308,39 +365,54 @@ def view(build, export):
                           "export": {"export_id": manifest.get("export_id"), "code_sha256": manifest.get("code_sha256"),
                                      "files_verified": len(sources)}},
                "counts": counts, "streams": streams}
-    line = ("s1-view: %d build ids, %d found, %d not in the export, %d ambiguous; %d files, %d events, %d blocks, "
-            "%d characters rendered" % (len(ids), len(rows), counts["not_found"]["not_in_export"],
-                                        counts["not_found"]["ambiguous"], len(sources), rendered["events"],
-                                        rendered["blocks"], rendered["chars"]))
+    line = ("s1-view: %d build ids, %d found, %d not in the export, %d ambiguous, %d dropped by the guards; %d files, "
+            "%d events, %d blocks, %d characters rendered" % (
+                len(ids), len(rows), counts["not_found"]["not_in_export"], counts["not_found"]["ambiguous"],
+                sum(counts["not_found"][g] for g in GUARDS), len(sources), rendered["events"], rendered["blocks"],
+                rendered["chars"]))
     return rows, summary, line
 
 
 def check_out(out):
-    """--out must not exist, or be an empty directory."""
+    """--out is not a symbolic link, to anything, and does not lie inside a git work tree: no .git entry in its resolved
+    path or any parent of it (D-10; abspath: `link/` and `link/.` name the link too). It must not exist, or be an empty
+    directory (D-6)."""
     try:
+        if os.path.islink(os.path.abspath(out)):        # before lexists: a dangling link is refused here
+            raise Refused("--out %s is a symbolic link" % out)
+        d = os.path.realpath(out)              # a path that does not exist yet: its nearest existing parent, resolved
+        while True:
+            if os.path.lexists(os.path.join(d, ".git")):
+                raise Refused("--out %s lies inside a git work tree (%s)" % (out, os.path.join(d, ".git")))
+            if os.path.dirname(d) == d:
+                break
+            d = os.path.dirname(d)
         if os.path.lexists(out) and not (os.path.isdir(out) and not os.listdir(out)):
             raise Refused("--out %s exists and is not an empty directory" % out)
-    except OSError as e:
+    except (OSError, ValueError) as e:         # realpath raises ValueError on a NUL
         raise Refused("--out %s: %s" % (out, e))
 
 
 def write(out, rows, summary):
     check_out(out)                             # again, after the inputs: nothing is written over another output
-    os.makedirs(out, exist_ok=True)
     blobs = (("view.jsonl", "".join(json.dumps(r, ensure_ascii=False, separators=(",", ":")) + "\n" for r in rows)),
              ("summary.json", json.dumps(summary, indent=1, sort_keys=True) + "\n"))
-    for name, blob in blobs:
-        part = os.path.join(out, name + ".part")
-        with open(part, "w", encoding="utf-8") as fh:
-            fh.write(blob)
-        os.replace(part, os.path.join(out, name))
+    try:                                       # D-9: an --out that cannot be made or written is refused (exit 2)
+        os.makedirs(out, exist_ok=True)
+        for name, blob in blobs:
+            part = os.path.join(out, name + ".part")
+            with open(part, "w", encoding="utf-8") as fh:
+                fh.write(blob)
+            os.replace(part, os.path.join(out, name))
+    except OSError as e:
+        raise Refused("--out %s: %s" % (out, e))
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--build", required=True, help="a frozen S1 build: train/, heldout/ and summary.json")
     ap.add_argument("--export", required=True, help="a session export (scripts/session_export.py export)")
-    ap.add_argument("--out", required=True, help="a new or empty directory, outside git")
+    ap.add_argument("--out", required=True, help="a new or empty directory, not a symbolic link, outside git")
     args = ap.parse_args(argv)
     try:
         check_out(args.out)
