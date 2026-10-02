@@ -478,3 +478,177 @@ No arm had an error, a loop or a request without usage.
 - Chats smaller than 57k tokens, and more than 4 at once, were not run (the owner's question is about many lanes).
 - `--enable-cache-report` was off on both SGLang arms, so the client-side cached count is vLLM's only; the SGLang
   count comes from the server log.
+
+## K. The second GPU window, measured (S2: 2026-10-02 02:29:13Z to 03:04:52Z; S3: 03:10:26Z to 03:33:15Z; task #454, D-088; written 03:3xZ)
+
+The window script `scripts/serving_ab/abwin2.sh` ran S2 from its first landing. S3's boot then failed: S2's container
+outlived two `podman rm -f` calls whose output the script dropped, and `podman run` refused the name ("the container
+name sglang-ab is already in use", rc 125). The fixed script (it waits until podman says the container is gone, and runs
+the arms `ABWIN_ARMS` names) ran S3 alone in a second, shorter window. Both windows ran the committed bytes, shipped
+by sha256 (`chat_load.py` 36864ee7d87a5ef1; `abwin2.sh` 44e4cf0e26911196, then 74ec84164e8f5880). No lane was live,
+and vLLM was restored after each window (03:04:52Z, 240 s; 03:33:15Z, 200 s). In the S3 window the container again
+outlived `podman rm -f`: the log holds two "could not be stopped" errors at 03:29Z, and the fixed script waited until
+podman reported the container gone before it restored vLLM.
+
+Workloads, both sized by vLLM's own `/tokenize`: `workload-1.json` (sha256 prefix 24068ffecf69fe37) is window 1's four
+long chats (first prompts 86,999, 57,000, 77,000 and 67,000 tokens). `workload-2.json` (632497c65f726308) is eight
+chats of lane size: first prompts 58,000, 24,000, 46,000, 32,000, 52,000, 20,000, 40,000 and 27,999 tokens, from the
+repo's own docs, scripts, tasks and tests under its `.hermes.md` as the system prompt, then three follow-ups of 2,500
+tokens. Replies are capped at 512 tokens, thinking off, chats 20 s apart, each run's system prompt opens with its own
+run id. A cut run (`chat_load.py --cut-after 80 --retries 3`) does what OmniRoute and Hermes do: it ends an attempt
+that has sent no event 80 s after it began and sends it again, up to 3 more times. In every run the server's
+first-turn count equalled the plan (`turn1_plan_diff_max` 0); no run had a loop or a request without usage.
+
+Arms. **S2**: window 1's S1 (4 running requests, 12 state slots, `no_buffer`, overlap off, chunk 4,096, context 131,072,
+HiCache 24 GB write-through) plus `--schedule-policy lpm` and `--enable-cache-report`. **S3**: S2 with a prefill
+chunk of 8,192 (`--chunked-prefill-size` and `--max-prefill-tokens`) and `--disable-prefill-cuda-graph`.
+
+### K1. Per run ("cold" = a chat's first turn; "warm" = turns 2 to 4; a cut request's wait counts every attempt)
+
+| Arm | Workload, chats | Answered | Cut at 80 s (requests) | Cold first token, p50 (max) | Warm first token, p50 (max) | Decode p50 | Wall |
+|---|---|---|---|---|---|---|---|
+| S2 | 1, 4, no cut | 16 of 16 | (6 past 80 s) | 144.5 s (308.2) | 16.1 s (91.4) | 50.8 tok/s | 412 s |
+| S2 | 1, 4, cut | 15 of 16 | 4 | 197.3 s (302.0) | 16.4 s (76.0) | 42.0 tok/s | 452 s |
+| S2 | 2, 6, cut | 24 of 24 | 3 | 74.7 s (185.4) | 12.6 s (74.7) | 21.7 tok/s | 326 s |
+| S2 | 2, 8, cut | 32 of 32 | 6 | 91.5 s (291.3) | 16.9 s (54.3) | 18.5 tok/s | 432 s |
+| S3 | 1, 4, cut | 15 of 16 | 5 | 194.6 s (288.2) | 7.9 s (89.6) | 29.3 tok/s | 510 s |
+| S3 | 2, 8, cut | 31 of 32 | 5 | 90.0 s (146.5) | 26.2 s (72.8) | 17.4 tok/s | 452 s |
+
+### K2. The caches and the servers
+
+Prompt tokens served from the prefix cache (each answered request's `cached_tokens`):
+
+| Arm, workload, chats | All turns | First turns | Turns 2 to 4 | Requests answered after a cut |
+|---|---|---|---|---|
+| S2, 1, 4, no cut | 82.3% | 15.3% | 96.7% | (none cut) |
+| S2, 1, 4, cut | 90.3% | 67.4% | 95.7% | 67.4% |
+| S2, 2, 6, cut | 89.8% | 70.0% | 94.1% | 78.4% |
+| S2, 2, 8, cut | 87.4% | 58.9% | 94.1% | 61.6% |
+| S3, 1, 4, cut | 90.6% | 65.6% | 96.6% | 72.4% |
+| S3, 2, 8, cut | 88.5% | 58.2% | 94.1% | 62.4% |
+
+The server logs (the prefill batch lines): S2's four runs 76, 84, 64 and 82 prefill chunks, 13, 15, 20 and 30 of them
+with cached tokens; S3's two runs 56 and 53 (19 and 27). At most 1 request ran at once on workload 1 and 3 on
+workload 2; the queue held at most 3 (workload 1) and 4 to 5 (workload 2). The full-token pool peaked at 0.97 to 0.98
+(S2) and at 0.99 and 0.93 (S3), the Mamba state pool at 0.58 to 0.83. Neither log has a retract, abort or error line.
+
+Boot and memory (each arm's boot lines): both arms allocate a KV pool of 146,098 tokens (fp8) and 12 Mamba state
+slots. S2's target prefill CUDA graphs took 104.3 s and 2.27 GB; S2 served after 210 s at 23,302 MiB, with 1.17 GB of
+GPU memory left to SGLang. S3, without those graphs, served after 120 s at 20,936 MiB, with 3.46 GB left. Window 2
+sampled no GPU peak under load; window 1's S1 (S2's memory flags) peaked at 23,812 to 23,816 MiB of 24,576, and vLLM
+at 24,064 MiB (section J's runs).
+
+### K3. What the numbers show
+
+1. **A retry after the 80 s cut resumes from the chunks the server already computed.** Chat 0's 86,999-token first
+   turn was cut once; the retry found 69,632 tokens cached (17 chunks of 4,096) and answered in 28.6 s, 108.7 s in
+   all. Chat 2's 77,000 tokens: two cuts, then 61,440 cached and 37.2 s, 197.3 s in all. So a cold long prompt
+   through OmniRoute costs time, not the request: Hermes retries 3 times, and `harness-ports/bin/pc-lane.sh` then
+   retries the lane after a 60 s backoff (`LANE_CAPACITY_RETRIES=3`, pc-lane.sh:271-291), each attempt starting where
+   the last one stopped.
+2. **One long first turn of 16 was never answered in its run.** Chat 1 (57,000 tokens) took 4 attempts and 302.0 s;
+   chat 3 (67,000) was cut 4 times. At workload 1's sizes one request ran at a time (the server log: max running 1,
+   max queue 3), and `lpm` serves cached prefixes first, so a cold attempt can spend much of its 80 s queued
+   (INFERRED from those counts; the queue time per attempt was not logged). Chat 3's next turn found 58,928 of 69,517
+   tokens cached and answered in 26.4 s: the cut attempts' chunks were kept. In a lane, the lane-level retry
+   continues from there.
+3. **`lpm` halves the warm waits at 4 long chats; the cold maximum grows.** S2 without cuts against window 1's S1
+   (`fcfs`), same workload: warm p50 16.1 s against 32.7 s, warm max 91.4 s against 178.8 s; cold p50 144.5 s against
+   144.9 s, cold max 308.2 s against 254.3 s.
+4. **Lane-size chats: every request answered at 6 and 8 chats.** 3 and 6 first turns needed one to three retries;
+   warm turns p50 12.6 s and 16.9 s. At most 3 requests ran at once (the GPU pool), the rest waited (max queue 4 and 5).
+5. **The cache holds at 6 and 8 chats:** 89.8% and 87.4% of all prompt tokens came from the prefix cache (the usage's
+   `cached_tokens`), 94.1% of the warm turns'.
+6. **No crash, no error, no retract** in S2's log over its four runs (27 minutes of load; the harvest's line parser).
+   The window log's case-insensitive counts `retract-lines 1` and `abort-lines 1` match argument names on the log's
+   line 7, the startup dump (`retraction_policy`, `abort_on_priority_when_disabled`).
+7. **S3's larger prefill chunk traded the warm turns for the cold maximum.** On workload 2 at 8 chats its cold first
+   token peaked at 146.5 s against S2's 291.3 s (p50 90.0 s against 91.5 s), while its warm turns waited longer (p50
+   26.2 s against 16.9 s; max 72.8 s against 54.3 s, nearer the 80 s cut) and one first turn went unanswered (chat 4,
+   52,000 tokens, four cuts; S2 answered all 32). On workload 1 its cold times matched S2's (p50 194.6 s against
+   197.3 s) and its decode fell (p50 29.3 against 42.0 tok/s). INFERRED, not measured: each prefill chunk holds the
+   running decodes for its duration, and an 8,192-token chunk holds them about twice as long (per-step times were not
+   logged).
+
+### K4. The choice for the switch
+
+**S2 ships** (`deploy/qwen.container`): chunk 4,096 with the prefill CUDA graphs, `lpm`, and the cache report. The
+rule, set before S3's numbers were read: S3 replaces S2 only if its cold first-token times are better or equal and its
+warm and decode times are not much worse. Its cold times were (equal p50, lower maximum); its warm turns at 8 chats
+(p50 +55%) and its decode at 4 long chats (p50 -30%) were not, and both differences are larger than the 17% that
+separates S2's own two runs of workload 1 (K5). Lanes send most requests as warm turns (each turn after a lane's
+first extends a cached prefix; the workloads model it with 2,500-token turns), and a warm turn past 80 s is cut and
+sent again. S3's other gains, a boot 90 s shorter and 2.3 GB more GPU memory, match what S2's boot lines put on the
+prefill CUDA graphs (104.3 s, 2.27 GB), not the chunk: S2 without those graphs is an arm not yet run (K5).
+
+**Changed after the deploy (K6):** with the prefill CUDA graphs the server ran out of GPU memory on the first Hermes
+lane's first long prompt; since 2026-10-02 04:15:19Z the unit runs S2's flags without those graphs.
+
+### K5. Gaps this window leaves (added to section G's list)
+
+- vLLM did not run workload 2: at 6 and 8 lane-size chats there is no vLLM figure beside S2's. Window 1 showed its
+  cache gone at 3 and 4 long chats (3.6% and 2.7% of prompt tokens).
+- HiCache holds 24 GB of the PC's host memory while the server runs (window 1: KV 15.58 GB and states 8.47 GB).
+- The boot time varies: S2 served after 210 s, window 1's S1 after 640 s (the page cache's state is the likely cause;
+  not measured).
+- A cold attempt can spend its 80 s queued behind warm turns (K3 item 2); `--schedule-policy lpm` with a priority for
+  long waits was not run.
+- `extra_buffer` with overlap, and more than 8 chats, were not run.
+- S2 without the prefill CUDA graphs, at chunk 4,096, was not run: it may keep S2's warm and decode times with S3's
+  boot time and memory.
+- Each arm ran each workload once. S2's two runs of workload 1 (cut and uncut) differ by 17% in decode p50 (42.0 and
+  50.8 tok/s), so a smaller difference between arms is within one rerun's spread.
+
+### K6. The deploy, the out-of-memory stop and the fix (2026-10-02 03:43Z to 04:26Z; written 04:2xZ)
+
+1. **The deploy (S2's flags, 03:43:23Z to 03:48:36Z).** A key check ran on the GPU first, with a fake key built on the
+   PC. Passed on SGLang's own command line, the argument dump showed it (`control found=1 key=1 redacted=0`); through
+   `deploy/sglang_start.py` the dump showed `<redacted>` and no key (`start found=1 key=0 redacted=1`). The unit then
+   served after 212 s at 22,972 MiB; the live log held the real key 0 times (podman logs 289 lines, the journal 393).
+   The smoke at 03:50Z went straight to the server: `/v1/models`, a chat, a tool call with `tool_choice: "auto"`, a
+   thinking answer, `/v1/completions` with `logprobs: 20`; OmniRoute's probe through the build combo was served by
+   `qwen3.8-27b-local`. Every smoke request had a short prompt, and none forced constrained output.
+2. **The stop (03:53:56Z to 03:53:58Z).** The first SGL-SMOKE lane (Hermes on the raw local id) sent its first long
+   prompt. SGLang logged `Triton kernel 'apply_token_bitmask_inplace_kernel' device-loaded after serving started (free
+   device mem: 0.66 GiB)`, the same at 0.09 GiB, then `torch.OutOfMemoryError: CUDA out of memory. Tried to allocate
+   48.00 MiB ... of which 35.12 MiB is free`. The container exited 137, systemd restarted it (restart counter 1), and
+   the lane's request ended in a 502; the coordinator stopped the lane. That kernel applies the grammar mask of
+   constrained output (forced tool calls, JSON schemas). Which field of the lane's request asked for it was not read.
+3. **Why the margin was short.** SGLang's `srt/utils/triton_load_watch.py` (in the image) gives the mechanism: Triton
+   loads each kernel onto the GPU at its first launch, that load needs free memory outside PyTorch's allocator, and "a
+   specialization first used mid-serving ... can die in `cuModuleLoadData` with CUDA OOM, minutes or hours in". The
+   image has no switch to pre-load kernels; it warns when a late load starts under 1 GiB free
+   (`SGLANG_TRITON_LOAD_WARNING_THRESHOLD_GB`, default 1.0). S2's boot left 1.17 GB free (K2). The KV pool did not run
+   out: the failure was outside it.
+4. **The direct test (the owner's request: no OmniRoute; 04:04:25Z).** On the restarted server a forced tool call and
+   a JSON-schema answer both returned 200; free memory fell from 0.72 to 0.11 GiB as the grammar kernels loaded (23,386
+   to 24,008 MiB). These short prompts did not crash it. INFERRED from item 6 (a long cold prefill took 884 MiB more):
+   the next long prompt would have.
+5. **The fix: S2 without the prefill CUDA graphs** (`--disable-prefill-cuda-graph`, chunk 4,096 kept: the arm K5 names
+   as not run). Restart at 04:12:45Z (the old container stopped by SIGKILL, exit 137: SGLang did not stop on SIGTERM
+   within podman's 10 s, as at the key check); serving at 04:15:19Z, after 142 s. Boot lines: `Disable prefill CUDA
+   graph because cuda_graph_config resolved prefill.backend='disabled'`; the KV pool 146,098 tokens (fp8) as before;
+   `available_gpu_mem=3.46 GB`; 20,962 MiB on the GPU; the real key 0 times in 234 journal lines.
+   `tests/test_qwen_units.py` pins the flag (negative control: the assertion fails on the unit without it).
+6. **The direct tests after the fix (04:16:00Z to 04:19:45Z, no OmniRoute, no cut):**
+
+   | Requests (each forces constrained output) | Prompt tokens | Result | GPU MiB after (peak) |
+   |---|---|---|---|
+   | (start) | | | 21,226 |
+   | a tool call and a JSON schema, short | | 200 in 1.8 s and 0.8 s (the answer, 391, is right) | 21,868 |
+   | a tool call, cold | 87,182 | 200 in 106.0 s, one tool call | 22,752 |
+   | a tool call and a JSON schema at once, cold | 56,501 and 52,235 | 200 in 114.4 s and 55.3 s (1,333 lines, right) | 22,752 |
+
+   The grammar kernels took 642 MiB at their first use; the first long cold prefill 884 MiB more; the two at once
+   none. Restart count 0 throughout; no late-load memory warning.
+7. **The Hermes smoke again (SGL-SMOKE2, `tasks/briefs/pc/pc-sgl-smoke2.md`, about 04:21Z to 04:26Z).** The lane met its
+   contract: the premise re-run matched, three tool round trips pasted, a file read quoted, "UNEXPECTED: None"; it
+   changed no file. The dispatcher's route line: every request served by `qwen-local/qwen3.8-27b-local`, 10 answered
+   (200) and 1 closed before an answer (499; its cause was not read). After the lane: restart count 0, 22,756 MiB, no
+   late-load memory warning since the redeploy, and 11 slow-compile notes (a kernel compiled after serving started, a
+   1 to 4 s stall each).
+8. **Left open (added to K5's list):** this arm's speed under the A/B workloads is not measured; S2 and S3 bound it,
+   but S3 also doubled the chunk (K3 item 7). Kernels compiled after serving started stall the engine 1 to 4 s each,
+   and the Triton cache lives in the container, so every restart compiles them again (a mounted cache is not set up).
+   The margin covers the kernels these requests loaded, not every kernel a new request shape may load: the journal's
+   `device-loaded after serving started` line (under 1 GiB free) is the warning to watch.

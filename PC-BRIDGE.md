@@ -50,7 +50,7 @@ does both.
   inside a bridge call dies with the command's process group — use `setsid` + a `flock` guard.
 - `pgrep -f`/`pkill -f` self-match kills the bridge shell — use the `[b]racket` pattern trick.
 - Harmless noise: every call's stderr carries tirith bash-hook "bind" warnings — ignore.
-- Never stop the owner's model servers (`llama-server`, vLLM) from the bridge without owner say-so.
+- Never stop the owner's model servers (`llama-server`, vLLM, SGLang) from the bridge without owner say-so.
 
 ## PC-side facts relevant to Stage 0 (from the trading runbook — RE-VERIFY here first)
 
@@ -154,33 +154,84 @@ question; the containment proof itself does not depend on cgroups. Platform: sys
 
 **PC-lane concurrency cap (2026-09-06; re-measured 2026-09-07):** the model route behind `hermes -z` admits about TWO concurrent sessions on the codex members — and the owner's OWN Hermes sessions count: with two of them live (2026-09-07 23:1xZ) the SECOND of two lane dispatches was refused on every call, so the working cap is ONE lane at a time while the owner is using Hermes; dispatch the second lane in the sandbox (`code-implementer`) instead of queueing. A refused dispatch is `HTTP 503: Chat admission capacity is temporarily unavailable`. On the Ollama Cloud members (`ollama-cloud/kimi-k3`, `glm-5.2`) the cap is ONE lane: two concurrent Kimi lanes tripped the per-credential cooldown (`429 … cooling down`) within minutes and the second lane died through the exhausted codex fallback chain (13:4xZ). Launch one Kimi lane at a time; dispatch with an explicit `HERMES_MODEL` after a 24-token probe that records the SERVED model, never the combo (it degrades silently to `big-pickle`). `harness-ports/bin/pc-lane.sh` retries the 503/429 cooldown class with backoff and never the quota 429 (`exhausted their quota`). The PC clone must be ff-synced to the pushed tip for the PC-side script to carry a fix. **2026-09-06 18:2xZ update:** even ONE Kimi lane died the same way after ~30 min (lane A5g), because Hermes walks the profile's codex fallback chain on a 429 regardless of `HERMES_MODEL`; until the codex quota resets (~2026-09-07 22:00Z) the PC Hermes lane is not a build venue — build in the sandbox (Opus 4.6 `code-implementer`) and keep the PC for suites (`pc_suite.sh`). Owner item: a fallback-free lane profile.
 
-## The vLLM Qwen container — the KEEPER local model server (2026-09-16, D-032)
+## The SGLang Qwen container — the local model server (2026-10-02, D-129; pinned in `pc-lane.lock.yaml`, D-131)
 
 - **`qwen.service`** — a `--user` rootless podman Quadlet (`deploy/qwen.container` in the repo, deployed to
   `~/.config/containers/systemd/qwen.container`; `Restart=always`, wired into `default.target.wants` with
-  `Linger=yes`, so it survives reboot). The vendor image
-  `ghcr.io/syv-ai/qwen38-27b-rtx3090@sha256:c52d9033…` (digest-pinned in `upstream.lock.yaml`) runs vLLM 0.28
-  (MTP/batch) and serves Qwen3.8-27B under BOTH **`qwen3.8-27b-local`** and `qwen3.8-27b` on `0.0.0.0:8080`,
-  behind the same `~/.config/qwen-builder/api-key` (mounted read-only to `/app/api_key.txt`; the entrypoint reads
-  it). It fills the 3090 (~23.8 GiB). The served name is set through `EXTRA_ARGS` (the image hardcodes
-  `--served-model-name qwen3.8-27b` and appends `${EXTRA_ARGS}` last; vLLM's `--served-model-name` is
-  last-occurrence-wins), so OmniRoute's `qwen-local` node + the `agentfactory-*-local` combos resolve with NO
-  OmniRoute change. Measured 2026-09-16: ~45 tok/s single-request decode, near-linear to ~310 tok/s aggregate at 7
-  concurrent lanes — the concurrency win over llama.cpp (~62 single / ~93 at 4-up) is why it replaced it as PRIMARY.
+  `Linger=yes`, so it survives reboot). The image `ghcr.io/0xsero/sglang-exl3@sha256:84f75f34…` (SGLang v0.5.20,
+  commit 94602c9c, with the sglang-exl3 quantization plugin; report section A1) serves `turboderp/Qwen3.8-27B-exl3` at
+  3.00 bits per weight, from `~/models/qwen3.8-27b-exl3-3.0bpw` (mounted read-only), as **`qwen3.8-27b-local`** on
+  `0.0.0.0:8080`, behind `~/.config/qwen-builder/api-key` (mounted read-only to `/app/api_key.txt`). OmniRoute's
+  `qwen-local` node and the `agentfactory-*-local` combos need no change.
+- **Where the pin lives:** `pc-lane.lock.yaml` `local_model_servers.sglang-exl3` (the image digest, the SGLang commit,
+  the model revision, the start script's sha256; D-131), with `tests/test_qwen_units.py` holding the unit, the start
+  script and the entry in step. `upstream.lock.yaml`'s `local_model_server` row still names vLLM: it is the fallback
+  below. Moving the pin there is task #463, at the next re-mint of S0-06 and S0-12 (both attest that file's bytes).
+- **The key never rides on a command line.** The unit runs `deploy/sglang_start.py` (deployed to
+  `~/.config/qwen-serving/sglang_start.py`), which reads the key file and starts SGLang with a `--config` file only its
+  own user can read. SGLang logs its arguments, the key among them, at startup (`server_args=...`, unmasked), so the
+  script also replaces the key in every line the server writes before the line reaches the journal. `/server_info`
+  returns the arguments too; with a key set, every endpoint but `/health`, `/ready` and `/metrics` needs it. `MAX_LEN`
+  (131072) is the unit's one statement of the context: the start script passes it to SGLang, and
+  `harness-ports/bin/lane-profile.sh` reads it for every lane profile. Screen a log line before pasting it
+  (`scripts/known_values_check.py`, counts only).
+- **Measured (task #454; `tasks/briefs/serving/SGLANG-EVIDENCE-report.md` sections J and K):** at 4 long chats (57k to
+  87k tokens) arm S2's flags (with the prefill CUDA graphs, as first deployed) answered warm turns at a p50 of 16.1 s
+  where vLLM took 196.0 s: SGLang served
+  82% to 90% of prompt tokens from its prefix cache, vLLM 2.7%. Cold long first turns are slower (p50 145 to 197 s;
+  vLLM's 72 to 163 s); past OmniRoute's 80 s first-event limit Hermes sends them again, and each retry resumes from the
+  chunks already cached. At 6 and 8 lane-size chats every request was answered (warm p50 12.6 and 16.9 s). Boot at
+  the first deploy (2026-10-02 03:45Z-03:48Z): 212 s, 22,972 MiB on the GPU at its start; window 1's peak under load
+  with those memory flags was 23,816 of 24,576 MiB. HiCache holds about 24 GB of host memory (its KV and Mamba-state pools). The
+  deploy ran a key check on the GPU first: SGLang's argument dump showed a fake key passed on its command line, and
+  `<redacted>` through the start script; the live server's log then held the real key 0 times (podman logs and the
+  journal, the whole key and every 8-character window). Smoke at 03:50Z: `/v1/models` lists `qwen3.8-27b-local` alone (a
+  request naming the bare `qwen3.8-27b` answers too: SGLang does not check the name, and echoes it); a chat, a tool call
+  (`tool_calls` parsed), a thinking answer (`reasoning_content` apart) and `/v1/completions` with `logprobs: 20` (a dict
+  of 20, the Jev adapter's shape) answer; the runbook's probe through OmniRoute's build combo was served by
+  `qwen3.8-27b-local`.
+- **GPU headroom: kernels load at first use (2026-10-02, AF-AP-260).** Triton loads each kernel onto the GPU at its
+  first launch, outside the KV pool and outside PyTorch's allocator (SGLang's `srt/utils/triton_load_watch.py`, in the
+  image; it has no switch to pre-load them). The first deploy kept the prefill CUDA graphs (2.27 GB) and started with
+  1.17 GB free; the first Hermes lane's first long prompt loaded the grammar kernel behind constrained output
+  (`apply_token_bitmask_inplace_kernel`), a 48 MiB allocation failed at 03:53:58Z, the container exited 137 and
+  restarted, and the lane got a 502. Since 04:15:19Z the unit runs without those graphs (`--disable-prefill-cuda-graph`,
+  the arm report section K5 named as not run): it serves after 142 s with 3.46 GB free and the same KV pool (146,098
+  tokens). Measured direct, without OmniRoute: the grammar kernels took 642 MiB at first use; a cold 87,182-token
+  prompt with a forced tool call answered in 106.0 s; cold prompts of 56,501 and 52,235 tokens with constrained output
+  answered at once in 114.4 s and 55.3 s; the GPU peaked at 22,752 of 24,576 MiB; no restart. A Hermes smoke lane
+  (SGL-SMOKE2, the raw local id) then met its contract with every request on the local route and no restart (report
+  section K6). This arm's speed under
+  the A/B workloads is not measured (task #464). **The alarm:** SGLang logs `device-loaded after serving started (free
+  device mem: X GiB)` when a late kernel load starts under 1 GiB free. Count those lines before a new local-route load
+  (`journalctl --user -u qwen --since today | grep -c 'device-loaded after serving started'`); any count above 0 means
+  the next new kernel can run out of memory.
 - **Operate:** `bash scripts/pc.sh 'export XDG_RUNTIME_DIR=/run/user/$(id -u); systemctl --user status qwen'`;
-  `podman logs --tail 50 qwen` for the vLLM boot; `/v1/models` (with the api-key bearer) lists the served ids.
-- **Fall back to llama.cpp** (same name + port → transparent to OmniRoute): `systemctl --user stop qwen ; podman
-  rm -f qwen ; systemctl --user reset-failed qwen-builder ; systemctl --user start qwen-builder`. Restore the
-  container with `systemctl --user start qwen`. Change the unit: edit `deploy/qwen.container`, copy it to
-  `~/.config/containers/systemd/qwen.container`, `systemctl --user daemon-reload`, `systemctl --user restart qwen`.
-- **`GPU_UTIL=0.96` since 2026-09-26 (D-099; the image default is 0.972):** `laya-systemone` keeps a 256 MiB CUDA context (AF-AP-231), and at 0.972 vLLM had 63 MiB of slack: it crashed under four requests and could not restart. At 0.96 the KV pool is 6.83 GiB = 215,112 tokens (1.64x at 131,072) and 796 MiB stays free beside laya. A start that logs `Free memory on device ... is less than desired GPU memory utilization` names another process on the GPU: `nvidia-smi --query-compute-apps=pid,used_memory --format=csv`.
+  `podman logs --tail 50 qwen` for the boot (key-free by the start script); `/v1/models` with the api-key bearer.
+  Change the unit: edit `deploy/qwen.container`, copy it (and `deploy/sglang_start.py` when that changed) into place,
+  `systemctl --user daemon-reload`, `systemctl --user restart qwen`.
+- **Fall back to vLLM** (`deploy/qwen-vllm.container`, the D-032 unit, deployed to
+  `~/.config/qwen-serving/qwen-vllm.container`, outside Quadlet's directory so it never starts by itself; same name
+  and port, so OmniRoute is unaffected): `cp ~/.config/qwen-serving/qwen-vllm.container
+  ~/.config/containers/systemd/qwen.container ; systemctl --user daemon-reload ; systemctl --user restart qwen`. Back to
+  SGLang: copy `deploy/qwen.container` there the same way. The vLLM unit's own facts: `GPU_UTIL=0.96` since
+  2026-09-26 (D-099; the image default is 0.972): `laya-systemone` keeps a 256 MiB CUDA context (AF-AP-231), and at
+  0.972 vLLM had 63 MiB of slack: it crashed under four requests and could not restart. At 0.96 the KV pool is 6.83 GiB
+  = 215,112 tokens. A start that logs `Free memory on device ... is less than desired GPU memory utilization` names
+  another process on the GPU: `nvidia-smi --query-compute-apps=pid,used_memory --format=csv`.
+- **The llama.cpp `qwen-builder` unit (below) is the second fallback**, on the same port:
+  `systemctl --user stop qwen ; podman rm -f qwen ; systemctl --user reset-failed qwen-builder ; systemctl --user start
+  qwen-builder`. Back: `systemctl --user stop qwen-builder ; systemctl --user start qwen`.
+- **`scripts/gpu_side_by_side.sh` refuses the SGLang unit** (it copies only the vLLM unit's shape: the
+  `Entrypoint=` key stops it, exit 3, nothing started). A side-by-side run of SGLang beside the RWKV reader is not
+  built; with the vLLM fallback in place the job runs as before.
 - **Never stop or restart it while a local-route lane is live** — it holds the 3090, and a restart kills every lane
   mid-turn (the `.lanes/*/lane.pid` guard rule, AF-AP-79 / D-030, applies to this container too).
 
 ## The Qwen Jev adapter's prerequisites on the PC (D-079, task #241; set up 2026-09-24 16:1xZ-16:3xZ)
 
-The adapter (`scripts/qwen_jev.py`, lane QJ1) applies simple-jev's v1 rules to the Qwen3.8-27B that the vLLM `qwen` container
-serves, through OmniRoute. What it needs on the PC, and how each piece was made (rebuild in this order):
+The adapter (`scripts/qwen_jev.py`, lane QJ1) applies simple-jev's v1 rules to the Qwen3.8-27B that the `qwen` container
+serves (vLLM until 2026-10-02, SGLang since, D-129), through OmniRoute. What it needs on the PC, and how each piece was made (rebuild in this order):
 - **`~/simple-jev`** at the pinned revision (`upstream.lock.yaml` `advisory_jev_runtimes.simple-jev.revision`, 5686b217):
   `git clone --depth 1 https://github.com/featherless-ai/simple-jev ~/simple-jev`, then check `git -C ~/simple-jev rev-parse HEAD`
   (a newer main is not the pin: fetch the pinned commit instead). Used read-only; nothing of it is copied into this repository.
@@ -191,7 +242,12 @@ serves, through OmniRoute. What it needs on the PC, and how each piece was made 
   `tokenizer_config.json`, `chat_template.jinja`, `config.json`, `generation_config.json`, `processor_config.json`). The served
   folder is the one on the vLLM command line (`vllm serve /app/models/Qwen3.8-27B-W4A16-AutoRound`), not the `-fast` twin; the
   host's Hugging Face cache holds no tokenizer for it. simple-jev's `resolve_prompt_policy` reads this `config.json` as
-  "Qwen dense 27B" and picks `examples_binary`.
+  "Qwen dense 27B" and picks `examples_binary`. **The copy stays valid under SGLang (measured 2026-10-02 03:2xZ):** the
+  SGLang model folder `~/models/qwen3.8-27b-exl3-3.0bpw` has the same `chat_template.jinja` (sha256 prefix
+  `c3cf9e34abf4f9e3`, and its `tokenizer_config.json` carries the same template), the same vocabulary (248,044) and
+  the same 33 added tokens; its `tokenizer.json` is a newer save format (the merges, pre-tokenizer and decoder fields
+  differ as text), and both files encode alike: 7 of 7 samples (repo docs and a chat prompt, 165,191 tokens) gave the
+  same ids.
 - **`~/.config/qwen-jev/omniroute.key`** (0600, directory 0700): the OmniRoute inference key, written in process by a script that
   reads it with `harness-ports/bin/omniroute_local_builder.py`'s own `env_value` (never printed, never in argv), so no lane process
   reads `~/.hermes/`. Rewrite it the same way after a key rotation.
@@ -208,19 +264,22 @@ serves, through OmniRoute. What it needs on the PC, and how each piece was made 
   chat request keeps the field (1,106 tokens = the compiler), so OmniRoute is what drops it; `/v1/completions` with the
   compiler's `token_ids` as the prompt matches by construction, with the same label logprobs. The vLLM key is
   `~/.config/qwen-builder/api-key` (read in process); `/v1/models` lists `qwen3.8-27b-local` and `qwen3.8-27b`.
+  **Under SGLang (since 2026-10-02, D-129):** the same key; `/v1/models` lists `qwen3.8-27b-local` alone; `/v1/completions`
+  with a text prompt and `logprobs: 20` returns `top_logprobs[0]` as a dict of 20 (the deploy's smoke, 03:50Z). A
+  `token_ids` prompt was not re-run under SGLang.
 - **Never send `prompt_logprobs` (or `best_of`) to the shared server (AF-AP-201, 2026-09-24):** vLLM computes a float32
   log-softmax over the whole vocabulary for every prompt token, outside the memory it reserved at start. One request (a
   1,037-token prompt: 758 MiB needed, 148 MiB free) OOM-killed the EngineCore at 23:45:08Z; systemd restarted `qwen.service`
   at 23:45:21Z and it answered again at 23:50:00Z, about 5 minutes down for every user.
 
-- **No second CUDA process while `qwen.service` runs (measured 2026-09-24 18:0xZ; a CPU-only service counts when it creates a context: `laya-systemone`'s probe holds 256 MiB, AF-AP-231, D-099):** vLLM leaves about 550 MB of the 3090 free, and a toy RWKV-7 probe failed at CUDA context creation (`CUDA_ERROR_OUT_OF_MEMORY` from `cuDevicePrimaryCtxRetain`); vLLM was unaffected. Any GPU test, even a tiny one, waits for a window with the service stopped (D-078, D-081). The RWKV-7 G0 environment: `~/venv-rwkv` (Python 3.11, torch 2.14.0+cu130, triton 3.8.0, flash-linear-attention 0.3.0, transformers 4.57.6; imports clean) and a fallback `~/venv-rwkv-b` (torch 2.7.1 cu128, flash-linear-attention 0.3.0, transformers below 4.54); the checkpoint `RWKV/RWKV7-Goose-World2.9-0.4B-HF` at e94655a9 is in the Hugging Face cache (`model.safetensors` 901,620,328 bytes).
+- **No second CUDA process while `qwen.service` runs (measured 2026-09-24 18:0xZ; a CPU-only service counts when it creates a context: `laya-systemone`'s probe holds 256 MiB, AF-AP-231, D-099):** vLLM leaves about 550 MB of the 3090 free (SGLang with the deployed flags about 760 MiB at its peak under load, window 1's S1 of task #454), and a toy RWKV-7 probe failed at CUDA context creation (`CUDA_ERROR_OUT_OF_MEMORY` from `cuDevicePrimaryCtxRetain`); vLLM was unaffected. Any GPU test, even a tiny one, waits for a window with the service stopped (D-078, D-081). The RWKV-7 G0 environment: `~/venv-rwkv` (Python 3.11, torch 2.14.0+cu130, triton 3.8.0, flash-linear-attention 0.3.0, transformers 4.57.6; imports clean) and a fallback `~/venv-rwkv-b` (torch 2.7.1 cu128, flash-linear-attention 0.3.0, transformers below 4.54); the checkpoint `RWKV/RWKV7-Goose-World2.9-0.4B-HF` at e94655a9 is in the Hugging Face cache (`model.safetensors` 901,620,328 bytes).
 - **The RWKV-7 environments, measured on the CPU 2026-09-24 19:1xZ (no GPU needed to see these):** `~/venv-rwkv` loads the checkpoint (450,767,872 parameters, 7.5 s) but a forward with `use_cache=True` fails at fla 0.3.0's cache: transformers 4.57.6 requires `layers` or `layer_class_to_replicate` ("You should provide exactly one of ..."); with `use_cache=False` on the CPU, fla's CPU fallback fails (`module 'torch.cpu' has no attribute 'device'`). `~/venv-rwkv-b` (torch 2.7.1+cu128, transformers 4.53.3, triton 3.3.1) cannot import fla without a visible GPU (Triton: "0 active drivers"), so its forward is testable only inside the GPU window; it is the cached path for G0 and `~/venv-rwkv` with `--no-cache` the fallback. simple-jev needs pydantic, fastapi and starlette in each venv (the same pins as `~/venv-rwkv`). There is no CPU path for RWKV-7 through fla here.
 - **GPU-window preflight: Triton needs `Python.h` (measured 2026-09-24 23:1xZ, the first live window lost all three jobs in 32 s to it):** Triton compiles a C shim for its CUDA driver on first GPU use, with gcc and the interpreter's headers. The PC has `python3.11` 3.11.14 and `python3-devel` for 3.13 but no `python3.11-devel`, so `/usr/include/python3.11/` holds only `pyconfig-64.h`. The compile needs no GPU memory, so check it while `qwen.service` runs, in every venv a window job uses: `TC=$(mktemp -d); TRITON_CACHE_DIR=$TC ~/venv-X/bin/python -c 'from triton.backends.nvidia.driver import CudaUtils; CudaUtils()'; rm -rf $TC` must exit 0. With the uv CPython 3.11.13 headers on `C_INCLUDE_PATH` (`~/.local/share/uv/python/cpython-3.11.13-linux-x86_64-gnu/include/python3.11`) it compiles in `~/venv-rwkv-b` (triton 3.3.1) and `~/venv-laya` (triton 3.8.0); the clean fix is `sudo dnf install python3.11-devel` (the owner's). **Fixed 2026-09-24 23:2xZ:** the owner installed `python3.11-devel` 3.11.15-4; the same transaction moved `python3.11` and `python3.11-libs` from 3.11.14 to 3.11.15, and the venvs follow the system interpreter. The check then passed with no `C_INCLUDE_PATH` in `~/venv-rwkv-b` (triton 3.3.1), `~/venv-rwkv` and `~/venv-laya` (triton 3.8.0), 23:23Z. **Owner-run package commands carry `-y` (`sudo dnf install -y …`):** the owner's terminal does not take a typed answer at dnf's `Is this ok [y/N]` prompt (2026-09-24, not the first time), so a command without it hangs there and holds a dnf process until the terminal is closed.
 
 
-## The local build-lane model on the PC — `qwen-builder` (2026-09-14; the vLLM fallback since 2026-09-16, D-032)
+## The local build-lane model on the PC — `qwen-builder` (2026-09-14; the vLLM fallback since 2026-09-16, D-032; the second fallback, after the vLLM unit, since the SGLang switch of 2026-10-02, D-129)
 
-- **`qwen-builder.service`** (systemd --user, `Linger=yes`, **autostart DISABLED 2026-09-16 — the manual fallback to the vLLM `qwen` container above, D-032**; unit text generated by
+- **`qwen-builder.service`** (systemd --user, `Linger=yes`, **autostart DISABLED 2026-09-16 — the manual fallback to the `qwen` container above, D-032; since 2026-10-02 it comes after the vLLM unit, D-129**; unit text generated by
   `harness-ports/bin/qwen-server.sh unit`; logs `~/qwen-builder/logs/server.log`): the June CUDA llama.cpp build
   `~/Desktop/projects/llama-cpp/llama.cpp-mtp/build/bin/llama-server` (version `1 (00139b6)`) serving
   `~/.cache/huggingface/hub/models--unsloth--Qwen3.8-27B-GGUF/…/Qwen3.8-27B-UD-IQ4_XS.gguf` (blob = sha256

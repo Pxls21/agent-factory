@@ -1,7 +1,7 @@
 # Using the local Qwen 3.8 model (portable guide)
 
-**What this is.** A single Qwen3.8-27B model server runs on the owner's PC (one RTX 3090) as the vLLM
-`qwen` container (D-032). It is reachable from any harness or repo **through OmniRoute** — the sole model
+**What this is.** A single Qwen3.8-27B model server runs on the owner's PC (one RTX 3090) as the SGLang
+`qwen` container (D-129, since 2026-10-02; the vLLM container of D-032 is its fallback). It is reachable from any harness or repo **through OmniRoute** — the sole model
 egress. This guide is written to be **portable**: copy it into another repo (e.g. `trading-system`) and the
 same commands work, because the model, OmniRoute, and the PC are shared infrastructure, not per-repo.
 
@@ -22,8 +22,8 @@ to it. Consumers talk to `:20128` only.
 | Build combo | `agentfactory-build-local` — **HYBRID** (D-039): Qwen first, then the cloud chain, SILENTLY (measured 2026-09-22: 62 % of the completed build-combo turns in a 3-hour window ran on the cloud step; 43 % of local calls that day were chat-template 400s) | the local-first combo; per-lane provenance UNVERIFIED until T92 |
 | Verify combo | `agentfactory-verify-local` — **HYBRID** (D-039): Qwen first, then the cloud chain, SILENTLY (VERIFY-K1 2026-09-22: 49 of 86 completed turns on the cloud step) | the local-first combo; per-lane provenance UNVERIFIED until T92 |
 | Inference API key | `OMNIROUTE_API_KEY` in `~/.hermes/profiles/agentfactory/.env` | OmniRoute requires auth (task #34) |
-| Container | `qwen` systemd `--user` Quadlet (`deploy/qwen.container`, D-032) | digest-pinned in `upstream.lock.yaml` |
-| Fallback | llama.cpp `qwen-builder` unit — serves the SAME name/port, autostart disabled | D-027 (manual fallback) |
+| Container | `qwen` systemd `--user` Quadlet (`deploy/qwen.container`: SGLang v0.5.20 with EXL3 weights at 3.00 bits, D-129) | digest-pinned in `pc-lane.lock.yaml` `local_model_servers` (D-131); its move into `upstream.lock.yaml` is task #463 |
+| Fallback | the vLLM unit (`deploy/qwen-vllm.container`, D-032, pinned in `upstream.lock.yaml`), then the llama.cpp `qwen-builder` unit; all serve the SAME name/port, and neither fallback starts by itself | `PC-BRIDGE.md` (the swap commands); D-027 |
 
 **Model id vs combo — pick deliberately:**
 - **`qwen-local/qwen3.8-27b-local`** (the raw model): the request ALWAYS goes to local Qwen. If Qwen is down
@@ -90,15 +90,19 @@ The response `model` field reads `qwen3.8-27b-local` when Qwen served it.
 
 ## Lifecycle (owner's PC)
 
-- The model server is the `qwen` `--user` Quadlet (`deploy/qwen.container`), `Restart=always`, survives reboot.
-- The llama.cpp `qwen-builder` unit is the **manual fallback** (autostart disabled; same name/port, so OmniRoute
-  is unaffected by which one runs).
+- The model server is the `qwen` `--user` Quadlet (`deploy/qwen.container`, SGLang), `Restart=always`, survives
+  reboot. It starts through `deploy/sglang_start.py`, which keeps the API key off the command line and out of the log.
+- The **manual fallbacks**, in order: the vLLM unit (`deploy/qwen-vllm.container`, copied over the Quadlet file), then
+  the llama.cpp `qwen-builder` unit (autostart disabled). All serve the same name and port, so OmniRoute is unaffected
+  by which one runs. The swap commands are in `PC-BRIDGE.md`.
 - **Never stop or restart it while a local-route lane is live** — it holds the 3090; a restart kills every lane
   mid-turn (see `PC-BRIDGE.md`, AF-AP-79 / D-030).
 
 ## Provenance
 
-`docs/research/findings/VLLM-MIGRATION.md` (the container + the D-032 productionization) ·
-`docs/08_DECISION_LOG.md` (D-032, D-033) · `docs/adr/0002-omniroute-sole-model-egress.md` ·
+`tasks/briefs/serving/SGLANG-EVIDENCE-report.md` (the SGLang evidence and both GPU windows) ·
+`docs/research/findings/VLLM-MIGRATION.md` (the vLLM container + the D-032 productionization) ·
+`docs/08_DECISION_LOG.md` (D-032, D-033, D-129, D-131) · `docs/adr/0002-omniroute-sole-model-egress.md` ·
 `docs/adr/0007-buzz-agent-local-model-teammates.md` · `harness-ports/bin/omniroute_local_builder.py` ·
-`deploy/qwen.container` · `PC-BRIDGE.md`.
+`deploy/qwen.container` · `deploy/sglang_start.py` · `deploy/qwen-vllm.container` · `pc-lane.lock.yaml` ·
+`PC-BRIDGE.md`.

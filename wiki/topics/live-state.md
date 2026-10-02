@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-02 04:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 04:2xZ):** origin's tip is the 03:38Z transcripts commit, after task #460's brief. Held locally: the switch, the first smoke brief and the out-of-memory fix (three commits), and this batch: report sections K and K6, `PC-BRIDGE.md`, the AF-AP-260 entry, the skill line, D-132, the ledger entry, the second smoke brief and this block. They push once CI run #1227 ends.
+- **LIVE (as of 04:2xZ):** the PC's `qwen` container runs SGLang without the prefill CUDA graphs since 04:15:19Z (3.46 GB free after startup, restart count 0; the SGL-SMOKE2 lane passed on it); the vLLM unit waits as the fallback (`~/.config/qwen-serving/qwen-vllm.container`). The sandbox build agent of task #460 (S1 view guards) runs since 04:04:17Z on `scripts/s1_train/view.py` and `tests/test_s1_train_view.py`; their uncommitted changes are its own. **NEXT:** push; harvest task #460, then its verify lane; task #464 (the deployed arm's speed, a mounted Triton cache) when the owner wants it.
+
 **2026-10-02 02:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 02:3xZ):** the window-1 harvest, the cut-and-retry client and the window-2 script are pushed (task #454); CI runs on them. Held in the tree: the launch entry in the ledger and this block.
 - **LIVE (as of 02:3xZ):** the second GPU window on the PC since 02:29:13Z (`scripts/serving_ab/abwin2.sh`, pid 2130237; out `/home/rocco/sglang-ab/20261002T022913Z`; no run starts after 04:49:13Z): SGLang S2, then S3; vLLM is stopped until the window's EXIT trap restores it, so no lane runs on the local route until then. A sandbox poller wakes the coordinator when the window ends. **NEXT:** harvest into report section K; then the switch increment with the best arm's flags (D-131's pin in `pc-lane.lock.yaml`); task #460.

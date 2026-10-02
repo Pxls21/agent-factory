@@ -6,7 +6,7 @@ No runnable production Compose file is included yet. The first-party adapters, p
 
 ## Deployed non-spine units
 
-- `qwen.container` — the PC-side rootless Quadlet for the vLLM Qwen3.8-27B local model server (D-032), the keeper build/verify backend behind OmniRoute. This is real, running dev/build infrastructure on the owner's PC — NOT part of the production spine below, which is still planned. It sits behind OmniRoute (rule 3), never a direct egress. See `docs/research/findings/VLLM-MIGRATION.md` and `PC-BRIDGE.md`.
+- `qwen.container` — the PC-side rootless Quadlet for the Qwen3.8-27B local model server, the keeper build/verify backend behind OmniRoute: SGLang v0.5.20 with EXL3 weights (D-129; pinned in `pc-lane.lock.yaml`, D-131), started by `sglang_start.py`, which keeps the API key off the command line and out of the log. `qwen-vllm.container` is the vLLM unit it replaced (D-032), kept as the fallback. This is real, running dev/build infrastructure on the owner's PC — NOT part of the production spine below, which is still planned. It sits behind OmniRoute (rule 3), never a direct egress. See `docs/research/findings/VLLM-MIGRATION.md` and `PC-BRIDGE.md`.
 
 ## Planned production deployables
 
