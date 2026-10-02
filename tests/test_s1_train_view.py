@@ -1217,13 +1217,15 @@ def test_an_event_whose_role_is_a_list_is_refused(world, tmp_path):
 
 
 def test_a_manifest_output_with_a_nul_is_refused(world, tmp_path):
-    # Q7c: realpath raises ValueError on a NUL
+    # Q7c: realpath raises ValueError on a NUL. Its text is the interpreter's ("embedded null byte" on 3.11,
+    # "lstat: embedded null character in path" on 3.13 and CI's 3.12), so the test pins the input it names
     export = _copy(world.export, tmp_path, "export")
     m = json.loads((export / "manifest.json").read_text())
     m["sources"][0]["output"] += chr(0)
     (export / "manifest.json").write_text(json.dumps(m, indent=1) + "\n")
-    _refused(_view(world.build, export, _out(tmp_path)),
-             "the export's manifest.json: the output of %s: embedded null byte" % MAIN, _out(tmp_path))
+    r = _view(world.build, export, _out(tmp_path))
+    _refused(r, "the export's manifest.json: the output of %s: " % MAIN, _out(tmp_path))
+    assert "embedded null" in r.stderr, r.stderr[-800:]
 
 
 def test_an_out_that_cannot_be_made_is_refused(world):
@@ -1233,12 +1235,15 @@ def test_an_out_that_cannot_be_made_is_refused(world):
 
 
 def test_an_out_with_a_nul_is_refused(world, tmp_path, capsys):
-    # check_out's realpath raises ValueError on a NUL; argv cannot carry one, so main runs in this process
+    # check_out's realpath raises ValueError on a NUL; argv cannot carry one, so main runs in this process. The
+    # error's text is the interpreter's (see the manifest test above): one line that names the --out and the NUL
     out = str(tmp_path / "o") + chr(0) + "ut"
     rc = V.main(["--build", str(world.build), "--export", str(world.export), "--out", out])
     err = capsys.readouterr()
     assert (rc, err.out) == (2, ""), err.err[-500:]
-    assert err.err == "s1-view: refused: --out %s: embedded null byte\n" % out
+    head = "s1-view: refused: --out %s: " % out
+    assert err.err.startswith(head) and "embedded null" in err.err[len(head):], err.err[-500:]
+    assert err.err.count("\n") == 1 and err.err.endswith("\n"), err.err[-500:]
     assert os.listdir(tmp_path) == []
 
 
