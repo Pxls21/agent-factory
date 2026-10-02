@@ -404,3 +404,77 @@ history and of the shared system prompt as the reason. The measured gains are on
 I5); none measures 50k-90k-token chats on a 24 GiB card. The one Ampere warning (I11, stock SGLang's CUDA graphs
 hanging) concerns the stock image; the fork in use (A1) is built for sm_86 and its recipe runs with CUDA graphs and MTP
 at 110-139 tok/s (A2.3). The GPU window measures both points on this card.
+
+## J. The GPU window, measured (2026-10-02 00:28:52Z to 01:56:25Z; task #454, D-088; written 02:0xZ)
+
+The coordinator's harness, `scripts/serving_ab/` (task #462; the window ran its scratch copy, the same two Python
+files byte for byte), replayed one fixed workload in every arm: `/home/rocco/sglang-ab/workload-1.json` (sha256 prefix
+24068ffecf69fe37), four chats whose first prompts are 86,999, 57,000, 77,000 and 67,000 tokens by vLLM's own
+`/tokenize` (chat template included), then three follow-up turns of 2,500 tokens each; replies capped at 512 tokens,
+thinking off; each run's system prompt opens with its own run id; chats start 20 s apart. A first token later than 80 s
+(OmniRoute's first-event limit) counts as a miss. In every run the server's first-turn prompt count equalled the plan
+(`turn1_plan_diff_max` 0), so the two servers count these prompts alike.
+
+Arms. **V0**: the live vLLM unit as it runs (`deploy/qwen.container`). **S0**: the recipe as published (A2: one
+running request, 5 state slots, prefill chunk 1,024, context 204,800). **S1**: the registry's C4 flags (B1.10: 4
+running requests, 12 state slots, `no_buffer`, overlap off, `SGLANG_OPT_MAMBA_SKIP_DECODE_LOCK=1`, chunk 4,096,
+context 131,072) plus HiCache (`--hicache-size 24 --hicache-write-policy write_through`). Both SGLang arms ran the
+recipe image (A1.1), fp8 KV and MTP (NEXTN 3/1/4). S0 at 3 and 4 chats was skipped by design: over half of its 2-chat
+requests missed the limit. S1b (no HiCache) did not run, because S1 booted.
+
+### J1. Per run ("cold" = a chat's first turn; "warm" = turns 2 to 4)
+
+| Arm | Chats | Answered | Past 80 s | Cold first token, p50 (max) | Warm first token, p50 (max) | Decode p50 | Wall |
+|---|---|---|---|---|---|---|---|
+| V0 | 2 | 8 of 8 | 1 of 8 | 72.1 s (85.9) | 3.2 s (4.1) | 27.4 tok/s | 165 s |
+| V0 | 3 | 12 of 12 | 8 of 12 | 88.4 s (122.6) | 84.7 s (183.3) | 5.3 tok/s | 796 s |
+| V0 | 4 | 16 of 16 | 15 of 16 | 88.6 s (163.2) | 196.0 s (261.5) | 7.0 tok/s | 1,047 s |
+| S0 | 2 | 8 of 8 | 8 of 8 | 132.2 s (185.3) | 200.5 s (215.3) | 76.0 tok/s | 843 s |
+| S1 | 2 | 8 of 8 | 2 of 8 | 169.4 s (210.0) | 4.8 s (34.1) | 37.7 tok/s | 273 s |
+| S1 | 3 | 12 of 12 | 4 of 12 | 145.2 s (206.6) | 17.9 s (109.3) | 54.4 tok/s | 319 s |
+| S1 | 4 | 16 of 16 | 6 of 16 | 144.9 s (254.3) | 32.7 s (178.8) | 50.2 tok/s | 437 s |
+
+No arm had an error, a loop or a request without usage.
+
+### J2. The caches and the servers
+
+| | V0 | S0 | S1 |
+|---|---|---|---|
+| Prompt tokens served from the prefix cache | 75.4% at 2 chats, 3.6% at 3, 2.7% at 4 (`vllm:prefix_cache_hits_total` over `..._queries_total`, before and after each run; the usage's `cached_tokens` sums agree: 460,000, 33,600, 33,600) | 0: 601 prefill chunks, none with a cached token | 76.0% over its three runs: 2,103,749 of 2,766,856 prompt tokens (the log's `#cached-token`, 29 of 174 chunks) |
+| Preemptions or retracts | 1 at 3 chats, 1 at 4 (`vllm:num_preemptions_total`) | 0 in the log | 0 in the log |
+| KV pool on the GPU | about 215k tokens (C0.13) | 199,776 tokens | 146,098 tokens, full at 0.98 |
+| Host-memory tier | none | none | KV 447,407 tokens (15.58 GB) and states 8.47 GB |
+| State slots in use, max | n/a | 0.80 with one request running | 0.83 |
+| GPU memory, max sampled | 24,064 MiB | 22,822 MiB | 23,816 MiB |
+| Start to serving | 280 s (the restore) | 380 s | 640 s (251.9 s of it capturing the prefill CUDA graphs) |
+
+### J3. What the numbers show
+
+1. **The recipe as published (S0) cannot serve two lanes.** One running request, and no cache hit at all: with one
+   request running, the state pool sat at 0.80 and no snapshot was kept (B1.9, now observed). Each turn recomputed the
+   whole chat and waited for the other chat's turn, so all 8 requests passed 80 s.
+2. **With S1's flags, follow-up turns reuse the cache under load; vLLM's do not.** From 3 chats, vLLM's GPU-only
+   prefix cache was evicted turn by turn: 3.6% and 2.7% of prompt tokens hit, so each turn re-read 60k to 95k tokens
+   and decode fell to a median of 5.3 and 7.0 tok/s per chat. S1 served 76% of its prompt tokens from the cache with
+   its GPU pool full; its warm turns took 3.8 to 5.7 s at 2 chats (one at 34.1 s, behind the other chat's cold
+   prefill), and turns 3 and 4 took 23 to 35 s at 4 chats.
+3. **S1's slow warm turns waited behind cold prefills.** At 4 chats, chat 0 turn 2 (178.8 s) and chat 1 turn 2 (113.2
+   s) arrived while chats 2 and 3 ran their cold first turns. The scheduler takes requests first come, first served:
+   `--schedule-policy` defaults to `fcfs` (SGLang `arg_groups/fields/schedule.py:89-104` at v0.5.20); `lpm` serves the
+   longest cached prefix first.
+4. **Cold first turns are slower on SGLang.** Every S1 first turn of 57k to 87k tokens took over 80 s (106 to 254 s);
+   chat 0's 86,999-token first turn, alone for its first 20 s, took 106.3 s and 106.4 s on S1 at 3 and 4 chats (169.4
+   s at 2 chats, the arm's first run) against 72.1 to 73.2 s on vLLM.
+   The engine also starts slower (640 s against 280 s).
+5. **No crash, no error, no retract** on any arm, including S1 with its GPU pool full at 4 chats.
+
+### J4. Gaps this window leaves (added to section G's list)
+
+- A cold long prompt through OmniRoute: OmniRoute ends a request with no first event in 80 s (never changed, standing
+  rule), and every S1 cold first turn of 57k tokens or more took longer. Whether a retry after that cut reuses the
+  chunks already computed was not measured. A new lane's first turn, a turn right after Hermes compacts, and a resumed
+  lane are cold.
+- `lpm` scheduling, a larger prefill chunk (for cold prefill speed) and `extra_buffer` with overlap were not run.
+- Chats smaller than 57k tokens, and more than 4 at once, were not run (the owner's question is about many lanes).
+- `--enable-cache-report` was off on both SGLang arms, so the client-side cached count is vLLM's only; the SGLang
+  count comes from the server log.

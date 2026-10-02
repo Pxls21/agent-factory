@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-02 02:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 02:0xZ):** the 01:3xZ batch is pushed (task #462's harness, D-131, the retro); CI run #1224 runs on it. Held in the tree: report section J (the window's numbers), the AF-AP-249 tenth bite, the ledger entry and this block.
+- **LIVE (as of 02:0xZ):** nothing on the GPU: the first window ended at 01:56:25Z with vLLM serving again (section J: tuned SGLang keeps its cache at 3 and 4 long chats where vLLM loses it; its cold long first turns are slower). No sandbox or PC lane running. **NEXT:** the cut-and-retry client in `scripts/serving_ab/chat_load.py`; the second window (`lpm`, the 80 s cut and retry, a larger prefill chunk, more chats); then the switch increment, its pin in `pc-lane.lock.yaml` (D-131); task #460.
+
 **2026-10-02 01:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 01:3xZ):** the D-128 to D-130 batch and the 21:5xZ retro are pushed; CI run #1223 runs on them (a sandbox waiter reports it). Held in the tree, to commit after its gate: D-131, the 01:3xZ retro (two skill lessons: `deep-work` Phase 2, `code-intel-trio`), task #462 (the A/B harness in `scripts/serving_ab/`), task #463 (backlog), and this block.
 - **LIVE (as of 01:3xZ):** THE GPU WINDOW on the PC (task #454; pid 2080702; out `/home/rocco/sglang-ab/20261002T002852Z`): V0 done at 2, 3 and 4 chats; S0 (the recipe, one request at a time) done at 2 chats only, over half past the 80 s limit (first turns at a median 132 s, decode at a median 76 tok/s, 0 errors, 1 retract line), the higher counts skipped by design; S1 (the four-stream flags plus HiCache) booting since 01:22:50Z; then vLLM comes back through the EXIT trap. No sandbox lane running. **NEXT:** harvest the window (report section J); the second window (S2: `extra_buffer`, spare state slots, the cache report); the switch increment, its pin in `pc-lane.lock.yaml` (D-131); task #460.
