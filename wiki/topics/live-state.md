@@ -12,7 +12,7 @@ last_compiled: 2026-09-03
 ## Active lanes
 
 **2026-10-02 04:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
-- **Origin (as of 04:4xZ):** the switch, the out-of-memory fix and their records (task #454) are pushed (the `--lanes-live` push; task #460's two files stayed in the tree); CI runs on them. Held locally: the retro's ledger line and this edit; they push with task #460's harvest, with the K7 batch.
+- **Origin (as of 05:2xZ):** task #454 is closed and pushed with all its records (CI run #1228 passed on the switch's push at 05:18:00Z; the retro, K7 and the close go in the next push, from this commit). Held in the tree: only task #460's two files, its live lane's work.
 - **LIVE (as of 05:1xZ):** nothing on the PC beyond the server: the speed run of the deployed arm ended at 05:12:39Z (report section K7: it matched S2 within the measured spread). The PC's `qwen` container runs SGLang without the prefill CUDA graphs since 04:15:19Z (3.46 GB free after startup, restart count 0; the SGL-SMOKE2 lane passed on it); the vLLM unit waits as the fallback (`~/.config/qwen-serving/qwen-vllm.container`). The sandbox build agent of task #460 (S1 view guards) runs since 04:04:17Z on `scripts/s1_train/view.py` and `tests/test_s1_train_view.py`; their uncommitted changes are its own. **NEXT:** push; harvest task #460, then its verify lane; task #464 (the deployed arm's speed, a mounted Triton cache) when the owner wants it.
 
 **2026-10-02 02:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
