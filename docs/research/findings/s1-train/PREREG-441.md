@@ -6,6 +6,17 @@ by. Amendments before the GPU window opens are dated here with their reason and 
 features exist, nothing in §4 (the bar), §5 (the controls) or the grid of §3 changes; any other deviation is reported
 in the run's record as a deviation.
 
+AMENDED 2026-10-02 11:0xZ by the coordinator, before the GPU window opened and before any feature or held-out score
+existed (the task #472 build lane's report, `tasks/briefs/jev-laya/S4-3-HEADS-report.md` §2, D-1): (1) §3's family A
+loss masks out of a yes row's InfoNCE denominators, in both directions, another row with the same state (the same `src`
+and `state_end`) as well as another row with the same candidate. Two yes rows at one state have the same `s`, so in
+either direction the other row's term is a positive scored as a negative. The build brief (its E-4) and the code
+(`scripts/s1_train/heads.py`, `pair_loss`) carry this rule; this file's text named only the candidate. (2) Where this
+file is silent, the evaluator's readings are those of that report's §2, G-1 to G-11 (among them: C2 and C3 keep the
+chosen configuration and choose their own threshold on their own out-of-fold probabilities; a claim needs the full
+model right on more of the discordant rows, b > c, as well as the two-sided p below its alpha), frozen with the code.
+(3) The run of record passes both `--read-repeat` and `--twice`. The §8 block is unchanged.
+
 ## 1. The frozen inputs
 
 | Input | Identity |
@@ -53,7 +64,7 @@ out-of-fold probability per training row.
 
 | Family | Model | Grid |
 |---|---|---|
-| A, CLM's pair | a state head over `s` and an action head over `c_free`, each an MLP (LayerNorm, GELU, dropout 0.1, hidden width 256) to 128 values; score = exp(t) × cosine, t from log(1/0.07), exp(t) at most 100. Loss: bidirectional in-batch InfoNCE over the batch's yes rows (another row with the same candidate is masked out of a row's denominator, in both directions), plus a yes/no term on every row, BCE of sigmoid(a × score + b); P(yes) = sigmoid(a × score + b); AdamW, weight decay 0.01, batch 64 | hidden layers 1 or 2; learning rate 1e-3 or 3e-4; epochs 20 or 60 (8 points) |
+| A, CLM's pair | a state head over `s` and an action head over `c_free`, each an MLP (LayerNorm, GELU, dropout 0.1, hidden width 256) to 128 values; score = exp(t) × cosine, t from log(1/0.07), exp(t) at most 100. Loss: bidirectional in-batch InfoNCE over the batch's yes rows (another row with the same candidate or the same state, the same `src` and `state_end`, is masked out of a row's denominator, in both directions; the state since the 11:0xZ amendment), plus a yes/no term on every row, BCE of sigmoid(a × score + b); P(yes) = sigmoid(a × score + b); AdamW, weight decay 0.01, batch 64 | hidden layers 1 or 2; learning rate 1e-3 or 3e-4; epochs 20 or 60 (8 points) |
 | B, a probe on `c_ctx` | (i) logistic regression, L2 weight λ, full-batch L-BFGS, 200 steps; (ii) an MLP, one hidden layer of 256, dropout 0.1, AdamW 1e-3, weight decay 0.01, batch 64 | (i) λ in 1e-4, 1e-3, 1e-2, 1e-1; (ii) epochs 20 or 60 (6 points) |
 | C, a probe on `q_ctx` | as B | as B (6 points) |
 
