@@ -92,6 +92,8 @@ def test_the_live_unit_starts_sglang_through_the_start_script():
     assert words[words.index("--port") + 1] == "8080" and words[words.index("--host") + 1] == "0.0.0.0"
     for flag in ("--enable-metrics", "--enable-cache-report", "--enable-hierarchical-cache"):
         assert flag in words
+    # the GPU headroom the grammar kernels need at first use; without it a long prompt with tools ran out of memory
+    assert "--disable-prefill-cuda-graph" in words
 
 
 def test_the_live_unit_mounts_the_key_and_the_start_script_read_only():
