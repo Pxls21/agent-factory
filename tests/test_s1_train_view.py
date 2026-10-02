@@ -1295,6 +1295,25 @@ def test_an_out_that_is_a_symbolic_link_is_refused(world, tmp_path, form):
     assert os.listdir(target) == [] and not (tmp_path / "nowhere").exists()
 
 
+@pytest.mark.parametrize("form", ["", "/", "/.", "/./."], ids=["dotdot", "dotdot-slash", "dotdot-dot", "dotdot-dot-dot"])
+def test_an_out_that_is_a_link_after_a_dotdot_is_refused(world, tmp_path, form):
+    # VERIFY-S1-VIEW-GUARDS B1: in `hop/../link`, hop a link, the kernel resolves '..' from hop's target, so the path
+    # names a link that its text (abspath) does not show; the view wrote through it into the link's target
+    (tmp_path / "b" / "sub").mkdir(parents=True)
+    (tmp_path / "c").mkdir()
+    target = tmp_path / "target"
+    target.mkdir()
+    os.symlink(tmp_path / "b" / "sub", tmp_path / "c" / "hop")
+    os.symlink(target, tmp_path / "b" / "link")
+    named = str(tmp_path / "c" / "hop" / ".." / "link")
+    assert os.path.islink(named) and not os.path.islink(os.path.abspath(named))     # the shape: only the kernel sees it
+    out = named + form
+    r = _view(world.build, world.export, out)
+    assert (r.returncode, r.stdout) == (2, ""), r.stderr[-800:]
+    assert "s1-view: refused: --out %s is a symbolic link" % out in r.stderr, r.stderr[-800:]
+    assert os.listdir(target) == []
+
+
 @pytest.mark.parametrize("where", ["a_work_tree", "a_new_path_below", "a_git_file", "through_a_link"])
 def test_an_out_inside_a_git_work_tree_is_refused(world, tmp_path, where):
     # D-6 keeps the output outside git: a .git entry (a directory, or a linked worktree's file) in the --out's resolved

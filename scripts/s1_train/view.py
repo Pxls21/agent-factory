@@ -375,10 +375,16 @@ def view(build, export):
 
 def check_out(out):
     """--out is not a symbolic link, to anything, and does not lie inside a git work tree: no .git entry in its resolved
-    path or any parent of it (D-10; abspath: `link/` and `link/.` name the link too). It must not exist, or be an empty
+    path or any parent of it (D-10; `link/` and `link/.` name the link too). It must not exist, or be an empty
     directory (D-6)."""
     try:
-        if os.path.islink(os.path.abspath(out)):        # before lexists: a dangling link is refused here
+        # The entry --out names: trailing '/' and '.' parts are dropped, but a '..' stays for the kernel to resolve, since
+        # after a link it names another entry than abspath's text (VERIFY-S1-VIEW-GUARDS B1: `hop/../link`, hop a
+        # link). The abspath check stays as well. Both run before lexists, so a dangling link is refused here too.
+        named = out.split("/")
+        while len(named) > 1 and named[-1] in ("", "."):
+            named.pop()
+        if os.path.islink("/".join(named) or "/") or os.path.islink(os.path.abspath(out)):
             raise Refused("--out %s is a symbolic link" % out)
         d = os.path.realpath(out)              # a path that does not exist yet: its nearest existing parent, resolved
         while True:
