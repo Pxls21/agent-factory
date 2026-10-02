@@ -89,6 +89,12 @@ origin state, task state, or owner statements contradict what you remember:
   — `/root/.claude` is the durable store; only the `/tmp` scratchpad task
   mirrors roll back with the disk. Recover from `/root`, never conclude loss
   from `/tmp` absence.
+- **NOT EVERY RESTART SPARES THE HARNESS'S SESSION RECORDS (2026-10-02 21:1xZ, the sandbox):** after a container
+  restart the session transcript held only the turns since the last compaction, the session's subagent records held
+  nothing, and the disk was back at the origin tip with the work uncommitted. Nothing before the compaction was
+  recoverable from the session records then; the current context and the PC were: the four deploy files came back by
+  sha from the copies shipped to the PC (`/tmp/<ship dir>` there), the rest was rebuilt from the current context. Push
+  work that matters before a long wait, and keep a shipped copy's sha in the record that cites it.
 - **CORRECTED 2026-08-27: unpushed commits destroyed by a rollback are
   REBUILDABLE by edit replay** — `scripts/replay_transcript_edits.py` (in-repo,
   survives rollbacks) re-applies every Edit/Write from the main-session +

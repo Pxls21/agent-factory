@@ -284,6 +284,40 @@ class KnownValueRefusal(Exception):
     """The value gate refused; args[0] is the list of lines to print (source names and counts only)."""
 
 
+# A day's file can hold turns the transcript no longer has (task #483): after a container restart the session transcript
+# holds only the turns since the last compaction, and a new session on the same day starts a new transcript (2026-10-02:
+# the push after a restart replaced the day's 775 turns with 50). export() keeps a day file's turns that come before
+# the transcript's first turn of that day, and never rewrites a day file it cannot read back as one of its exports.
+class DayFileRefusal(Exception):
+    """A committed day file is not an export of its day; args[0] is the list of lines to print."""
+
+
+_DAY_HEAD = re.compile(r"# Conversation (\S+) \(scrubbed digest, (\d+) turns\)\n\n")
+_TURN_HEAD = re.compile(r"^## (?:user|assistant) @ (\S+)\n", re.M)
+_TURN = re.compile(r"## (?:user|assistant) @ \S+\n\n.*\n", re.S)
+
+
+def committed_turns(path, day):
+    """[(timestamp, turn)] of the day file at path, each turn as export() wrote it; [] when there is no file."""
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except (OSError, UnicodeDecodeError):
+        text = ""
+    head = _DAY_HEAD.match(text)
+    body = text[head.end():] if head and head.group(1) == day else ""
+    starts = [m.start() for m in _TURN_HEAD.finditer(body)]
+    # export() joins its turns with "\n" and ends each with "\n": every turn but the last ends with a blank line
+    raw = [body[s:e] for s, e in zip(starts, starts[1:] + [len(body)])]
+    turns_ = [t[:-1] for t in raw[:-1]] + raw[-1:]
+    if not (head and starts and starts[0] == 0 and len(turns_) == int(head.group(2))
+            and all(_TURN.fullmatch(t) for t in turns_)):
+        raise DayFileRefusal(["day file: %s does not read back as an export of its day" % path])
+    return [(_TURN_HEAD.match(t).group(1), t) for t in turns_]
+
+
 def known_values(sources):
     """[(label, form, value, its 8-byte windows or [])] of every source present. known_values_check.py is loaded by path
     here, not at import: the scrubber's importers need only the rules, and some load this file with no scripts/ on
@@ -339,10 +373,14 @@ def export(transcript: str, out: str, cap: int, *, sources) -> list:
         day = ts[:10] if ts != "?" else "undated"
         # Scrub, THEN cap (AF-AP-127): a cap first cuts a secret that straddles it below its
         # pattern's minimum length (or cuts a key block's END line off), and the stub survives.
-        days.setdefault(day, []).append(f"## {role} @ {ts}\n\n{scrub(txt)[:cap]}\n")
-    files = [(os.path.join(out, f"chat-{day}.md"),
-              (f"# Conversation {day} (scrubbed digest, {len(days[day])} turns)\n\n" + "\n".join(days[day])).encode())
-             for day in sorted(days)]
+        days.setdefault(day, []).append((ts, f"## {role} @ {ts}\n\n{scrub(txt)[:cap]}\n"))
+    files = []
+    for day in sorted(days):
+        path = os.path.join(out, f"chat-{day}.md")
+        first = min(ts for ts, _ in days[day])
+        kept = [t for ts, t in committed_turns(path, day) if ts < first]   # the day's turns the transcript lacks
+        body = kept + [t for _, t in days[day]]
+        files.append((path, (f"# Conversation {day} (scrubbed digest, {len(body)} turns)\n\n" + "\n".join(body)).encode()))
     # The value gate runs on the exact bytes to be written, before the first write (the out directory included).
     hits = value_hits([data for _, data in files], known_values(sources))
     if hits:
@@ -371,7 +409,7 @@ def main(argv=None) -> int:
         return 3
     try:
         written = export(path, a.out, a.cap, sources=KNOWN_VALUE_SOURCES)     # the module's tuple as it is now
-    except KnownValueRefusal as e:
+    except (KnownValueRefusal, DayFileRefusal) as e:
         for line in e.args[0]:
             print("transcript_export: REFUSED, nothing written: " + line, file=sys.stderr)
         return 4

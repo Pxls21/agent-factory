@@ -1314,3 +1314,116 @@ def test_scrub2_shapes_never_reach_the_session_export(tmp_path):
     assert len(calls) == len(inputs), [e.get("kind") for e in events][:8]
     blob = json.dumps(events, ensure_ascii=False)
     assert [f[:4] for f in fakes if not _no_piece(f, blob)] == []
+
+
+# A day's file can hold turns the transcript no longer has (task #483; 2026-10-02: after a container restart the session
+# transcript held only the turns since the last compaction, and the push's sync replaced the day's 775 turns with 50).
+# export() keeps the committed turns that come before the transcript's first turn of that day, and refuses, writing
+# nothing, when a committed day file does not read back to its own bytes.
+EARLY = [("user", "2026-10-02T00:10:38.993Z", "the morning's question"),
+         ("assistant", "2026-10-02T00:11:02.100Z", "the morning's answer")]
+LATE = [("user", "2026-10-02T20:38:20.696Z", "the evening's question"),
+        ("assistant", "2026-10-02T20:39:00.000Z", "the evening's answer")]
+TURN_TS = re.compile(r"^## (?:user|assistant) @ (\S+)$", re.M)
+
+
+def _day_file(out, day, blocks):
+    """A day file as export() writes it, from [(role, ts, text)]."""
+    out.mkdir(parents=True, exist_ok=True)
+    body = "\n".join(f"## {r} @ {ts}\n\n{t}\n" for r, ts, t in blocks)
+    path = out / f"chat-{day}.md"
+    path.write_text(f"# Conversation {day} (scrubbed digest, {len(blocks)} turns)\n\n" + body)
+    return path
+
+
+def _day_jsonl(tmp_path, blocks):
+    jsonl = tmp_path / "day.jsonl"
+    jsonl.write_text("".join(_entry(r, t, ts) + "\n" for r, ts, t in blocks))
+    return str(jsonl)
+
+
+def test_a_transcript_that_starts_later_keeps_the_days_earlier_turns(tmp_path):
+    out = tmp_path / "out"
+    _day_file(out, "2026-10-02", EARLY)
+    MOD.export(_day_jsonl(tmp_path, LATE), str(out), 4000, sources=())
+    text = (out / "chat-2026-10-02.md").read_text()
+    assert text.startswith("# Conversation 2026-10-02 (scrubbed digest, 4 turns)\n\n")
+    assert TURN_TS.findall(text) == [ts for _, ts, _ in EARLY + LATE]
+    assert "the morning's answer" in text and "the evening's answer" in text
+
+
+def test_the_kept_turns_are_the_bytes_a_full_transcript_writes(tmp_path):
+    # the day kept from its file and the transcript's later turns read exactly as one export of the whole day
+    whole, split = tmp_path / "whole", tmp_path / "split"
+    (tmp_path / "w").mkdir()
+    MOD.export(_day_jsonl(tmp_path / "w", EARLY + LATE), str(whole), 4000, sources=())
+    _day_file(split, "2026-10-02", EARLY)
+    MOD.export(_day_jsonl(tmp_path, LATE), str(split), 4000, sources=())
+    assert (split / "chat-2026-10-02.md").read_bytes() == (whole / "chat-2026-10-02.md").read_bytes()
+
+
+def test_a_re_export_of_the_same_transcript_writes_the_same_bytes(tmp_path):
+    out = tmp_path / "out"
+    jsonl = _day_jsonl(tmp_path, EARLY + LATE)
+    MOD.export(jsonl, str(out), 4000, sources=())
+    first = (out / "chat-2026-10-02.md").read_bytes()
+    MOD.export(jsonl, str(out), 4000, sources=())
+    assert (out / "chat-2026-10-02.md").read_bytes() == first
+    assert TURN_TS.findall(first.decode()) == [ts for _, ts, _ in EARLY + LATE]     # no turn twice
+
+
+def test_committed_turns_from_the_transcripts_first_turn_on_are_replaced(tmp_path):
+    out = tmp_path / "out"
+    _day_file(out, "2026-10-02", EARLY + [("user", LATE[0][1], "an older copy of the evening's question")])
+    MOD.export(_day_jsonl(tmp_path, LATE), str(out), 4000, sources=())
+    text = (out / "chat-2026-10-02.md").read_text()
+    assert TURN_TS.findall(text) == [ts for _, ts, _ in EARLY + LATE]
+    assert "an older copy" not in text
+
+
+@pytest.mark.parametrize("damage", [
+    ("2 turns)", "3 turns)"),                                      # the count disagrees with the turns
+    ("# Conversation 2026-10-02", "# Chat 2026-10-02"),            # no header
+    ("# Conversation 2026-10-02", "# Conversation 2026-10-01"),    # the header names another day
+    ("turns)\n\n## user", "turns)\n\na stray line\n## user"),       # text before the first turn
+    ("993Z\n\nthe morning's", "993Z\nthe morning's"),              # no blank line after a turn's head
+    ("question\n\n## assistant", "question\n## assistant"),        # no blank line between two turns
+], ids=["count", "header", "other-day", "stray-line", "head-line", "joiner"])
+def test_a_committed_day_file_that_does_not_read_back_is_refused(tmp_path, damage):
+    out = tmp_path / "out"
+    path = _day_file(out, "2026-10-02", EARLY)
+    text = path.read_text()
+    assert text.count(damage[0]) == 1
+    path.write_text(text.replace(damage[0], damage[1]))
+    before = path.read_bytes()
+    jsonl = tmp_path / "two.jsonl"         # a second day, with no file yet: an all-or-nothing refusal writes neither
+    jsonl.write_text("".join(_entry(r, t, ts) + "\n" for r, ts, t in LATE + [("user", "2026-10-03T08:00:00Z", "next")]))
+    with pytest.raises(MOD.DayFileRefusal) as e:
+        MOD.export(str(jsonl), str(out), 4000, sources=())
+    assert e.value.args[0] == ["day file: %s does not read back as an export of its day" % path]
+    assert path.read_bytes() == before and not (out / "chat-2026-10-03.md").exists()
+
+
+def test_main_refuses_a_day_file_it_cannot_read_back(tmp_path, monkeypatch):
+    monkeypatch.setattr(MOD, "KNOWN_VALUE_SOURCES", ())
+    out = tmp_path / "out"
+    path = _day_file(out, "2026-10-02", EARLY)
+    path.write_text(path.read_text().replace("2 turns)", "5 turns)"))
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        rc = MOD.main(["--transcript", _day_jsonl(tmp_path, LATE), "--out", str(out)])
+    assert (rc, err.getvalue().splitlines()) == (4, [
+        "transcript_export: REFUSED, nothing written: day file: %s does not read back as an export of its day" % path])
+
+
+def test_the_value_gate_reads_the_kept_turns_too(tmp_path):
+    fake = _fake_value()
+    env = tmp_path / "zq.env"
+    env.write_text("ZQ_FAKE_TOKEN=%s\n" % fake)
+    out = tmp_path / "out"
+    path = _day_file(out, "2026-10-02", [("user", EARLY[0][1], "an old turn with %s in it" % fake)])
+    before = path.read_bytes()
+    with pytest.raises(MOD.KnownValueRefusal) as e:
+        MOD.export(_day_jsonl(tmp_path, LATE), str(out), 4000, sources=(("env-file", str(env), ()),))
+    assert e.value.args[0] == ["zq.env:ZQ_FAKE_TOKEN value whole=1 windows=25/25"]
+    assert path.read_bytes() == before

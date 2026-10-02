@@ -11,7 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
-**2026-10-02 21:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+**2026-10-02 21:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 21:5xZ):** 63eb635b (CI run #1245) carries the heat guard and its records; 818de1ff restores the day's chat digest that the push's transcript sync cut after a container restart; this push carries the exporter fix (task #483), AF-AP-264 and the restart lessons.
+- **LIVE (as of 21:5xZ):** unchanged on the PC since the 21:1xZ block: the heat guard runs, enabled at boot; the `qwen` unit (SGLang) is stopped, boost is on, the local route is down. In the sandbox the relay is down: its key file went with the restart, and only the owner can paste it again. **NEXT:** the owner turns boost off; then SGLang starts under the guard and task #478's proof runs; task #482 (a mounted Triton cache); task #479 before task #441's rerun on the GPU.
+
+**2026-10-02 21:1xZ — WHAT IS LIVE NOW (superseded by the block above).**
 - **Origin (as of 21:1xZ):** this push carries D-136, the heat guard (task #481: deployed, enabled at boot, proven on the PC), the qwen units' `CPUQuota=300%` and `Requires=heat-guard.service`, and task #482's registration. A container restart at about 21:15Z rolled the sandbox's disk back to the origin tip; the work was rebuilt (the deploy files from the PC by hash, the rest from the transcript) before this push.
 - **LIVE (as of 21:1xZ):** the heat guard runs on the PC, enabled at boot. The `qwen` unit (SGLang) is stopped: both of today's watched starts overheated the CPU with boost on (92.5°C at 20:30Z; 94.8°C at 20:53Z under an 80% CPU cap, the guard's stop about 5 s before ready), so the local route is down. `laya-systemone` holds 1,972 MiB of the GPU. Tctl 64.0°C at 21:16Z. A board sensor, AUXTIN0, reads about 88°C with its alarm flag whether the CPU is hot or idle; its source is unknown. **NEXT:** the owner turns boost off (`echo 0 | sudo tee /sys/devices/system/cpu/cpufreq/boost`); then SGLang starts under the guard and task #478's proof runs; task #482 (a mounted Triton cache) cuts the start's CPU work; task #479 (the heads on the GPU) comes before task #441's rerun on the GPU.
 
