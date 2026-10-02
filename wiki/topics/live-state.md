@@ -11,7 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
-**2026-10-02 14:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+**2026-10-02 19:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 19:0xZ):** this push carries the crash records (D-135, AF-AP-263, the incident entry), SGLang's `--sleep-on-idle` (task #478) and the GPU path's registration (task #479).
+- **LIVE (as of 19:0xZ):** nothing runs on the PC. The evaluation of record died with the PC at 15:04:55Z (no record, no held-out score seen). The `qwen` unit is stopped on the owner's word (18:33:16Z), so the PC's local route is down; its unit file carries `--sleep-on-idle`, deployed, not started. `laya-systemone` holds 1,972 MiB of the GPU. Tctl about 61°C at idle; the cooler is old, its pipes propped at an angle. **NEXT:** the owner's word on starting SGLang (then task #478's proof); task #479 (the heads on the GPU), then task #441's rerun in a GPU window.
+
+**2026-10-02 14:3xZ — WHAT IS LIVE NOW (superseded by the block above).**
 - **Origin (as of 14:3xZ):** 2e6f4609 (CI #1241 passed) carries task #472's home, task #460's close, F3's reader check and the 13:2xZ retro. Local, pushed with the evaluation's outcome: this retro (the stack sampler, skill `pc-bridge-lanes`).
 - **LIVE (as of 14:3xZ):** the evaluation of record on the PC (started 13:26:03Z). Its 40-minute figure was an extrapolation; the stage sampler (`~/s1-train/evalprog.sh`, py-spy without locals every 120 s) measured one procedure at about 14 minutes, so EVAL-DONE is expected near 15:50Z. **NEXT:** as in the block below.
 

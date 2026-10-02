@@ -94,6 +94,8 @@ def test_the_live_unit_starts_sglang_through_the_start_script():
         assert flag in words
     # the GPU headroom the grammar kernels need at first use; without it a long prompt with tools ran out of memory
     assert "--disable-prefill-cuda-graph" in words
+    # an idle scheduler waits for requests; without it, it pins one CPU thread at 100% (D-135)
+    assert "--sleep-on-idle" in words
 
 
 def test_the_live_unit_mounts_the_key_and_the_start_script_read_only():

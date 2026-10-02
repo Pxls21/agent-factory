@@ -19,6 +19,10 @@
 # output (forced tool calls, JSON schemas) load on first use, after startup, and took about 0.6 GB. With the prefill
 # CUDA graphs (2.27 GB) SGLang had 1.17 GB left and ran out of memory on the first Hermes lane's long prompt
 # (03:53:58Z); without them it starts with about 3.4 GB left (report section K).
+# --sleep-on-idle keeps an idle server off the CPU (2026-10-02, D-135): without it the scheduler loops without waiting
+# and pins one CPU thread at 100% for as long as the server runs, in SGLang's own words (the IdleSleeper's docstring,
+# managers/scheduler_components/idle_sleeper.py; the flag is off by default in this build, arg_groups/fields/device.py).
+# With it, an idle scheduler waits on its sockets until a request arrives. A running request still keeps it busy.
 [Unit]
 Description=Qwen3.8-27B SGLang local model server (behind OmniRoute; D-129)
 Wants=network-online.target
@@ -37,7 +41,7 @@ Exec=python3 /af/sglang_start.py \
   --enable-metrics --enable-cache-report \
   --mem-fraction-static 0.80 --max-running-requests 4 --max-mamba-cache-size 12 --cuda-graph-max-bs-decode 4 \
   --chunked-prefill-size 4096 --max-prefill-tokens 4096 --prefill-decode-interval 16 --disable-prefill-cuda-graph \
-  --mamba-radix-cache-strategy no_buffer --disable-overlap-schedule \
+  --mamba-radix-cache-strategy no_buffer --disable-overlap-schedule --sleep-on-idle \
   --enable-hierarchical-cache --hicache-size 24 --hicache-write-policy write_through --schedule-policy lpm
 PublishPort=8080:8080
 Volume=/home/rocco/models/qwen3.8-27b-exl3-3.0bpw:/models/turboderp-Qwen3.8-27B-exl3-3.00bpw:ro
