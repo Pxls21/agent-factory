@@ -201,8 +201,8 @@ question; the containment proof itself does not depend on cgroups. Platform: sys
   prompt with a forced tool call answered in 106.0 s; cold prompts of 56,501 and 52,235 tokens with constrained output
   answered at once in 114.4 s and 55.3 s; the GPU peaked at 22,752 of 24,576 MiB; no restart. A Hermes smoke lane
   (SGL-SMOKE2, the raw local id) then met its contract with every request on the local route and no restart (report
-  section K6). This arm's speed under
-  the A/B workloads is not measured (task #464). **The alarm:** SGLang logs `device-loaded after serving started (free
+  section K6). Under window 2's workloads (4 and 8 chats, the 80 s cut) this arm matched S2 within the measured spread:
+  the same requests answered, warm turns at a median of 16.2 and 18.6 s (report section K7). **The alarm:** SGLang logs `device-loaded after serving started (free
   device mem: X GiB)` when a late kernel load starts under 1 GiB free. Count those lines before a new local-route load
   (`journalctl --user -u qwen --since today | grep -c 'device-loaded after serving started'`); any count above 0 means
   the next new kernel can run out of memory.

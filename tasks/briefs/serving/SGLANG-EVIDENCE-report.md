@@ -652,3 +652,33 @@ lane's first long prompt; since 2026-10-02 04:15:19Z the unit runs S2's flags wi
    and the Triton cache lives in the container, so every restart compiles them again (a mounted cache is not set up).
    The margin covers the kernels these requests loaded, not every kernel a new request shape may load: the journal's
    `device-loaded after serving started` line (under 1 GiB free) is the warning to watch.
+
+### K7. The deployed arm measured (S2n: S2's flags without the prefill CUDA graphs; 2026-10-02 04:58:28Z to 05:12:39Z; written 05:1xZ)
+
+The live server on :8080, under window 2's workload files (the same hashes, `24068ffecf69fe37` and `632497c65f726308`)
+and client (`chat_load.py`, `36864ee7d87a5ef1`), with the 80 s cut and 3 retries: the two runs S3 had. No lane ran on
+the local route meanwhile.
+
+| Arm | Workload, chats | Answered | Cut at 80 s (requests) | Cold first token, p50 (max) | Warm first token, p50 (max) | Decode p50 | Wall |
+|---|---|---|---|---|---|---|---|
+| S2n | 1, 4 | 15 of 16 | 4 | 194.1 s (296.5) | 16.2 s (75.9) | 52.7 tok/s | 448 s |
+| S2n | 2, 8 | 32 of 32 | 6 | 87.8 s (274.5) | 18.6 s (92.7) | 15.5 tok/s | 403 s |
+
+Prompt tokens from the prefix cache (all turns, first turns, turns 2 to 4, requests answered after a cut): workload 1
+90.8%, 69.3%, 95.9%, 69.3%; workload 2 88.4%, 64.3%, 94.0%, 70.9%. The server's log: 84 and 81 prefill chunks (15 and
+26 with cached tokens), at most 1 and 3 requests running, a queue of at most 3 and 5, the full-token pool at most 0.96
+and 0.90, the Mamba pool 0.83 and 0.75; no retract, abort or error line; the real key 0 times in its 666 lines. The GPU
+at most 22,758 and 22,764 MiB of 24,576; the restart count 0, and no late-load warning.
+
+1. **The deployed arm matches S2 within the spread K5 measured** (S2's own two runs of workload 1 differ by 17% in
+   decode p50). Workload 1: the same request unanswered (chat 3's 67k-token first turn, cut 4 times, as in S2's run);
+   cold p50 194.1 s against 197.3 s; warm p50 16.2 s against 16.4 s; decode p50 52.7 against 42.0 tok/s. Workload 2:
+   all 32 answered, as with S2 (S3 lost one); cold p50 87.8 s against 91.5 s (max 274.5 against 291.3); warm p50 18.6 s
+   against 16.9 s; decode p50 15.5 against 18.5 tok/s; wall 403 s against 432 s.
+2. **The one longer tail is queueing, not memory.** Workload 2's slowest warm turn (chat 5, turn 3; 25,636 tokens,
+   22,760 cached) sent no event for 80 s, was cut once, and its retry answered in 12.6 s: 92.7 s in all (S2's warm
+   maximum was 54.3 s). It is K3 item 2's class, an attempt queued behind other prefills; K5's `lpm` with a priority
+   for long waits is still not run.
+3. **So dropping the prefill CUDA graphs cost no measured speed** in these runs, and bought 2.3 GB of GPU memory and a
+   boot about 70 s shorter (K6 item 5). This closes K5's gap "S2 without the prefill CUDA graphs" and the first gap of
+   K6 item 8. Each arm still ran each workload once.
