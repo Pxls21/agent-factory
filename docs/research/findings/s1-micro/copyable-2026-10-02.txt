@@ -1,0 +1,20 @@
+transcripts=359 unparsed_lines=19 bash=58196 (no slot 94) read_edit_write=10050 cap=20000
+  quoted  n= 448146  w1=  9.0% w10= 34.8% w50= 47.7% prefix_token= 31.6% w50_or_prefix= 51.2%
+  path    n= 276575  w1= 10.4% w10= 55.8% w50= 71.8% prefix_token= 76.7% w50_or_prefix= 81.0%
+  hex     n=  12248  w1= 19.6% w10= 60.9% w50= 85.8% prefix_token= 95.5% w50_or_prefix= 98.4%
+  number  n= 292471  w1= 46.9% w10= 85.8% w50= 95.1% prefix_token= 97.9% w50_or_prefix= 99.0%
+  Read    n=   3763  w1=  0.0% w10=  0.0% w50= 54.0% prefix_token= 66.3% w50_or_prefix= 67.1%
+  Edit    n=   4540  w1=  0.0% w10=  0.0% w50= 87.9% prefix_token= 97.8% w50_or_prefix= 97.8%
+  Write   n=   1747  w1=  0.0% w10=  0.0% w50=  5.3% prefix_token=  9.0% w50_or_prefix=  9.2%
+  bash commands: some slot new: 48403 (83.2%)
+  bash commands: all slots in w50 or prefix: 9793 (16.8%)
+  number slot values that recur >=50 times (constant-like): 269285 of 292471 (92.1%)
+  all commands: 58196 commands; all slots copyable 9793 (16.8%); exactly one new slot 14091 (24.2%)
+  shape repeats >=2: 13979 commands; all slots copyable 4305 (30.8%); exactly one new slot 6910 (49.4%)
+  shape repeats >=10: 7205 commands; all slots copyable 2006 (27.8%); exactly one new slot 4676 (64.9%)
+  shape repeats >=50: 4093 commands; all slots copyable 843 (20.6%); exactly one new slot 3104 (75.8%)
+  new quoted values: n=218811 median=31 p75=79 p90=170 chars; <=12 chars 47143 (21.5%)
+  new path values: n=52451 median=19 p75=29 p90=53 chars; <=12 chars 12298 (23.4%)
+  form view, shape repeats >=2: 13979 commands; no free slot 4843 (34.6%); one free slot 6662 (47.7%); free values n=16958 median=30 p75=82 p90=229 chars; by class quoted 13654, path 3170, number 127, hex 7
+  form view, shape repeats >=10: 7205 commands; no free slot 2367 (32.9%); one free slot 4471 (62.1%); free values n=5271 median=33 p75=93 p90=393 chars; by class quoted 4672, path 584, number 15
+  form view, shape repeats >=50: 4093 commands; no free slot 1086 (26.5%); one free slot 2925 (71.5%); free values n=3090 median=17 p75=59 p90=185 chars; by class quoted 2811, path 275, number 4

@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-02 08:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 08:0xZ):** 1ffee610; CI run #1231 passed on 6c14466f at 07:52Z. Held locally: the retro commit (the CI quirk, the B1 re-check dispatch) and the commit with both lanes' reports, the micro-output design and the deadlock review.
+- **LIVE (as of 08:0xZ):** no lane. Task #460 waits on the owner's D-115 choice (REDESIGN recommended: refuse a `..` part in `--out`, measured in scratch; B1 and B2 are one class). Task #467 is parked in the backlog with its design note (`docs/research/findings/s1-micro/S1-MICRO-DESIGN.md`). The PC's `qwen` container runs SGLang without the prefill CUDA graphs since 04:15:19Z; the vLLM unit waits as the fallback. **NEXT:** the owner's choice on task #460; the pre-registration of task #441 (the first S1 training); task #468 (the view's follow-ups) before any new export is viewed for training.
+
 **2026-10-02 06:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 07:2xZ):** 1ffee610 (the B1 repair, 6c14466f, went out at 07:05Z after CI run #1230 passed on the test-only CI fix; then a transcripts sync). CI run #1231 runs on 6c14466f. Held locally: the re-check dispatch entry and this block.
 - **LIVE (as of 07:2xZ):** the S1-MICRO-MAP lane (task #467's evidence map, a sandbox evidence-gatherer, PIN d2408a84; read-only) and the B1 re-check (the VERIFY-S1-VIEW-GUARDS verifier, resumed at PIN 6c14466f on B1 alone). The PC's `qwen` container runs SGLang without the prefill CUDA graphs since 04:15:19Z; the vLLM unit waits as the fallback. **NEXT:** CI run #1231's verdict; harvest the B1 re-check and gate task #460; harvest the map, then the design note for task #467; task #468 (the view's follow-ups) before any new export is viewed for training.
