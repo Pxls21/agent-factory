@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-02 02:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 02:3xZ):** the window-1 harvest, the cut-and-retry client and the window-2 script are pushed (task #454); CI runs on them. Held in the tree: the launch entry in the ledger and this block.
+- **LIVE (as of 02:3xZ):** the second GPU window on the PC since 02:29:13Z (`scripts/serving_ab/abwin2.sh`, pid 2130237; out `/home/rocco/sglang-ab/20261002T022913Z`; no run starts after 04:49:13Z): SGLang S2, then S3; vLLM is stopped until the window's EXIT trap restores it, so no lane runs on the local route until then. A sandbox poller wakes the coordinator when the window ends. **NEXT:** harvest into report section K; then the switch increment with the best arm's flags (D-131's pin in `pc-lane.lock.yaml`); task #460.
+
 **2026-10-02 02:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 02:0xZ):** the 01:3xZ batch is pushed (task #462's harness, D-131, the retro); CI run #1224 runs on it. Held in the tree: report section J (the window's numbers), the AF-AP-249 tenth bite, the ledger entry and this block.
 - **LIVE (as of 02:0xZ):** nothing on the GPU: the first window ended at 01:56:25Z with vLLM serving again (section J: tuned SGLang keeps its cache at 3 and 4 long chats where vLLM loses it; its cold long first turns are slower). No sandbox or PC lane running. **NEXT:** the cut-and-retry client in `scripts/serving_ab/chat_load.py`; the second window (`lpm`, the 80 s cut and retry, a larger prefill chunk, more chats); then the switch increment, its pin in `pc-lane.lock.yaml` (D-131); task #460.
