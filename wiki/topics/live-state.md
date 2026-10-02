@@ -12,7 +12,7 @@ last_compiled: 2026-09-03
 ## Active lanes
 
 **2026-10-02 08:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
-- **Origin (as of 08:0xZ):** 1ffee610; CI run #1231 passed on 6c14466f at 07:52Z. Held locally: the retro commit (the CI quirk, the B1 re-check dispatch) and the commit with both lanes' reports, the micro-output design and the deadlock review.
+- **Origin (as of 08:1xZ):** 6e14aa97 (the commit with both lanes' reports, the micro-output design and the deadlock review) and a transcripts sync, pushed at 08:1xZ; CI runs on 6e14aa97. Held locally: this retro (AF-AP-261, the anti-hollow-green corollary).
 - **LIVE (as of 08:0xZ):** no lane. Task #460 waits on the owner's D-115 choice (REDESIGN recommended: refuse a `..` part in `--out`, measured in scratch; B1 and B2 are one class). Task #467 is parked in the backlog with its design note (`docs/research/findings/s1-micro/S1-MICRO-DESIGN.md`). The PC's `qwen` container runs SGLang without the prefill CUDA graphs since 04:15:19Z; the vLLM unit waits as the fallback. **NEXT:** the owner's choice on task #460; the pre-registration of task #441 (the first S1 training); task #468 (the view's follow-ups) before any new export is viewed for training.
 
 **2026-10-02 06:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**

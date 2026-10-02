@@ -232,6 +232,13 @@ expansion.
    swapped config through the REAL resolution+vector-build path. Greppable signature when
    auditing any gate: a name/id validated by set membership, consumed by a lookup table built
    from different rows.
+   **A path guard is the same hole when a later step changes what the path resolves to (agent-factory 2026-10-02,
+   AF-AP-261).** The S1 view's `--out` guard tested the path's text (`islink`, `lexists`, `abspath`); then
+   `os.makedirs` created the parts that did not exist yet. A missing part before a `..` changes what the `..` means once
+   it exists, so `hop/missing/../../link` wrote through a link and `missing/../E` replaced a full directory's outputs.
+   Two repairs each modelled one more spelling and left another (task #460, rounds 2 and 3). Validate the entry the
+   kernel resolves at write time; where the text cannot predict it, refuse the spellings that break the prediction (a
+   `..` part) instead of re-implementing the kernel's walk.
 
 11. **The motivating instance is a MANDATORY fixture.** A gate/screen/detector built because of
    a known measured incident must run that incident's REAL measured values through itself as a
