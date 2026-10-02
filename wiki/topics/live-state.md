@@ -11,7 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
-**2026-10-02 11:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+**2026-10-02 11:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 11:3xZ):** as at 11:1xZ (task #472's landing daa20757 and its verify brief 28c8e708), plus a transcripts commit (6b8c026b) and this retro (AF-AP-262; orchestration 0r: a brief quotes a frozen document's rule, and a change to the rule is an amendment of the document first).
+- **LIVE (as of 11:3xZ):** VERIFY-S4-2-READ (PIN b9f835de) and VERIFY-S4-3-HEADS (PIN daa20757), two sandbox adversarial-verifiers; on the PC, task #441's GPU window (`~/s1-train/run441.sh` through `scripts/gpu_window.sh --max-minutes 90`): the smoke passed and the read runs, the largest file first (20,387,757 of the 29,087,106 tokens; at 11:33Z, 12 minutes in, no file finished). Task #460 still waits on the owner's D-115 choice. **NEXT:** the window's end (the repeat read of the two smallest files, the `qwen` unit restored and its request shapes checked, the repeat comparison); then the evaluation of record on the PC, from a worktree of the latest commit, only after both verifies.
+
+**2026-10-02 11:1xZ — WHAT IS LIVE NOW (superseded by the block above).**
 - **Origin (as of 11:1xZ):** task #472 (the heads and the one evaluator) landed GATED-PENDING-VERIFY as daa20757, with the pre-registration's 11:0xZ amendment (§3's same-state mask, the evaluator's readings G-1 to G-11 frozen, the run of record with `--read-repeat` and `--twice`; the §8 block unchanged). The second verify brief and this block are pushed before that verifier's dispatch.
 - **LIVE (as of 11:1xZ):** VERIFY-S4-2-READ (PIN b9f835de) and VERIFY-S4-3-HEADS (PIN daa20757), two sandbox adversarial-verifiers; on the PC, task #441's tails step (`~/s1-train/tokens.sh`; its tokens step ended rc 0 at 11:04:13Z: 39 files, 1,091 rows, 361 candidates, 29,087,106 tokens in 88,779 blocks, 858 s). Task #460 still waits on the owner's D-115 choice. **NEXT:** the window once the tails are done (`~/s1-train/run441.sh`: smoke, read, the repeat read, then the request-shape check of the restored `qwen` unit, then the repeat comparison); the evaluation (on the PC, from a worktree of daa20757 or later) only after both verifies.
 
