@@ -42,6 +42,11 @@ node .gitnexus/run.cjs status                                      # index fresh
   new-side range 669-763 of `@@ -659,0 +669,95 @@` and were listed, while `git diff` never touched them; the risk read
   HIGH, 47 symbols). Before reporting a HIGH, check the listed symbols against `git diff -U0`, and tell the owner
   what the diff really touches beside the rating.
+- A partial graph check goes to the next tier, never to the same one again (2026-10-02 00:5xZ, the D-128 to D-130
+  commits): `gn_mcp.py detect_changes '{"scope":"all"}'` printed `no response from gitnexus mcp`; the native MCP tool
+  answered `partial: true` twice, with `changed_count` 0 for 14 changed files and `risk_level` `unknown` (the same
+  with `repo` named); the CLI (`node .gitnexus/run.cjs detect-changes --scope all --repo .`) answered whole: 5
+  symbols, 0 affected processes, risk low. The MCP's 0 meant unseen, not unchanged.
 - A stale record can pass as fresh (L2a, 2026-09-25, GitNexus 1.6.10): an incremental `analyze` updated `meta.json`'s
   sha256 for `proofs/S0-08/check_containment.py` without re-parsing it, so its 18 symbols kept the start lines of the
   previous version (3 lines off; 1 of 105 files). Check a GitNexus line number against the file before you trust it;

@@ -88,6 +88,7 @@ hash gate for four increments — caught only when a downstream cross-check re-r
   optimization whose sign depends on a data-shape parameter ships FLIPPABLE at the deployment
   seam** — a later data change (here, backfilling history) silently inverts it, and an
   unconditional default gives no way to back out without a code change.
+- **A load test of a model server counts each prompt with that server's own tokenizer, and gives each run its own prefix (2026-10-02, task #454).** The A/B harness first sized its chats with a characters-per-token guess (3.6); this repo's files ran 2.4 to 3.2 characters per token, one chat passed the 131,072-token context, and vLLM refused all its turns. Size the workload with the server's `/tokenize` (chat template included), replay that one file in every arm, and start each run's system prompt with a run id: the same workload replayed at 2, 3 and 4 chats would otherwise hit the previous run's prefix cache and read as warm.
 - **Front-load the single cheapest probe whose result changes the build ORDER; run it BEFORE
   increment 1** (the "reality probe": run the known-broken artifact + captured test under the
   sandbox — RED means the negative control is already real; GREEN means the behavioral increment

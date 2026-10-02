@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-10-02 01:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **Origin (as of 01:3xZ):** the D-128 to D-130 batch and the 21:5xZ retro are pushed; CI run #1223 runs on them (a sandbox waiter reports it). Held in the tree, to commit after its gate: D-131, the 01:3xZ retro (two skill lessons: `deep-work` Phase 2, `code-intel-trio`), task #462 (the A/B harness in `scripts/serving_ab/`), task #463 (backlog), and this block.
+- **LIVE (as of 01:3xZ):** THE GPU WINDOW on the PC (task #454; pid 2080702; out `/home/rocco/sglang-ab/20261002T002852Z`): V0 done at 2, 3 and 4 chats; S0 (the recipe, one request at a time) done at 2 chats only, over half past the 80 s limit (first turns at a median 132 s, decode at a median 76 tok/s, 0 errors, 1 retract line), the higher counts skipped by design; S1 (the four-stream flags plus HiCache) booting since 01:22:50Z; then vLLM comes back through the EXIT trap. No sandbox lane running. **NEXT:** harvest the window (report section J); the second window (S2: `extra_buffer`, spare state slots, the cache report); the switch increment, its pin in `pc-lane.lock.yaml` (D-131); task #460.
+
 **2026-10-02 00:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **Origin (as of 00:5xZ):** unchanged since the 22:3xZ block. The commits of this batch carry everything held since 21:5xZ (the 22:3xZ and 00:3xZ blocks list it), D-130 and `docs/KEY-INVENTORY.md`; the push follows them (auto mode is off, D-130).
 - **LIVE (as of 00:5xZ):** THE GPU WINDOW on the PC (task #454; started 00:28:52Z, pid 2080702; out `/home/rocco/sglang-ab/20261002T002852Z`): V0 at 2 and 3 chats done (at 3 chats, 8 of 12 requests past the 80 s limit), V0 at 4 chats running, then the SGLang arms; the sandbox waiter reports its end. No sandbox lane running. **CLOSED:** task #439 (the exports released, D-130). **REGISTERED:** task #461 (fresh keys before launch, backlog). **NEXT:** the push; harvest the window; the switch increment; task #460.
